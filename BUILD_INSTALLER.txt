@@ -1,0 +1,27 @@
+MAKE THE SETUP (.exe) FOR THE FIELD SURVEY REPORT
+=================================================
+Do this ONCE on your own PC (the one with PyCharm). The result is one file,
+FieldSurveyReport_Setup.exe, that you copy to any PC and double-click.
+The other PCs do NOT need Python.
+
+1. Install Inno Setup 6 (free): https://jrsoftware.org/isdl.php  (default options).
+2. Copy the files of this zip over your PyCharm project folder (replace when asked).
+3. Double-click  build_installer.bat  in the project folder. It takes a few minutes.
+4. Your installer appears in the folder  Installer\FieldSurveyReport_Setup.exe
+
+ON EACH NEW PC
+ * Run FieldSurveyReport_Setup.exe (Next > Next > Install). It adds a Start menu
+   item and an optional Desktop icon. Sign in with the Owner initials MPR.
+ * The program's files go to  C:\Program Files\Field Survey Report .
+   Your data goes here (so it is safe when you update or uninstall):
+     Documents\Field Survey Report\     Excel file, Report Forms, master_list.json,
+                                        db_config.json  (MySQL settings)
+     AppData\Roaming\FieldSurveyReport\ users, settings, log
+ * MySQL is OFF by default on a new PC. To use it, edit
+   Documents\Field Survey Report\db_config.json : "enabled": true and, if the
+   database is on another PC, "host": "<that PC's IP address>"  (see INSTALL_GUIDE.txt).
+ * PDF / Print needs Microsoft Excel or LibreOffice on that PC.
+
+UPDATING: build a new Setup and run it over the old install. Data is kept.
+Windows may warn "unknown publisher" because the file is not code-signed;
+choose More info > Run anyway.

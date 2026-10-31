@@ -1,0 +1,51 @@
+{
+    "consignee_list": [
+        "",
+        "Energy Development Corporation"
+    ],
+    "supplier_list": [
+        "",
+        "Kokusai Commerce Co. Ltd.",
+        "Maxisource Marketing",
+        "Nielsons Safety",
+        "ABB PTE LTD",
+        "HJ Franklin Inc.,"
+    ],
+    "broker_list": [
+        "",
+        "AC Obsum Brokerage",
+        "Quickflo Forwarders",
+        "Royal Cargo Inc."
+    ],
+    "hauler_list": [
+        "",
+        "Sorsogon Commercial",
+        "T1 Transport",
+        "RCCe Trucks and Trailer",
+        "Libcap"
+    ],
+    "location_list": [
+        "",
+        "EDC-DHL Warehouse"
+    ],
+    "destination_list": [
+        "",
+        "BGPF",
+        "LGPF",
+        "NGPF",
+        "MGPF",
+        "EBWPC",
+        "HO-RBC"
+    ],
+    "country_of_origin_list": [
+        "",
+        "Philippines",
+        "U.S.A",
+        "China",
+        "Korea",
+        "Japan",
+        "Sweden",
+        "Italy",
+        "Singapore"
+    ]
+}

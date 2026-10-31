@@ -1,0 +1,8 @@
+ttkbootstrap
+openpyxl
+pypdf
+mysql-connector-python
+pywin32; sys_platform == "win32"
+# warehouse monitoring: charts and PDF reports
+matplotlib
+reportlab

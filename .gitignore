@@ -1,0 +1,31 @@
+# Credentials and per-PC configuration: never commit these
+db_config.json
+api_config.json
+auth_seed.json
+users.json
+settings.json
+installer_defaults/auth_seed.json
+installer_defaults/api_config.json
+allow_network_access.sql
+set_password.sql
+MYSQL_SETUP.txt
+
+# Business data and generated output
+Field_Survey_Reports*.xlsx
+Incident Reports/
+Item Forms/
+Report Forms/
+Warehouse Data/
+Warehouse Reports/
+*.log
+
+# Build output
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.idea/
+build/
+dist/
+Installer/
+*.zip

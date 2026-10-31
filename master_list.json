@@ -1,0 +1,59 @@
+{
+    "consignee_list": [
+        "Energy Development Corporation"
+    ],
+    "supplier_list": [
+        "ABB PTE LTD",
+        "Acifco Enterprises",
+        "Ambas Electric & Automation Opc",
+        "Amptech Industrial Supplies",
+        "EDC-BGPF",
+        "HJ Franklin Inc.,",
+        "Kokusai Commerce Co. Ltd.",
+        "Maxisource Marketing",
+        "Nielson's Safety Systems Inc",
+        "Nielsons Safety",
+        "Prodril",
+        "Trigon Management and Industrial Corp"
+    ],
+    "broker_list": [
+        "AC Obsum Brokerage",
+        "n/a",
+        "Quickflo Forwarders",
+        "Royal Cargo Inc."
+    ],
+    "hauler_list": [
+        "AJ & J Cargo Movers Inc",
+        "Libcap",
+        "n/a",
+        "RCCe Trucks and Trailer",
+        "Sorsogon Commercial",
+        "T1 Transport"
+    ],
+    "location_list": [
+        "ALD - Alta Vista Yard",
+        "EDC - LGPF",
+        "EDC-DHL Warehouse",
+        "Side Lifter Inc. - Cebu"
+    ],
+    "destination_list": [
+        "BGPF",
+        "EBWPC",
+        "EDC - DHL Warehouse",
+        "HO-RBC",
+        "LGPF",
+        "MGPF",
+        "NGPF",
+        "USA"
+    ],
+    "country_of_origin_list": [
+        "China",
+        "Italy",
+        "Japan",
+        "Korea",
+        "Philippines",
+        "Singapore",
+        "Sweden",
+        "U.S.A"
+    ]
+}
