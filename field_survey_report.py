@@ -177,6 +177,7 @@ if fsr_api is not None and not DEMO_MODE:
     if API_MODE:
         db_mysql = fsr_api
         sys.modules["db_mysql"] = fsr_api
+        fsr_api.keep_awake()
 SERVER_LABEL = "Central server" if API_MODE else "MySQL database"
 
 MASTER_LIST_FILE = DATA_DIR / "master_list.json"

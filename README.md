@@ -180,6 +180,8 @@ Android app. Without that file nothing changes.
 * Save goes to the server first, which gives the official Control #. The
   number shown on a new form is only a preview. The Excel file is then updated
   as a local backup copy, and the report forms are made as before.
+* The free server sleeps when unused and takes about a minute to wake. The program
+  keeps it awake while open; the first sign-in may still wait, up to 90 seconds.
 * If the server cannot be reached the save is refused with a clear message and
   the report stays on the form. The master lists stay readable from
   `master_list.json`. Signing in needs the server.

@@ -12,6 +12,7 @@ unchanged. It talks only to the API over HTTPS: no database login is on this PC.
 
 import json
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -22,7 +23,9 @@ from fsr_storage import split_quantity_unit
 
 CONFIG_FILE = Path(__file__).resolve().parent / "api_config.json"
 API_PREFIX = "/api/v1"
-TIMEOUT = 20
+TIMEOUT = 90             # a sleeping free server takes about a minute to wake
+KEEP_AWAKE_SECONDS = 600
+WAKING = (502, 503, 504)
 PAGE_SIZE = 200
 LOCAL_HOSTS = ("localhost", "127.0.0.1", "10.0.2.2")
 LIST_SLUGS = {
@@ -30,6 +33,9 @@ LIST_SLUGS = {
     "hauler_list": "haulers", "location_list": "locations", "destination_list": "destinations",
     "country_of_origin_list": "countries",
 }
+
+
+STARTING_MESSAGE = "The server is starting. Please wait a minute and try again."
 
 
 class ApiError(Exception):
@@ -121,12 +127,16 @@ def _send(method, path, body=None, query=None, auth=True):
     try:
         with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
             text = response.read().decode("utf-8")
-            return response.status, json.loads(text) if text else {}
+            try:
+                return response.status, json.loads(text) if text else {}
+            except ValueError:
+                raise ApiError(STARTING_MESSAGE) from None
     except urllib.error.HTTPError as error:
         try:
             payload = json.loads(error.read().decode("utf-8")).get("error") or {}
         except ValueError:
-            payload = {}
+            # Not from the API: the hosting service answers while the server wakes.
+            payload = {"message": STARTING_MESSAGE} if error.code in WAKING else {}
         return error.code, {"error": payload}
     except (urllib.error.URLError, TimeoutError, OSError) as error:
         raise ApiError(
@@ -167,6 +177,19 @@ def _call(method, path, body=None, query=None):
             raise ApiError("Your session has ended. Please sign out and sign in again.", status=401)
         _raise_for(status, payload)
     return payload
+
+
+def keep_awake(interval=KEEP_AWAKE_SECONDS):
+    """While the program is open, stop the free server sleeping, so a save or a
+    sign-in does not wait for it to wake. Problems are ignored: this is only a help."""
+    def work():
+        while True:
+            try:
+                _send("GET", "/health", auth=False)
+            except ApiError:
+                pass
+            time.sleep(interval)
+    threading.Thread(target=work, name="fsr-keep-awake", daemon=True).start()
 
 
 def test_connection(config=None):
