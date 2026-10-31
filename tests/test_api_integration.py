@@ -288,3 +288,18 @@ def test_all_modules_open_on_server_data(program):
             g["window"].update()
             time.sleep(0.02)
     assert not [c for c in answers.calls if c[0] == "showerror"], answers.calls
+
+
+def test_program_makes_pdf_from_server_report(program, tmp_path):
+    import pypdf
+    g, answers = program
+    so = f"SO-PDF-{uuid.uuid4().hex[:6]}"
+    fill(g, so)
+    assert g["save_report"]() is True, answers.calls
+    control = g["control_entry"].get()
+    data = fsr_api.load_report(control)
+    forms, _, _ = g["create_report_forms"](g["excel_state"]["path"], data)
+    target = tmp_path / "server_report.pdf"
+    g["make_report_pdf"](forms, target)
+    text = " ".join(page.extract_text() for page in pypdf.PdfReader(target).pages)
+    assert control in text and so in text and "Program Pump" in text
