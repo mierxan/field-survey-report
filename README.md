@@ -142,9 +142,6 @@ to refresh them.
 
 ## 6. Tests
 
-`tests/test_api_integration.py` needs a running test server and is otherwise
-skipped; its first lines say what to set.
-
 ```bat
 RUN_TESTS.bat          rem or: .venv\Scripts\python -m pytest -v
 ```
@@ -169,41 +166,12 @@ kept. Until then, reports still save to MySQL without the two link values,
 and the program says so. New installations get the columns from
 `field_survey_schema.sql`.
 
-## 7a. Central server (optional)
-
-With `api_config.json` beside the program (copy `api_config.example.json`) the
-program uses the central API instead of MySQL, and shares its data with the
-Android app. Without that file nothing changes.
-
-* Sign-in, master lists, reports, the Weekly Summary and the warehouse modules
-  all read from the server. No database login is on the PC.
-* Save goes to the server first, which gives the official Control #. The
-  number shown on a new form is only a preview. The Excel file is then updated
-  as a local backup copy, and the report forms are made as before.
-* The free server sleeps when unused and takes about a minute to wake. The program
-  keeps it awake while open; the first sign-in may still wait, up to 90 seconds.
-* If the server cannot be reached the save is refused with a clear message and
-  the report stays on the form. The master lists stay readable from
-  `master_list.json`. Signing in needs the server.
-* If someone else saved the report first, nothing is overwritten: you choose
-  between their copy and yours.
-* Inspectors view all reports and edit their own, and may add master names.
-  Only the owner and admins edit every report, or remove names.
-
-Setup, deployment and rollback are in `docs/OPERATIONS.md` of the
-`field_survey_backend` project. The code is in `fsr_api.py`, which has the same
-functions as `db_mysql.py`.
-
-Local accounts for the old mode now come from `auth_seed.json`, which is not in
-source control. Keep a copy: a new installation without it creates no Owner.
-
 ## 8. Project layout
 
 ```
 field_survey_report.py   main program: window, inspection form, report forms (existing)
 fsr_storage.py           field definitions + Excel storage (moved unchanged out of the main file)
 db_mysql.py              optional MySQL storage
-fsr_api.py               optional central API storage (same functions as db_mysql.py)
 app_auth.py              sign in / users (unchanged)
 warehouse/               business logic, no widgets
     periods.py           reporting periods (calendar weeks Mon–Sun)

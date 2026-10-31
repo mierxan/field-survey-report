@@ -148,8 +148,8 @@ for _folder in (DATA_DIR, CONFIG_DIR):
 if FROZEN or DATA_DIR != BASE_DIR:
     # first start: put the editable default files in the data folder
     # (never the MySQL login into a demo / test folder)
-    for _name in ("master_list.json", "db_config.json", "api_config.json"):
-        if _name != "master_list.json" and (_home or DEMO_MODE):
+    for _name in ("master_list.json", "db_config.json"):
+        if _name == "db_config.json" and (_home or DEMO_MODE):
             continue
         if not (DATA_DIR / _name).exists() and (BASE_DIR / _name).exists():
             try:
@@ -161,24 +161,6 @@ if db_mysql is not None:
     db_mysql.CONFIG_FILE = DATA_DIR / "db_config.json"
     if DEMO_MODE:
         db_mysql.is_enabled = lambda: False       # never MySQL in Demo Mode
-
-# Central API (fsr_api.py + api_config.json). When it is set up the server is
-# the authority: fsr_api has the functions of db_mysql and takes its place for
-# the whole program, including warehouse/store.py. The Excel file stays as a
-# local backup copy. Without api_config.json nothing changes.
-try:
-    import fsr_api
-except ImportError:
-    fsr_api = None
-API_MODE = False
-if fsr_api is not None and not DEMO_MODE:
-    fsr_api.CONFIG_FILE = DATA_DIR / "api_config.json"
-    API_MODE = fsr_api.is_enabled()
-    if API_MODE:
-        db_mysql = fsr_api
-        sys.modules["db_mysql"] = fsr_api
-        fsr_api.keep_awake()
-SERVER_LABEL = "Central server" if API_MODE else "MySQL database"
 
 MASTER_LIST_FILE = DATA_DIR / "master_list.json"
 SETTINGS_FILE = CONFIG_DIR / "settings.json"
@@ -360,8 +342,7 @@ if app_auth is None:
     sys.exit(1)
 
 try:
-    user_store = (fsr_api.ApiUserStore(app_auth.AuthError) if API_MODE
-                  else app_auth.UserStore(USERS_FILE))
+    user_store = app_auth.UserStore(USERS_FILE)
 except OSError as error:
     messagebox.showerror(
         "Field Survey Report",
@@ -852,16 +833,7 @@ def load_master_lists():
 
 
 def save_master_lists():
-    """Save all master lists to the JSON file (atomic). With the central API
-    the server comes first: a refusal is shown and the caller rolls back."""
-
-    if API_MODE:
-        try:
-            busy(fsr_api.save_master_lists, master_data)
-        except fsr_api.ApiError as error:
-            log.warning("Master list change refused: %s", error.code or "offline")
-            messagebox.showerror("Master Lists", str(error), parent=window)
-            return False
+    """Save all master lists to the JSON file (atomic)."""
 
     try:
         write_json_atomic(MASTER_LIST_FILE, master_data)
@@ -877,29 +849,6 @@ def save_master_lists():
 
 
 master_data = load_master_lists()
-
-
-def refresh_master_lists(show_result=False):
-    """Bring the latest names from the central server. If it cannot be reached
-    the names last saved in master_list.json stay in use, for reading."""
-    try:
-        fsr_api.refresh_master_lists(master_data)
-        write_json_atomic(MASTER_LIST_FILE, master_data)
-    except (fsr_api.ApiError, OSError) as error:
-        log.warning("Master lists not refreshed: %s", type(error).__name__)
-        if show_result:
-            messagebox.showwarning(
-                "Master Lists", f"The lists could not be refreshed, so the "
-                f"saved copy stays in use:\n{error}", parent=window)
-        return False
-    if show_result:
-        messagebox.showinfo("Master Lists", "The master lists are up to date.",
-                            parent=window)
-    return True
-
-
-if API_MODE:
-    refresh_master_lists()
 
 # =====================================================
 # SEARCHABLE COMBOBOX
@@ -1442,13 +1391,8 @@ def rebuild_account_menu():
             command=lambda: app_auth.open_manage_users(
                 window, user_store, current_user,
                 on_change=rebuild_account_menu))
-    if API_MODE:
-        account_menu.add_command(
-            label="Refresh Master Lists",
-            command=lambda: refresh_master_lists(show_result=True))
     account_menu.add_command(
-        label="Server Connection..." if API_MODE else "MySQL Settings...",
-        command=lambda: open_mysql_settings())
+        label="MySQL Settings...", command=lambda: open_mysql_settings())
     account_menu.add_command(
         label="Change Password...",
         command=lambda: app_auth.open_change_password(
@@ -1479,8 +1423,6 @@ def sign_out():
     """Close this session and start the program again at the sign in."""
     if not confirm_discard("Sign Out", "Sign out now?"):
         return
-    if API_MODE:
-        fsr_api.sign_out()
     restart_program()
 
 
@@ -1490,12 +1432,6 @@ def open_mysql_settings():
         messagebox.showinfo(
             "MySQL", "MySQL is switched off in Demo Mode, so the sample "
             "(TEST) data can never reach the real database.", parent=window)
-        return
-    if API_MODE:
-        ok, message = busy(fsr_api.test_connection)
-        (messagebox.showinfo if ok else messagebox.showerror)(
-            "Server Connection",
-            f"{message}\n\nThe address is in:\n{fsr_api.CONFIG_FILE}", parent=window)
         return
     if db_mysql is None:
         messagebox.showinfo(
@@ -1814,9 +1750,8 @@ if True:        # the MySQL status and buttons are always shown
             bootstyle={"ok": "success", "bad": "danger"}.get(
                 state, "secondary"))
         mysql_state["text"] = message or {
-            "ok": f"{SERVER_LABEL} is working",
-            "bad": f"{SERVER_LABEL} is not working",
-        }.get(state, f"Checking {SERVER_LABEL}...")
+            "ok": "MySQL is working", "bad": "MySQL is not working",
+        }.get(state, "Checking MySQL...")
 
     def check_mysql_status(show_error=False):
         """Test the connection in the background (the window never freezes)."""
@@ -1856,15 +1791,12 @@ if True:        # the MySQL status and buttons are always shown
                          "Three red: inactive.\nClick to check again "
                          "(or to set MySQL up).")
 
-    if not API_MODE:
-        tb.Button(
-            panel, text="Sync to MySQL", bootstyle="secondary-outline",
-            command=lambda: sync_all_to_mysql()
-        ).pack(fill="x", pady=3)
     tb.Button(
-        panel, text=("Restore Excel from Server" if API_MODE
-                     else "Restore Excel from MySQL"),
-        bootstyle="secondary-outline",
+        panel, text="Sync to MySQL", bootstyle="secondary-outline",
+        command=lambda: sync_all_to_mysql()
+    ).pack(fill="x", pady=3)
+    tb.Button(
+        panel, text="Restore Excel from MySQL", bootstyle="secondary-outline",
         command=lambda: restore_excel_from_mysql()
     ).pack(fill="x", pady=3)
 
@@ -2890,7 +2822,7 @@ export_weekly_button = tb.Button(
 export_weekly_button.pack(side="right")
 
 if db_mysql is not None and db_mysql.is_enabled():
-    for _text, _value in ((SERVER_LABEL, "mysql"), ("Excel file", "excel")):
+    for _text, _value in (("MySQL database", "mysql"), ("Excel file", "excel")):
         tb.Radiobutton(
             pick_row, text=_text, value=_value, variable=source_var_weekly,
             command=lambda: refresh_weekly()
@@ -5588,8 +5520,7 @@ def create_report_forms(excel_path, data):
     notes, pieces = [], []
     # A report from the phone prints its inspector's name, not this user's.
     print_name["value"] = (
-        (fsr_api.prepared_by(control) if API_MODE else "")
-        or fsr_import.imported_inspector(excel_path, control) or USER_FULL_NAME)
+        fsr_import.imported_inspector(excel_path, control) or USER_FULL_NAME)
     summary = "First Page"
 
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -5792,10 +5723,6 @@ def new_report(confirm=True):
 
     clear_form()
     report_state["editing"] = False
-    if API_MODE:
-        fsr_api.forget_pending()
-    # With the central API this is a preview: the server gives the official
-    # number when the report is first saved.
     set_control_number(generate_control_number(excel_state["path"]))
     report_state["dirty"] = False
     update_status()
@@ -5805,9 +5732,6 @@ def new_report(confirm=True):
 def load_report_into_form(control_no, source="excel"):
     if not confirm_discard("Open Saved Report", f"Open {control_no}?"):
         return
-
-    if API_MODE:
-        source = "mysql"      # the Excel file is only a backup copy
 
     try:
         if source == "mysql":
@@ -5832,9 +5756,8 @@ def load_report_into_form(control_no, source="excel"):
 
     item_forms_error = None
     try:
-        if not API_MODE:       # the server's copy already holds them
-            data["other_item_forms"] = load_other_item_forms(
-                excel_state["path"], data["control_no"])
+        data["other_item_forms"] = load_other_item_forms(
+            excel_state["path"], data["control_no"])
     except ValueError as error:
         log.exception("Item form file could not be read")
         item_forms_error = str(error)
@@ -5971,7 +5894,7 @@ def open_saved_report_dialog(initial_search=""):
         source_row = tb.Frame(dialog)
         source_row.pack(fill="x", padx=15, pady=(0, 5))
         tb.Label(source_row, text="Open from:").pack(side="left")
-        for _text, _value in ((SERVER_LABEL, "mysql"),
+        for _text, _value in (("MySQL database", "mysql"),
                               ("Excel file", "excel")):
             tb.Radiobutton(
                 source_row, text=_text, value=_value, variable=source_var,
@@ -6178,35 +6101,12 @@ def save_report():
     path = excel_state["path"]
     data = collect_report_data()
 
-    # The central server comes first. Only a report it accepted goes on to
-    # the Excel backup, under the official number the server gave it.
-    number_changed = False
-    if API_MODE:
-        try:
-            saved = busy(fsr_api.save_document, data, report_state["editing"])
-        except fsr_api.VersionConflict as error:
-            resolve_save_conflict(error)
-            return False
-        except fsr_api.ApiError as error:
-            log.warning("Server save failed: %s", error.code or "offline")
-            messagebox.showerror(
-                "Not Saved", f"{error}\n\nThe report was NOT saved. It stays "
-                "on the form: click Save again to retry.", parent=window)
-            return False
-        number_changed = saved["control_no"] != data["control_no"]
-        data = {**data, **saved}
-
     try:
         result = busy(
-            write_report_to_excel, path, data,
-            report_state["editing"] or API_MODE
+            write_report_to_excel, path, data, report_state["editing"]
         )
 
     except PermissionError:
-        if API_MODE:
-            return finish_server_only_save(data, number_changed, (
-                "The report is saved on the server, but the Excel backup could "
-                f"not be updated because the file is open:\n{path}"))
         messagebox.showerror(
             "File In Use",
             f"Cannot write to:\n{path}\n\n"
@@ -6217,10 +6117,6 @@ def save_report():
 
     except Exception as error:
         log.exception("Save failed")
-        if API_MODE:
-            return finish_server_only_save(data, number_changed, (
-                "The report is saved on the server, but the Excel backup could "
-                f"not be updated:\n{error}"))
         messagebox.showerror(
             "Save Error",
             f"Unable to save the report:\n{error}",
@@ -6229,8 +6125,6 @@ def save_report():
         return False
 
     # The report now exists in the file, so further saves update it.
-    if number_changed:
-        populate_form(data)     # the official number and its Receiving Refs
     set_control_number(result["control"])
     report_state["editing"] = True
     report_state["dirty"] = False
@@ -6271,7 +6165,7 @@ def save_report():
 
     # Also store the report in MySQL (when db_config.json is set up).
     db_note = None
-    if db_mysql is not None and db_mysql.is_enabled() and not API_MODE:
+    if db_mysql is not None and db_mysql.is_enabled():
         try:
             mysql_notes = busy(db_mysql.save_report, data) or []
             busy(db_mysql.save_master_lists, master_data)
@@ -6332,44 +6226,8 @@ def show_saved_links(data):
     report_state["dirty"] = was_dirty
 
 
-def resolve_save_conflict(error):
-    """Someone else saved this report first. Nothing was overwritten; the user
-    decides between their copy and the server's."""
-    server = error.server_report
-    control = server.get("control_no", "")
-    if messagebox.askyesno(
-        "Report Changed By Someone Else",
-        f"{error}\n\nYes: load the server's copy (your changes on this form "
-        "are discarded).\n\nNo: keep your copy on the form. Check it, then "
-        "click Save again to replace the server's copy.",
-        parent=window
-    ):
-        report_state["dirty"] = False
-        load_report_into_form(control, "mysql")
-    else:
-        fsr_api.accept_server_version(control, server.get("version"))
-
-
-def finish_server_only_save(data, number_changed, note):
-    """The server has the report but the Excel backup could not be written."""
-    if number_changed:
-        populate_form(data)
-    set_control_number(data["control_no"])
-    report_state["editing"] = True
-    report_state["dirty"] = False
-    update_status()
-    messagebox.showwarning("Excel Backup", note, parent=window)
-    return True
-
-
 def import_master_data_file():
     """Bring in the reports an inspector sent from the Android app."""
-    if API_MODE:
-        messagebox.showinfo(
-            "Import Master Data",
-            "Phones now send their reports to the central server, so no file "
-            "needs to be imported.", parent=window)
-        return
     if Workbook is None:
         excel_missing_message()
         return
@@ -6674,8 +6532,6 @@ window.report_callback_exception = report_callback_exception
 # =====================================================
 
 def analytics_source():
-    if API_MODE:
-        return "mysql"
     wanted = settings.get("analytics_source", "excel")
     if wanted == "mysql" and db_mysql is not None and db_mysql.is_enabled():
         return "mysql"
@@ -6725,7 +6581,7 @@ if warehouse_ui is not None:
         master_data=master_data, save_master_lists=save_master_lists,
         excel_path=lambda: Path(excel_state["path"]),
         data_source=analytics_source, set_data_source=set_analytics_source,
-        source_text=lambda: (SERVER_LABEL if analytics_source() == "mysql"
+        source_text=lambda: ("MySQL database" if analytics_source() == "mysql"
                              else f"Excel - {Path(excel_state['path']).name}"),
         mysql_enabled=lambda: db_mysql is not None and db_mysql.is_enabled(),
         notify=notify, open_file=open_file,
