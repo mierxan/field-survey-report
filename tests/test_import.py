@@ -188,3 +188,53 @@ def test_file_written_by_the_android_code(book):
     assert back["general_information"]["supplier"] == "ABB <PTE> & Co"
     assert "Loading" in s.load_other_item_forms(book, summary["added"][0])
 
+
+# ---------- the imported data is never changed (renumbering works on a copy) ----------
+
+def two_taken_numbers(book):
+    """The owner's PC already has the phone's two numbers."""
+    for control, so in (("FSR-202610-0001", "OWNER-1"), ("FSR-202610-0002", "OWNER-2")):
+        s.write_report_to_excel(book, phone_report(control, so=so), False)
+
+
+def test_renumbering_does_not_change_the_imported_data(book):
+    two_taken_numbers(book)
+    data = fresh(master_file(phone_report("FSR-202610-0001", so="PH-1"),
+                             phone_report("FSR-202610-0002", so="PH-2")))
+    untouched = fresh(data)
+    summary = imp.import_master_data(book, data)
+    assert data == untouched                        # numbers and Receiving Refs kept
+    pairs = summary["renumbered"]
+    assert [old for old, _ in pairs] == ["FSR-202610-0001", "FSR-202610-0002"]
+    new_numbers = [new for _, new in pairs]
+    assert len(set(new_numbers)) == 2
+    assert not {"FSR-202610-0001", "FSR-202610-0002"} & set(new_numbers)
+    assert [r["control_no"] for r in summary["saved_reports"]] == new_numbers
+    for (old, new), so in zip(pairs, ("PH-1", "PH-2")):
+        moved = s.read_report(book, new)
+        assert moved["general_information"]["so_number"] == so
+        assert moved["item_lists"][0]["rows"][0]["Receiving Ref"] == f"RCV-{new}-1-01"
+
+
+def test_the_same_data_object_imported_twice_adds_nothing(book):
+    two_taken_numbers(book)
+    data = fresh(master_file(phone_report("FSR-202610-0001", so="PH-1"),
+                             phone_report("FSR-202610-0002", so="PH-2")))
+    first = imp.import_master_data(book, data)
+    before = book.read_bytes()
+    again = imp.import_master_data(book, data)      # same object, not re-read
+    assert again["added"] == [] and again["updated"] == []
+    assert sorted(again["unchanged"]) == sorted(first["added"])
+    assert book.read_bytes() == before
+    assert len(s.list_saved_reports(book)) == 4
+
+
+def test_owner_reports_are_not_modified_by_an_import(book):
+    two_taken_numbers(book)
+    owner_before = {c: s.read_report(book, c) for c in ("FSR-202610-0001", "FSR-202610-0002")}
+    data = fresh(master_file(phone_report("FSR-202610-0001", so="PH-1"),
+                             phone_report("FSR-202610-0002", so="PH-2")))
+    imp.import_master_data(book, data)
+    imp.import_master_data(book, data)
+    for control, before in owner_before.items():
+        assert s.read_report(book, control) == before

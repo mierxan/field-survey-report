@@ -12,6 +12,7 @@ device + phone Control #, recorded in a small ledger beside the workbook:
                         also edited or was deleted here: then it is left alone
                         and reported
 """
+import copy
 import json
 import shutil
 from datetime import datetime
@@ -184,7 +185,10 @@ def import_master_data(excel_path, data, on_saved=None):
     # Numbers of the PO-linked Withdrawal workbook: never reused by an import.
     taken_elsewhere = set(storage.withdrawal_control_numbers(excel_path))
 
-    for report in data["reports"]:
+    for original in data["reports"]:
+        # A copy: renumbering must never change the caller's data, so the same
+        # data can be imported again (and its master lists read) unchanged.
+        report = copy.deepcopy(original)
         phone_no = str(report["control_no"]).strip()
         key = f"{device}|{phone_no}"
         phone_saved = str(report.get("last_saved") or "")
