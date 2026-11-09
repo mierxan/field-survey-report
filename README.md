@@ -49,17 +49,19 @@ LibreOffice (unchanged).
 | `START_DEMO.bat` | **Demo Mode** with fictional TEST data (see §5) |
 | `RUN_TESTS.bat` | All automated tests |
 
-Sign-in works as before (`app_auth.py`, `users.json`).
+Sign-in uses local accounts (`app_auth.py`, `data/json/private/users.json`). New accounts and
+password changes require at least 12 characters; existing passwords remain
+valid for sign-in and are not forcibly reset.
 
 ## 3. The modules (left navigation bar)
 
 | Module | What it does |
 |---|---|
-| **Dashboard** | Inspection KPIs and warehouse activity for the chosen period (with a comparison to the previous period), current inventory balances, plus charts: Receiving vs Withdrawal, Good vs Bad Order, cargo by status, and aging. |
+| **Dashboard** | Inspection KPIs and warehouse activity for the chosen period (with a comparison to the previous period), plus charts for Receiving vs Withdrawal, Good vs Bad Order, inventory status, and aging. |
 | **Inspection Reports** | The existing form, unchanged: Good/Bad Order, the General / Documents / Item Lists / Additional Details / Incident Report pages, the Weekly Summary, Save (Ctrl+S), Open (Ctrl+O), New (Ctrl+N), Print/PDF (Ctrl+P), and MySQL sync/restore. New: the **Cargo ID** and **Receiving Ref** columns in the Item Lists. |
 | **Receiving Transactions** | Daily / Weekly / Monthly summaries (KPIs, breakdowns, comparison with the previous period, lines) and a searchable, sortable, filterable table of all receiving cargo lines. Double-click opens the original report. Excel/PDF export. |
 | **Withdrawal Transactions** | The same for withdrawals (consignee / destination breakdowns). Links to the cargo history. |
-| **Warehouse Monitoring** | Inventory, Remaining Warehouse Cargo, No Recorded Withdrawal, Inventory Aging (configurable thresholds) and the Reconciliation workflow. Double-click an item for its full Receiving/Withdrawal history. |
+| **Warehouse Monitoring** | Searchable inventory and issue tables, warehouse/status filters, item transaction history, suggested reconciliation matches, and the append-only decision history. Users may propose matches and add notes; owners can confirm/reject proposals, accept duplicate receipts, exclude supported issues, and reopen recorded decisions. |
 | **Bad Order Monitoring** | Bad Order KPIs, trend by day/week/month, by warehouse, Good vs Bad, and by cargo type (Types of Goods). Also the records table with a **case status** (Open / Under Review / Resolved) and exports. |
 | **Analytics and Reports** | All trend charts, quantity charts (one unit of measure at a time), weight charts (kg), the management summary, and the **Report Centre** with the 13 Excel/PDF reports. |
 | **Master Lists and Settings** | Data file and analytics source (Excel/MySQL), MySQL settings, a confirm-first MySQL table upgrade, the master list editor, light/dark mode, and the Demo Mode tools. |
@@ -112,10 +114,10 @@ All fields are described in [docs/DATA_FIELDS.md](docs/DATA_FIELDS.md).
 
 `START_DEMO.bat` sets `FSR_DEMO=1`. In Demo Mode:
 
-* the Excel file, Report Forms, settings, master lists and warehouse files
-  live in `demo_data\` (workbook `Field_Survey_Reports_DEMO.xlsx`);
+* the workbook and generated forms live in `data\excel\demo_data\`, while
+  master lists and JSON sidecars live in `data\json\demo_data\`;
 * MySQL is switched off and cannot be switched on;
-* the Excel file cannot be changed to a file outside `demo_data\`;
+* the Excel file cannot be changed to a file outside `data\excel\demo_data\`;
 * the top bar and sidebar show **DEMO MODE – TEST DATA ONLY**.
 
 Close the program and use `START_FSR.bat` to return to the real data.
@@ -146,12 +148,12 @@ to refresh them.
 RUN_TESTS.bat          rem or: .venv\Scripts\python -m pytest -v
 ```
 
-There are 156 tests in `tests/`, covering periods, parsing, the inventory
-scenarios, analytics, the side file, the sample data, exports, regression
-of the existing storage, MySQL (with a fake connection) and the GUI. The
-GUI tests start the real program in a temporary folder, with the sign-in
-replaced by a test user; they need a Windows desktop session. No test
-touches the real Excel file, settings or MySQL. Results are in
+The tests cover authentication, imports, periods, parsing, inventory
+scenarios, analytics, the side file, sample data, exports, storage
+regression, MySQL (with a fake connection) and the GUI. GUI tests require an
+interactive Windows desktop; they skip when no display is available. Tests
+use temporary data and do not touch the real Excel file, accounts, or a
+MySQL server. Latest results are in
 [docs/TESTING_REPORT.md](docs/TESTING_REPORT.md).
 
 ## 7. MySQL (optional, unchanged behaviour)
@@ -160,17 +162,20 @@ Every save still goes to the Excel file and, when set up, to MySQL. The
 dashboards read Excel by default; MySQL can be chosen under Settings.
 
 Databases created before this update need two new columns on
-`item_lines`. Either run `migrations/001_add_item_warehouse_links.sql` in
-Workbench, or use **Settings → Upgrade MySQL Tables…**. Existing rows are
-kept. Until then, reports still save to MySQL without the two link values,
+`item_lines`. Either run `data/schema/migrations/001_add_item_warehouse_links.sql` in
+Workbench, or use **Settings → Upgrade MySQL Tables…**, which asks for an
+admin login such as `root` (not saved) when the program's own login may not
+change tables. Existing rows are kept. Until then, reports still save to MySQL without the two link values,
 and the program says so. New installations get the columns from
-`field_survey_schema.sql`.
+`data/schema/field_survey_schema.sql`.
 
 ## 8. Project layout
 
 ```
 field_survey_report.py   main program: window, inspection form, report forms (existing)
 fsr_storage.py           field definitions + Excel storage (moved unchanged out of the main file)
+fsr_withdrawal.py        PO-linked Withdrawal: PO list, quantity rules, Withdrawal workbook
+fsr_withdrawal_ui.py     the PO picker on the Item Lists tab
 db_mysql.py              optional MySQL storage
 app_auth.py              sign in / users (unchanged)
 warehouse/               business logic, no widgets
@@ -185,17 +190,21 @@ warehouse/               business logic, no widgets
 warehouse_ui/            presentation layer
     shell.py             navigation sidebar, module switching
     components.py        KPI cards, filter bar, data table, chart panel, data service
-    pages.py, warehouse_page.py, analytics_page.py, settings_page.py, dialogs.py, theme.py
-migrations/              MySQL migration for existing databases
+    pages.py, analytics_page.py, settings_page.py, dialogs.py, theme.py
+migrations/              (moved) see data/schema/migrations/
 tests/                   pytest suite (+ gui_harness.py)
-demo_data/               the isolated sample data set (Demo Mode)
+data/schema/             optional MySQL scripts and proposal-only schema SQL
+data/json/               master lists, JSON sidecars, and private settings/accounts
+data/excel/              report templates, workbooks, and Demo Mode workbook
 docs/                    data fields, testing report, changes and limitations
 ```
 
-Where data is stored: the Excel data file (path in `settings.json`),
-`Incident Reports\` and `Report Forms\` beside it (as before), and
-`Warehouse Data\<file>.warehouse.json` beside it (new: reconciliation log,
-Bad Order case status, aging thresholds).
+Where managed data is stored: the Excel data file in `data/excel/` and its
+JSON sidecars in the corresponding path under `data/json/`. A workbook
+selected outside the managed Excel folder continues to keep its sidecars
+beside that workbook. Private settings and local accounts are kept under
+`data/json/private/` in a source checkout and in the per-user application
+data directory in an installed build.
 
 Environment variables: `FSR_DEMO=1` turns on Demo Mode. `FSR_HOME=<folder>`
 isolates every file in that folder, which is what the tests use.
@@ -205,3 +214,87 @@ isolates every file in that folder, which is what the tests use.
 `build_installer.bat` / `FieldSurveyReport.spec` work as before; the new
 packages and the Matplotlib Tk backend have been added to them. See
 `BUILD_INSTALLER.txt`.
+
+## 10. PO-linked Withdrawal reports
+
+**When it applies:** Activity = Withdrawal (General > Inspection Schedule
+Summary) on the Default Item List form. Every other combination, including
+Withdrawal on the Containerized or Loading form, works as before.
+
+**Workflow:** on the Item Lists tab, type a PO Number and click Show Lines.
+Double-click a line to add it to the Item List, or click All in the Item List to
+add every line shown. Each becomes one Item List line, filled from that Receiving
+line (PO + Receiving Ref, never description), and is locked apart from Findings.
+Double-click its Quantity to change what is withdrawn. To take a line out, click
+it and then Remove Clicked Line. Lines typed by hand may sit beside them; they
+have no Received Quantity, so no limit applies and they are not PO-verified.
+
+**PO unavailable, not found or a placeholder** (`n/a`, `Consolidated` ...): type
+the lines on the Item Lists as usual. The report saves to the main workbook and
+is not linked to a Receiving line.
+
+**Withdrawal reports therefore exist in two places.** PO-linked reports are in
+`Withdrawal_Reports.xlsx`, the others in the main workbook. A Control # is in
+one of them only (the numbering checks both), and a report is always saved back
+to the workbook that holds it. A saved PO-linked report cannot change Activity
+or form; a saved main workbook report cannot take PO lines. Start a new report
+instead. Historical reports are not moved.
+
+**PO lines:** the picker reads the saved Receiving reports of the main workbook,
+so a new Receiving report can be picked as soon as it is saved. A line's PO is
+its own PO Number, or else its report's. It is only ever read.
+
+- `Quantity` is what was **received**, not what was ordered, so the program calls
+  it Received Quantity. It does not know the original PO quantity.
+- A line is identified by its Receiving Ref. The line number shown is only its
+  order within the PO.
+- A PO cell naming several POs (`1001 / 1002`) cannot be tied to one PO. Its lines
+  are not offered; the "not found" message counts them.
+- A line whose Quantity is not a number above 0 is left out and counted.
+
+**Item lists:** two files beside the main workbook are rebuilt from the saved
+reports after a PO-linked or Receiving save, so edits by hand in them are lost.
+
+- `PO_Master.xlsx`: every Receiving line with something left, its `Quantity` being
+  what remains. A fully withdrawn line leaves the list. Rows of reports that are
+  not in the main workbook (not imported yet) are kept as they are.
+- `Withdrawn_Item.xlsx`: the same columns plus `Date Withdrawn` (the Inspection
+  Date) as the last one, one row per withdrawn line, partial withdrawals included.
+  `Control #` is that of the Withdrawal. A Withdrawal in the main workbook is listed
+  only when it names a Receiving Ref.
+
+If either file is open in Excel, the report still saves, a note says so, and the
+next save brings them up to date.
+
+**Withdrawal workbook:** `Withdrawal_Reports.xlsx` beside the main workbook.
+In Demo Mode it must stay inside the demo folder.
+
+| Sheet (table) | Rows | Columns |
+|---|---|---|
+| Withdrawal Reports (`WithdrawalReportsTable`) | one per report; `Control #` is the report ID | the main Reports columns + `Entry Source`, `PO Source File` |
+| Withdrawal Lines (`WithdrawalLinesTable`) | one per line; `Line ID` stays with the line through edits | the main Item List columns with `Quantity` named `Withdrawal Quantity` + `PO Line No`, `Source Control #`, `Received Quantity`, `Line ID` |
+| Declared Goods (`WithdrawalGoodsTable`) | as in the main workbook | |
+| Remarks (`WithdrawalRemarksTable`) | as in the main workbook | |
+
+A file with this name but another layout is reported and left untouched.
+
+**Quantity rules:** a number above 0, starting at what remains of the line, and
+no more than that. Remaining = Received Quantity minus what all other saved
+Withdrawals took by the same Receiving Ref; it is worked out each time and the
+Receiving report is not changed. A line with nothing left is not offered. Decimals
+only for `M` and `KG` (and their spellings); every other unit, known or not, must
+be whole. Total Price = Unit Price x Withdrawal Qty. On a partial withdrawal the
+Weight is cleared, because the listed weight is that of the whole received line.
+
+**Stock:** the warehouse pages also read this workbook, read-only, and a Control
+# in both files counts once. The rules in section 4 are unchanged. A picked line carries the Receiving Ref of
+its batch, so it reduces that balance when the withdrawal's Location is the
+warehouse that received it. Otherwise it goes to Reconciliation and deducts
+nothing, because transfers between warehouses are not assumed.
+
+**MySQL:** reports are copied as before with no schema change; `quantity` holds
+the withdrawal quantity. PO Line No, Source Control # and Received Quantity are
+in Excel only, so a PO-linked report always opens from the Withdrawal workbook.
+
+**Printing:** the existing Default Cargo Details form, with the withdrawal
+quantity in Quantity. It has no columns for PO Line No or Received Quantity.

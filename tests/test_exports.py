@@ -106,6 +106,50 @@ def test_empty_report_exports(tmp_path):
         ex.export(doc, tmp_path / f"{key}.xlsx")
 
 
+def test_long_multi_item_remarks_export_to_pdf(tmp_path):
+    from factories import report
+    from fsr_storage import write_report_to_excel
+    from warehouse import store
+
+    data = report(
+        "TEST-PDF-LONG-001", "Receiving", ANCHOR,
+        lines=[
+            {"cargo": "TEST-PDF-CARGO-1", "qty": 2, "unit": "PCS",
+             "desc": "First multi-item cargo"},
+            {"cargo": "TEST-PDF-CARGO-2", "qty": 3, "unit": "BOX",
+             "desc": "Second multi-item cargo"},
+        ],
+        so="TEST-PDF-SO-001")
+    long_remark = ("Long QA remark with <special> & escaped characters. " * 60
+                   + "FINAL-REMARK-SENTINEL")
+    data["other_important_remarks"] = [long_remark]
+    workbook = tmp_path / "long-report.xlsx"
+    write_report_to_excel(workbook, data, editing=True)
+    snapshot = store.load_snapshot(workbook, as_of=ANCHOR)
+    doc = ex.summary_report(snapshot, "Receiving", "weekly", ANCHOR)
+
+    pdf = ex.export(doc, tmp_path / "long-report.pdf")
+    reader = PdfReader(str(pdf))
+    text = "\n".join(
+        line for page in reader.pages
+        for line in (page.extract_text() or "").splitlines()
+        if not line.startswith("Weekly Receiving Summary Report - generated")
+        and not line.startswith("Page "))
+    normalized_text = " ".join(text.split())
+    compact_text = "".join(text.split())
+
+    assert len(reader.pages) > 1
+    assert "First multi-item cargo" in normalized_text
+    assert "Second multi-item cargo" in normalized_text
+    assert "FINAL-REMARK-SENTINEL" in compact_text
+    expected_remark = (
+        "LongQAremarkwith<special>&escapedcharacters."
+        * 60 + "FINAL-REMARK-SENTINEL")
+    assert expected_remark in compact_text
+    assert all(f"Page {n} of {len(reader.pages)}" in page.extract_text()
+               for n, page in enumerate(reader.pages, start=1))
+
+
 @pytest.mark.parametrize("kind", ["weekly", "monthly"])
 @pytest.mark.parametrize("activity", ["Receiving", "Withdrawal"])
 def test_summary_report_has_one_row_per_item_line(sample, outdir, kind,

@@ -6,6 +6,7 @@ from datetime import date
 
 import pytest
 
+import fsr_paths
 import fsr_storage
 from conftest import ANCHOR
 from warehouse import analytics as an
@@ -208,6 +209,21 @@ def test_reset_removes_only_test_records(tmp_path):
     assert not list((tmp_path / "Incident Reports").glob("TEST-*"))
     assert [e["subject"] for e in store.SideStore(path).history()] == \
         ["FSR-2026-0009/1/1"]
+
+
+def test_reset_removes_managed_incident_sidecars(tmp_path, monkeypatch):
+    excel_root = tmp_path / "data" / "excel"
+    json_root = tmp_path / "data" / "json"
+    monkeypatch.setattr(fsr_paths, "EXCEL_DIR", excel_root)
+    monkeypatch.setattr(fsr_paths, "JSON_DIR", json_root)
+    folder = excel_root / "demo_data"
+    path, _ = sd.generate(folder, anchor=ANCHOR)
+    incidents = json_root / "demo_data" / fsr_storage.INCIDENT_FOLDER_NAME
+    assert list(incidents.glob("TEST-*.json"))
+
+    sd.reset(folder)
+
+    assert not list(incidents.glob("TEST-*.json"))
 
 
 def test_real_project_files_untouched():

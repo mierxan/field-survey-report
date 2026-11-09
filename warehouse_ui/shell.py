@@ -14,6 +14,7 @@ MODULES = [
     ("inspection", "Inspection Reports", "✎"),
     ("receiving", "Receiving Transactions", "↓"),
     ("withdrawal", "Withdrawal Transactions", "↑"),
+    ("warehouse", "Warehouse Monitoring", "▤"),
     ("bad_order", "Bad Order Monitoring", "⚠"),
     ("analytics", "Analytics and Reports", "▲"),
     ("settings", "Master Lists and Settings", "⚙"),
@@ -76,6 +77,7 @@ class Shell:
         from .analytics_page import AnalyticsPage
         from .pages import BadOrderPage, DashboardPage, TransactionsPage
         from .settings_page import SettingsPage
+        from .warehouse_page import WarehousePage
         parent = self.ctx.window
         factories = {
             "dashboard": lambda: DashboardPage(parent, self.ctx, self.service),
@@ -84,6 +86,7 @@ class Shell:
             "withdrawal": lambda: TransactionsPage(parent, self.ctx,
                                                    self.service, WITHDRAWAL),
             "bad_order": lambda: BadOrderPage(parent, self.ctx, self.service),
+            "warehouse": lambda: WarehousePage(parent, self.ctx, self.service),
             "analytics": lambda: AnalyticsPage(parent, self.ctx,
                                                self.service),
             "settings": lambda: SettingsPage(parent, self.ctx, self.service),

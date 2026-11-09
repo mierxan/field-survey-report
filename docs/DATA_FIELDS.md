@@ -8,7 +8,7 @@ unchanged.
 
 | Warehouse meaning | Source field (Excel sheet / column) | Notes |
 |---|---|---|
-| Transaction ID (report) | Reports / `Control #` | `FSR-YYYY-NNNN`; sample data `TEST-REC-NNNN` / `TEST-WDR-NNNN` |
+| Transaction ID (report) | Reports / `Control #` | `FSR-<Inspector Initials>-YYYYMM-NNNN`, for example `FSR-JDC-202611-0001` (older reports keep `FSR-YYYYMM-NNNN` or `FSR-YYYY-NNNN`); sample data `TEST-REC-NNNN` / `TEST-WDR-NNNN` |
 | Transaction type | Reports / `Activity` | `Receiving` / `Withdrawal` (typed values starting "receiv…" / "withdraw…" are accepted) |
 | Transaction date | Reports / `Inspection Date` | Reports without a valid date are flagged and left out of aging and period figures |
 | Transaction time | Reports / `Commenced Time` | Shown only |
@@ -38,10 +38,12 @@ printed** on the Cargo Details form.
 | Cargo ID | `Cargo ID` | `cargo_id VARCHAR(100)` | Identifies an inventory item. **Receiving:** typed (or picked from known IDs for another batch of the same cargo). **Withdrawal:** picked from the items with a positive balance at the report's Location (drop-down); choosing one fills an empty Description / PO / Packaging. Two items may share a description but never a Cargo ID. |
 | Receiving Ref | `Receiving Ref` | `receiving_ref VARCHAR(100)` | One received batch. **Receiving:** filled in automatically on the first save as `RCV-<Control #>-<list>-<line, 2 digits>` (e.g. `RCV-FSR-2026-0007-1-03`) and then kept. **Withdrawal:** optional, names the batch the cargo comes from. Reports saved before this update get the same reference on reading (not stored). |
 
-### Warehouse side file (`Warehouse Data\<Excel file name>.warehouse.json`)
+### Warehouse side file (`data/json/.../Warehouse Data/<Excel file name>.warehouse.json`)
 
-This file sits beside the Excel data file and is written atomically. It
-never changes a report.
+For managed project workbooks this file is stored in the matching path under
+`data/json/`; for a workbook selected outside the managed Excel folder it
+remains beside that workbook. It is written atomically and never changes a
+report.
 
 ```json
 {
@@ -86,7 +88,7 @@ never changes a report.
 
 ## 4. MySQL schema change
 
-`migrations/001_add_item_warehouse_links.sql` (or Settings → Upgrade MySQL
+`data/schema/migrations/001_add_item_warehouse_links.sql` (or Settings → Upgrade MySQL
 Tables) adds:
 
 ```sql

@@ -64,15 +64,15 @@ if exist dist rmdir /s /q dist
   --collect-submodules warehouse_ui ^
   --hidden-import matplotlib.backends.backend_tkagg ^
   --hidden-import win32com.client ^
-  --add-data "First_Page.xlsx;." ^
-  --add-data "Cargo_Details.xlsx;." ^
-  --add-data "Containerized_Loading_Form.xlsx;." ^
-  --add-data "Incident_Report.xlsx;." ^
-  --add-data "master_list.json;." ^
+  --add-data "data\excel\First_Page.xlsx;data\excel" ^
+  --add-data "data\excel\Cargo_Details.xlsx;data\excel" ^
+  --add-data "data\excel\Containerized_Loading_Form.xlsx;data\excel" ^
+  --add-data "data\excel\Incident_Report.xlsx;data\excel" ^
+  --add-data "data\json\master_list.json;data\json" ^
   --add-data "logo.png;." ^
   --add-data "logo.ico;." ^
-  --add-data "installer_defaults\db_config.json;." ^
-  --add-data "auth_seed.json;." ^
+  --add-data "data\json\private\installer_defaults\db_config.json;data\json\private\installer_defaults" ^
+  --add-data "data\json\private\auth_seed.json;data\json\private" ^
   field_survey_report.py
 if errorlevel 1 goto failed
 if not exist "dist\FieldSurveyReport\FieldSurveyReport.exe" goto failed

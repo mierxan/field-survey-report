@@ -30,7 +30,7 @@ The existing program was enhanced incrementally, not rebuilt:
    not printed.
 3. The business logic is a new package, `warehouse/`, with no widgets.
 4. The presentation is a new package, `warehouse_ui/`: a navigation
-   sidebar and 7 module pages. The existing form became the "Inspection
+   sidebar and 8 module pages. The existing form became the "Inspection
    Reports" module, unchanged.
 5. Demo Mode / `FSR_HOME` isolate all files, and there is a TEST data
    generator.
@@ -39,9 +39,13 @@ The existing program was enhanced incrementally, not rebuilt:
 
 | File | Change |
 |---|---|
-| `field_survey_report.py` | Storage code moved out (now imported); Demo Mode / `FSR_HOME` folders; new light theme as default (`UI_VERSION` 3, dark mode kept); navigation sidebar + module title in the top bar; Cargo ID / Receiving Ref columns in the Item Lists (Cargo ID drop-down); Receiving Refs shown after saving; MySQL notes; mouse-wheel / page keys only scroll the form when it is visible; Ctrl+N / Ctrl+O switch to the form; MySQL settings and changing the Excel file locked in Demo Mode; start-up of the warehouse modules (if they fail to load, the program still works without them) |
+| `field_survey_report.py` | Storage code moved out (now imported); Demo Mode / `FSR_HOME` folders; new light theme as default (`UI_VERSION` 3, dark mode kept); navigation sidebar + module title in the top bar; Cargo ID / Receiving Ref columns in the Item Lists (Cargo ID drop-down); Receiving Refs shown after saving; MySQL notes; mouse-wheel / page keys only scroll the form when it is visible; Ctrl+N / Ctrl+O switch to the form; MySQL settings and changing the Excel file locked in Demo Mode; start-up of the warehouse modules (if they fail to load, the program still works without them); safe error handling for malformed account files |
+| `app_auth.py` | Invalid, unreadable, or malformed account files now stop startup without being treated as an empty account store or overwritten; a missing file still permits first-run owner setup; new and changed passwords require 12 characters while existing passwords remain usable |
+| `warehouse_ui/shell.py` | Adds the Warehouse Monitoring navigation entry and page factory |
+| `warehouse_ui/warehouse_page.py` | Inventory filtering/history, issue suggestions, role-gated reconciliation actions, and audit-log reopening |
+| `tests/test_auth.py`, `tests/test_gui.py` | Authentication file-safety tests and GUI tests for inventory/reconciliation actions |
 | `db_mysql.py` | Link columns written / read only when the table has them; `missing_link_columns`, `upgrade_schema`, `load_all_reports`; `save_report` returns notes |
-| `field_survey_schema.sql` | `cargo_id`, `receiving_ref` and an index on `item_lines` (new installations) |
+| `data/schema/field_survey_schema.sql` | `cargo_id`, `receiving_ref` and an index on `item_lines` (new installations) |
 | `requirements.txt` | + matplotlib, reportlab |
 | `build_installer.bat`, `FieldSurveyReport.spec` | Include `warehouse`, `warehouse_ui` and the Matplotlib Tk backend |
 
@@ -52,13 +56,13 @@ The existing program was enhanced incrementally, not rebuilt:
 | `fsr_storage.py` | Field definitions + Excel storage (moved), `ITEM_LINK_HEADERS`, `default_receiving_ref`, `read_all_reports` (one pass), `delete_reports_from_excel` (Demo reset only) |
 | `warehouse/*.py` | periods, transactions, inventory, analytics, store, tables, exports, sample_data |
 | `warehouse_ui/*.py` | shell, theme, components, pages, warehouse_page, analytics_page, settings_page, dialogs |
-| `migrations/001_add_item_warehouse_links.sql` | MySQL migration for existing databases |
+| `data/schema/migrations/001_add_item_warehouse_links.sql` | MySQL migration for existing databases |
 | `tests/*.py`, `pytest.ini`, `requirements-dev.txt`, `RUN_TESTS.bat` | Automated tests |
-| `START_DEMO.bat`, `demo_data/` | Demo Mode and the isolated sample data set |
+| `START_DEMO.bat`, `data/excel/demo_data/`, `data/json/demo_data/` | Demo Mode and the isolated sample data set |
 | `README.md`, `docs/*.md` | Documentation |
 
-Files not changed: `app_auth.py`, the three Excel templates,
-`master_list.json`, the other SQL scripts and batch files, `installer.iss`.
+Contents not changed: the three Excel templates,
+`data/json/master_list.json`, the other SQL scripts and batch files, `installer.iss`.
 
 ## Remaining limitations
 

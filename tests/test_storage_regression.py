@@ -10,7 +10,7 @@ from openpyxl import Workbook, load_workbook
 import fsr_storage as s
 from factories import rec, report
 
-YEAR = datetime.now().strftime("%Y%m")   # control numbers: FSR-YYYYMM-0001
+YEAR = datetime.now().strftime("%Y%m")   # control numbers: FSR-JDC-YYYYMM-0001
 
 
 def full_report(control="", condition="Good Order"):
@@ -30,17 +30,52 @@ def full_report(control="", condition="Good Order"):
     return data
 
 
-def test_control_numbers(tmp_path):
+@pytest.fixture
+def inspector():
+    s.set_control_initials("JDC")
+    yield "JDC"
+    s.set_control_initials("")
+
+
+def test_control_numbers(tmp_path, inspector):
     path = tmp_path / "Reports.xlsx"
-    assert s.generate_control_number(path) == f"FSR-{YEAR}-0001"
-    first = full_report(f"FSR-{YEAR}-0001")
+    assert s.generate_control_number(path) == f"FSR-JDC-{YEAR}-0001"
+    first = full_report(f"FSR-JDC-{YEAR}-0001")
     s.write_report_to_excel(path, first, editing=False)
-    assert s.generate_control_number(path) == f"FSR-{YEAR}-0002"
-    assert s.next_control_number([f"FSR-{YEAR}-0009", "x"]) == \
-        f"FSR-{YEAR}-0010"
-    # numbers of other months or the old yearly format do not count
-    assert s.next_control_number(["FSR-190001-0042", "FSR-2026-0042"]) == \
-        f"FSR-{YEAR}-0001"
+    assert s.generate_control_number(path) == f"FSR-JDC-{YEAR}-0002"
+    assert s.next_control_number([f"FSR-JDC-{YEAR}-0009", "x"]) == \
+        f"FSR-JDC-{YEAR}-0010"
+    # other months, other inspectors and the older formats do not count
+    assert s.next_control_number(
+        [f"FSR-JDC-190001-0042", f"FSR-AB-{YEAR}-0050", f"FSR-{YEAR}-0042",
+         "FSR-2026-0042"]) == f"FSR-JDC-{YEAR}-0001"
+
+
+def test_each_inspector_has_their_own_running_number(inspector):
+    numbers = [f"FSR-JDC-{YEAR}-0003", f"FSR-AB-{YEAR}-0007"]
+    assert s.next_control_number(numbers) == f"FSR-JDC-{YEAR}-0004"
+    assert s.next_control_number(numbers, "AB") == f"FSR-AB-{YEAR}-0008"
+
+
+def test_initials_are_cleaned_and_have_a_fallback():
+    s.set_control_initials(" j-d c ")
+    assert s.next_control_number([]) == f"FSR-JDC-{YEAR}-0001"
+    s.set_control_initials("")
+    assert s.next_control_number([]) == f"FSR-XX-{YEAR}-0001"
+
+
+def test_initials_are_read_from_the_new_format_only():
+    assert s.control_initials_of("FSR-JDC-202611-0001") == "JDC"
+    for old in ("FSR-202611-0001", "FSR-2026-0001", "OLD-2608-6759E8", "", None):
+        assert s.control_initials_of(old) is None
+
+
+def test_lists_sort_by_age_whoever_the_inspector(inspector):
+    numbers = ["FSR-ZZ-202610-0001", "FSR-AB-202611-0002", "FSR-JDC-202611-0001",
+               "FSR-202609-0009", "FSR-2026-0004"]
+    assert sorted(numbers, key=s.control_sort_key, reverse=True) == [
+        "FSR-AB-202611-0002", "FSR-JDC-202611-0001", "FSR-ZZ-202610-0001",
+        "FSR-202609-0009", "FSR-2026-0004"]
 
 
 def test_save_and_read_back_everything(tmp_path):
@@ -102,10 +137,10 @@ def test_uom_and_currency_columns_round_trip(tmp_path):
 
 def test_new_report_never_overwrites_existing_number(tmp_path):
     path = tmp_path / "Reports.xlsx"
-    s.write_report_to_excel(path, full_report(f"FSR-{YEAR}-0001"), False)
-    result = s.write_report_to_excel(path, full_report(f"FSR-{YEAR}-0001"),
+    s.write_report_to_excel(path, full_report(f"FSR-XX-{YEAR}-0001"), False)
+    result = s.write_report_to_excel(path, full_report(f"FSR-XX-{YEAR}-0001"),
                                      editing=False)
-    assert result["control"] == f"FSR-{YEAR}-0002"
+    assert result["control"] == f"FSR-XX-{YEAR}-0002"
     assert len(s.list_saved_reports(path)) == 2
 
 
@@ -203,7 +238,8 @@ def test_delete_reports_only_removes_named(tmp_path):
 
 def test_master_list_file_is_valid_json():
     data = json.loads((s.Path(__file__).resolve().parent.parent /
-                       "master_list.json").read_text(encoding="utf-8"))
+                       "data" / "json" / "master_list.json").read_text(
+                           encoding="utf-8"))
     for key in ("consignee_list", "supplier_list", "broker_list",
                 "hauler_list", "location_list", "destination_list",
                 "country_of_origin_list"):

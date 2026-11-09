@@ -7,10 +7,9 @@ Optional (PDF / print):
     pypdf, pywin32 (Windows + Microsoft Excel)  or  LibreOffice
 
 Files expected next to this script:
-    master_list.json, First_Page.xlsx, Cargo_Details.xlsx,
-    Containerized_Loading_Form.xlsx, logo.png (optional)
-Files created next to this script:
-    settings.json (theme + last Excel file), field_survey_report.log
+    data/json/master_list.json and data/excel/*.xlsx
+Files created in data/:
+    json/private/settings.json, json/private/users.json, excel/*.xlsx
 """
 
 import html
@@ -20,6 +19,7 @@ import math
 import os
 import posixpath
 import re
+import socket
 import shutil
 import subprocess
 import sys
@@ -32,6 +32,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from tkinter import ttk, PhotoImage, messagebox, filedialog
 from tkinter import font as tkfont
+from types import SimpleNamespace
 
 try:
     import ttkbootstrap as tb
@@ -70,7 +71,7 @@ try:
 except ImportError:
     Workbook = None
 
-# Optional MySQL storage (db_mysql.py + db_config.json beside this script).
+# Optional MySQL storage (db_mysql.py + private db_config.json).
 try:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import db_mysql
@@ -79,7 +80,12 @@ except ImportError:
 
 # Field definitions + Excel storage (fsr_storage.py beside this script).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fsr_paths
 import fsr_import                  # reports sent from the Android app
+import fsr_portal_export           # one JSON file for the web portal
+import fsr_withdrawal              # PO-linked Withdrawal reports
+import fsr_withdrawal_ui
+from fsr_withdrawal_ui import WithdrawalPanel
 from fsr_storage import (          # plain data layer
     Workbook,
     CHOICE_VALUES, clean_incident_reports, CONDITION_BAD, CONDITION_GOOD,
@@ -94,8 +100,10 @@ from fsr_storage import (          # plain data layer
     list_saved_reports, normalize_field, parse_date, read_report,
     load_other_item_forms, save_other_item_forms,
     recent_date_options, safe_filename, save_incident_data, SCHEDULE_FIELDS,
+    set_control_initials,
     search_index_excel, to_number, TRANSPORT_FIELDS, TYPEABLE_CHOICES,
-    write_json_atomic, write_report_to_excel
+    write_json_atomic, write_report_to_excel, withdrawal_control_numbers,
+    same_key,
 )
 
 # Sign in / sign up (app_auth.py beside this script). Without it the
@@ -106,65 +114,74 @@ try:
 except ImportError:
     app_auth = None
 
-# Where things live.
-#   BASE_DIR   - the program's own files (templates, logo, defaults)
-#   DATA_DIR   - the user's data: Excel file, Report Forms, master_list.json,
-#                db_config.json
-#   CONFIG_DIR - settings.json, users.json, the log
-# Run from PyCharm / Python all three are the program folder. Installed
-# with the Setup program (.exe) the data goes to the user's folders, because
-# the program folder (Program Files) cannot be written to.
+# Where things live. Managed workbooks and JSON data use parallel folders.
 FROZEN = bool(getattr(sys, "frozen", False))
 if FROZEN:
     BASE_DIR = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
     _documents = Path.home() / "Documents"
-    DATA_DIR = (_documents if _documents.exists() else Path.home()) / \
+    DATA_ROOT = (_documents if _documents.exists() else Path.home()) / \
         "Field Survey Report"
-    CONFIG_DIR = Path(os.environ.get("APPDATA") or Path.home()) / \
+    PRIVATE_JSON_DIR = Path(os.environ.get("APPDATA") or Path.home()) / \
         "FieldSurveyReport"
 else:
     BASE_DIR = Path(__file__).resolve().parent
-    DATA_DIR = CONFIG_DIR = BASE_DIR
+    DATA_ROOT = BASE_DIR / "data"
 
-# Demo Mode (START_DEMO.bat, or FSR_DEMO=1): the Excel file, Report Forms,
-# settings and master lists live in a separate "demo_data" folder and MySQL
-# is switched off, so sample (TEST-...) records can never reach the real
-# data. FSR_HOME=<folder> isolates everything the same way (the automated
-# tests use it). The sign-in accounts stay the normal ones in Demo Mode.
+# Demo Mode keeps sample workbooks and JSON in separate subfolders; MySQL is
+# disabled. FSR_HOME provides the same layout for automated tests.
 DEMO_MODE = os.environ.get("FSR_DEMO", "").strip() == "1"
-USERS_DIR = CONFIG_DIR
 _home = os.environ.get("FSR_HOME", "").strip()
-if _home or DEMO_MODE:
-    DATA_DIR = CONFIG_DIR = Path(_home) if _home else DATA_DIR / "demo_data"
-    if _home:
-        USERS_DIR = CONFIG_DIR
+if _home:
+    DATA_ROOT = Path(_home)
 
-for _folder in (DATA_DIR, CONFIG_DIR):
+JSON_ROOT = DATA_ROOT / "json"
+JSON_DIR = JSON_ROOT
+EXCEL_ROOT = DATA_ROOT / "excel"
+if DEMO_MODE and not _home:
+    JSON_DIR = JSON_ROOT / "demo_data"
+    DATA_DIR = EXCEL_ROOT / "demo_data"
+else:
+    DATA_DIR = EXCEL_ROOT
+if not FROZEN or _home:
+    PRIVATE_JSON_DIR = DATA_ROOT / "json" / "private"
+CONFIG_DIR = PRIVATE_JSON_DIR
+
+fsr_paths.configure_data_dirs(DATA_ROOT, JSON_ROOT, EXCEL_ROOT)
+
+for _folder in (DATA_DIR, JSON_DIR, PRIVATE_JSON_DIR):
     try:
         _folder.mkdir(parents=True, exist_ok=True)
-    except OSError:
-        pass
+    except OSError as error:
+        raise OSError(f"Could not create application data folder {_folder}: "
+                      f"{error}") from error
 
-if FROZEN or DATA_DIR != BASE_DIR:
-    # first start: put the editable default files in the data folder
-    # (never the MySQL login into a demo / test folder)
-    for _name in ("master_list.json", "db_config.json"):
-        if _name == "db_config.json" and (_home or DEMO_MODE):
-            continue
-        if not (DATA_DIR / _name).exists() and (BASE_DIR / _name).exists():
-            try:
-                shutil.copy2(BASE_DIR / _name, DATA_DIR / _name)
-            except OSError:
-                pass
+MASTER_LIST_FILE = JSON_DIR / "master_list.json"
+SETTINGS_FILE = ((JSON_DIR / "settings.json") if DEMO_MODE and not _home
+                 else PRIVATE_JSON_DIR / "settings.json")
+USERS_FILE = PRIVATE_JSON_DIR / "users.json"
+LOG_FILE = PRIVATE_JSON_DIR / "field_survey_report.log"
+
+if not DEMO_MODE:
+    if not MASTER_LIST_FILE.exists():
+        legacy_master_list = DATA_ROOT / "master_list.json"
+        if legacy_master_list.exists():
+            MASTER_LIST_FILE.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(legacy_master_list, MASTER_LIST_FILE)
+    _default_files = (
+        (MASTER_LIST_FILE, BASE_DIR / "data" / "json" / "master_list.json"),
+        (PRIVATE_JSON_DIR / "db_config.json",
+         BASE_DIR / "data" / "json" / "private" / "installer_defaults"
+         / "db_config.json"),
+    )
+    for _target, _source in _default_files:
+        if not _target.exists() and _source.exists() and _target != _source:
+            _target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(_source, _target)
 
 if db_mysql is not None:
-    db_mysql.CONFIG_FILE = DATA_DIR / "db_config.json"
+    db_mysql.CONFIG_FILE = PRIVATE_JSON_DIR / "db_config.json"
     if DEMO_MODE:
         db_mysql.is_enabled = lambda: False       # never MySQL in Demo Mode
-
-MASTER_LIST_FILE = DATA_DIR / "master_list.json"
-SETTINGS_FILE = CONFIG_DIR / "settings.json"
-LOG_FILE = CONFIG_DIR / "field_survey_report.log"
 
 # Names of the lists inside master_list.json.
 LOCATION_LIST_KEY = "location_list"
@@ -319,9 +336,6 @@ window.after(1200, apply_window_icon)
 # =====================================================
 # SIGN IN  (the Field Survey Report opens only after signing in)
 # =====================================================
-USERS_FILE = USERS_DIR / "users.json"
-
-
 def icon_for_dialog(dialog):
     try:
         if LOGO_ICO.exists() and sys.platform.startswith("win"):
@@ -343,6 +357,12 @@ if app_auth is None:
 
 try:
     user_store = app_auth.UserStore(USERS_FILE)
+except app_auth.UserDataError as error:
+    messagebox.showerror(
+        "Field Survey Report",
+        f"{error}\n\nThe account file was not overwritten.")
+    window.destroy()
+    sys.exit(1)
 except OSError as error:
     messagebox.showerror(
         "Field Survey Report",
@@ -360,6 +380,7 @@ if current_user is None:
 settings["last_login_initials"] = current_user.get("initials", "")
 save_settings()
 USER_FULL_NAME = app_auth.full_name(current_user)      # printed on the forms
+set_control_initials(current_user.get("initials"))     # in every new Control #
 print_name = {"value": USER_FULL_NAME}                 # preparer of this printout
 IS_OWNER = current_user.get("role") == "owner"
 window.title(f"Field Survey Report - {USER_FULL_NAME}")
@@ -418,6 +439,13 @@ def initial_excel_path():
 # Excel file in use + whether the form shows a saved report / has changes.
 excel_state = {"path": initial_excel_path()}
 report_state = {"editing": False, "dirty": False}
+
+
+def withdrawal_book():
+    """The Withdrawal workbook beside the Excel file in use. In Demo Mode it
+    must stay inside the demo folder (ValueError otherwise)."""
+    return fsr_paths.withdrawal_workbook_path(
+        excel_state["path"], DATA_DIR if DEMO_MODE else None)
 pdf_state = {"folder": settings.get("pdf_folder")}
 
 # Filled in later (declared here so callbacks can refer to them).
@@ -1715,6 +1743,11 @@ import_master_button = tb.Button(
     command=lambda: import_master_data_file()
 )
 import_master_button.pack(fill="x", pady=3)
+portal_export_button = tb.Button(
+    panel, text="Export for Portal...", bootstyle="secondary-outline",
+    command=lambda: export_for_portal()
+)
+portal_export_button.pack(fill="x", pady=3)
 
 # MySQL: three circles. All three colours = MySQL works,
 # three red circles = it does not. Click them to check again.
@@ -2114,6 +2147,7 @@ class ItemLine(list):
     def __init__(self):
         super().__init__()
         self.hidden = {}
+        self.po_link = {}       # Withdrawal fields of a PO-linked line
 
 
 class ItemListSection:
@@ -2230,6 +2264,7 @@ class ItemListSection:
         self.cell(widgets, "Weights").bind(
             "<FocusOut>", lambda e, w=widgets: self.split_weight(w),
             add="+")
+        fsr_withdrawal_ui.bind_line(self, widgets, lambda: withdrawal_panel)
         self.rows.append(widgets)
         refresh_findings_counter()
 
@@ -2260,6 +2295,8 @@ class ItemListSection:
 
     def split_quantity(self, widgets):
         """'12 pcs' typed in Quantity -> Quantity 12, UOM PCS."""
+        if fsr_withdrawal_ui.is_linked(widgets):
+            return
         quantity_box = self.cell(widgets, "Quantity")
         uom_box = self.cell(widgets, "UOM")
         typed = quantity_box.get().strip()
@@ -2366,6 +2403,7 @@ class ItemListSection:
         row["Weights"] = " ".join(filter(None, (weight, unit)))
         row.update({h: widgets.hidden.get(h, "")
                     for h in self.hidden_headers})
+        row.update(widgets.po_link)
         return row if any(row[h] for h in SAVED_LINE_HEADERS) else None
 
     def values(self):
@@ -2376,23 +2414,31 @@ class ItemListSection:
         """Fill rows from a list of {header: text} dictionaries."""
         self.set_row_count(max(5, len(lines)))
         for widgets, row in zip(self.rows, lines):
-            row = dict(row)
-            row["Quantity"], row["UOM"] = split_quantity_unit(
-                row.get("Quantity"), row.get("UOM"))
-            row["Weights"], row["Weight Unit"] = split_quantity_unit(
-                row.get("Weights"))
-            for header, widget in zip(self.headers, widgets):
-                set_entry(widget, str(row.get(header) or ""))
-            widgets.hidden = {h: str(row.get(h) or "")
-                              for h in self.hidden_headers}
-            if self.priced:
-                total = self.cell(widgets, "Total Price")
-                total.manual_total = bool(total.get().strip())
+            self.fill_line(widgets, row)
         self.update_subtotal()
         refresh_findings_counter()
 
+    def fill_line(self, widgets, row):
+        """Fill one line from a {header: text} dictionary."""
+        fsr_withdrawal_ui.unlock_line(self, widgets)
+        row = dict(row)
+        if not row.get(fsr_withdrawal.LINE_NO_HEADER):
+            row["Quantity"], row["UOM"] = split_quantity_unit(
+                row.get("Quantity"), row.get("UOM"))
+        row["Weights"], row["Weight Unit"] = split_quantity_unit(
+            row.get("Weights"))
+        for header, widget in zip(self.headers, widgets):
+            set_entry(widget, str(row.get(header) or ""))
+        widgets.hidden = {h: str(row.get(h) or "")
+                          for h in self.hidden_headers}
+        if self.priced:
+            total = self.cell(widgets, "Total Price")
+            total.manual_total = bool(total.get().strip())
+        fsr_withdrawal_ui.restore_link(self, widgets, row)
+
     def clear(self):
         for widgets in self.rows:
+            fsr_withdrawal_ui.unlock_line(self, widgets)
             for widget in widgets:
                 set_entry(widget, "")
                 widget.manual_total = False
@@ -2500,6 +2546,8 @@ def set_item_form(form):
 
 def choose_item_form():
     """A form picked with the buttons above the Item Lists."""
+    if not withdrawal_panel.context_changed():
+        return
     if any(section.form != item_form_var.get() for section in item_frames):
         set_item_form(item_form_var.get())
         mark_dirty()
@@ -2551,6 +2599,21 @@ items_hint = tb.Label(
     bootstyle="secondary"
 )
 items_hint.grid(row=1, column=2, padx=16)
+
+
+withdrawal_panel = WithdrawalPanel(items_body, SimpleNamespace(
+    window=window, activity_entry=schedule_entries["activity"],
+    form_var=item_form_var,
+    main_path=lambda: Path(excel_state["path"]),
+    control_no=lambda: control_entry.get().strip(),
+    sections=lambda: item_frames,
+    stored_in_main=lambda: report_state["editing"],
+    header_po_entry=lambda: document_entries["po_number"],
+    mark_dirty=mark_dirty,
+), row=2)
+for _event in ("<<ComboboxSelected>>", "<FocusOut>"):
+    schedule_entries["activity"].bind(
+        _event, lambda e: withdrawal_panel.context_changed(), add="+")
 
 # =====================================================
 # TAB 4 - ADDITIONAL DETAILS (free text; saved as the report's remark lines)
@@ -2655,6 +2718,11 @@ def weekly_rows_from_excel(first_day, last_day):
         if first_day <= day.date() <= last_day:
             rows.append((day, entry[0], report_to_weekly_rows(
                 read_report(path, entry[0]))))
+    for report in fsr_withdrawal.read_all_reports(withdrawal_book()):
+        day = parse_date(report["general_information"]["inspection_date"])
+        if isinstance(day, datetime) and first_day <= day.date() <= last_day:
+            rows.append((day, report["control_no"],
+                         report_to_weekly_rows(report)))
     rows.sort(key=lambda item: (item[0], item[1]))
     return [line for _, _, lines in rows for line in lines]
 
@@ -3400,7 +3468,7 @@ def collect_report_data():
 
     condition = condition_var.get()
 
-    return {
+    return withdrawal_panel.fill_report({
         "control_no": control_entry.get().strip(),
         "cargo_condition": condition,
         "item_form": item_form_var.get(),
@@ -3436,7 +3504,7 @@ def collect_report_data():
         "other_important_remarks": filled(other_remarks_entries),
         "item_lists": item_lists,
         "findings_and_remarks": filled(findings_entries),
-    }
+    })
 
 
 def set_entry(entry, text):
@@ -3517,6 +3585,7 @@ def clear_form():
 
     set_goods_types(None)
     set_condition("")                   # also clears + hides the incident tab
+    withdrawal_panel.reset()
 
     other_remarks_frame.refresh_counter()
     findings_frame.refresh_counter()
@@ -3591,15 +3660,15 @@ def populate_form(data):
 # XML HELPERS + OFFICIAL REPORT FORM - FIRST PAGE
 # =====================================================
 # After a report is saved, its data is also written into a copy of
-# your official form (First_Page.xlsx, kept in the same folder as this
-# script). The copy goes into a "Report Forms" folder next to the Excel
-# file, named after the Control # (for example FSR-202610-0001_First_Page.xlsx).
+# your official form (data/excel/First_Page.xlsx). The copy goes into a
+# "Report Forms" folder next to the Excel
+# file, named after the Control # (for example FSR-JDC-202610-0001_First_Page.xlsx).
 #
 # The template is edited directly inside the .xlsx package, so
 # everything on your form (logo, check boxes, borders, print setup)
 # stays exactly as designed. Only the "Entry for ..." cells are filled.
 
-FORM_TEMPLATE = BASE_DIR / "First_Page.xlsx"
+FORM_TEMPLATE = BASE_DIR / "data" / "excel" / "First_Page.xlsx"
 FORM_FOLDER_NAME = "Report Forms"
 
 FORM_SHEET_XML = "xl/worksheets/sheet1.xml"
@@ -4092,7 +4161,7 @@ def create_report_form(excel_path, data, folder=None):
 # OFFICIAL REPORT FORM - SECOND PAGE: CARGO DETAILS
 # (item lists + findings and remarks)
 # =====================================================
-# Cargo_Details.xlsx (same folder as this script) has two sheets:
+# data/excel/Cargo_Details.xlsx has two sheets:
 #   WarehouseReceiving - the Cargo Details page
 #   BlankForm          - a ruled page used for extra remarks
 #
@@ -4112,8 +4181,9 @@ def create_report_form(excel_path, data, folder=None):
 # It has no blank form: extra remarks go on its own sheet with rows
 # 12-42 ruled as remark lines.
 
-CARGO_TEMPLATE = BASE_DIR / "Cargo_Details.xlsx"
-UNIT_FORM_TEMPLATE = BASE_DIR / "Containerized_Loading_Form.xlsx"
+CARGO_TEMPLATE = BASE_DIR / "data" / "excel" / "Cargo_Details.xlsx"
+UNIT_FORM_TEMPLATE = (BASE_DIR / "data" / "excel"
+                      / "Containerized_Loading_Form.xlsx")
 
 BLANK_FIRST_LINE_ROW = 12
 BLANK_LINES_PER_PAGE = CARGO_LAST_ROW - BLANK_FIRST_LINE_ROW + 1   # 31
@@ -4700,12 +4770,12 @@ def create_cargo_form(excel_path, data, folder=None,
 # =====================================================
 # OFFICIAL REPORT FORM - INCIDENT REPORT (Bad Order only)
 # =====================================================
-# Incident_Report.xlsx (same folder as this script) has one sheet,
+# data/excel/Incident_Report.xlsx has one sheet,
 # "IncidentReport": header cells B5 B6 B7 B8 / G5 G6 G7 and 15 lines
 # A18 ... A32. Every incident card of the report becomes one sheet:
 # "Incident Report", "Additional Incident Report 1", ...
 
-INCIDENT_TEMPLATE = BASE_DIR / "Incident_Report.xlsx"
+INCIDENT_TEMPLATE = BASE_DIR / "data" / "excel" / "Incident_Report.xlsx"
 INCIDENT_SHEET_NAME = "IncidentReport"
 INCIDENT_PRINT_AREA = "$A$1:$I$46"
 INCIDENT_FIRST_LINE_ROW = 18
@@ -5733,8 +5803,13 @@ def load_report_into_form(control_no, source="excel"):
     if not confirm_discard("Open Saved Report", f"Open {control_no}?"):
         return
 
+    # The workbook that holds a report decides where it is read and saved.
+    # MySQL has no PO line details, so its copy is not used for these reports.
+    po_linked = fsr_withdrawal.owns_report(excel_state["path"], control_no)
     try:
-        if source == "mysql":
+        if po_linked:
+            data = fsr_withdrawal.read_report(withdrawal_book(), control_no)
+        elif source == "mysql":
             data = db_mysql.load_report(control_no)
         else:
             data = read_report(excel_state["path"], control_no)
@@ -5763,6 +5838,7 @@ def load_report_into_form(control_no, source="excel"):
         item_forms_error = str(error)
 
     populate_form(data)
+    withdrawal_panel.load(po_linked)
 
     if item_forms_error:
         messagebox.showwarning(
@@ -5801,6 +5877,22 @@ def load_report_into_form(control_no, source="excel"):
     notify(f"Opened {data['control_no']}", "info")
 
 
+def read_withdrawal_listing():
+    """(list rows, search index) of the Withdrawal workbook. Trouble with it
+    is reported and does not hide the reports of the main workbook."""
+    try:
+        book = withdrawal_book()
+        return (busy(fsr_withdrawal.list_reports, book),
+                busy(fsr_withdrawal.search_index, book))
+    except Exception as error:
+        log.exception("Reading the Withdrawal workbook failed")
+        messagebox.showwarning(
+            "Withdrawal Workbook",
+            f"The PO-linked Withdrawal reports could not be listed:\n{error}",
+            parent=window)
+        return [], {}
+
+
 def open_saved_report_dialog(initial_search=""):
     """List the saved reports; double-click one to edit it."""
 
@@ -5812,13 +5904,16 @@ def open_saved_report_dialog(initial_search=""):
 
     path = excel_state["path"]
     source_var = tkinter.StringVar(value="mysql" if use_mysql else "excel")
+    withdrawal_rows, withdrawal_index = read_withdrawal_listing()
+    withdrawal_labels = {row[0] for row in withdrawal_rows}
 
     def fetch_reports(show_errors=True):
         """The list for the chosen source ([] and a message on trouble)."""
         try:
             if source_var.get() == "mysql":
                 return busy(db_mysql.list_reports)
-            return busy(list_saved_reports, path)
+            return sorted([*busy(list_saved_reports, path), *withdrawal_rows],
+                          reverse=True)
         except PermissionError:
             problem = ("Cannot read the Excel file. Close it in Excel and "
                        "try again.")
@@ -5844,7 +5939,7 @@ def open_saved_report_dialog(initial_search=""):
             if source_var.get() == "mysql":
                 found = busy(db_mysql.search_index)
             else:
-                found = busy(search_index_excel, path)
+                found = {**busy(search_index_excel, path), **withdrawal_index}
         except Exception:
             log.exception("Building the search list failed")
             found = {}
@@ -5907,6 +6002,8 @@ def open_saved_report_dialog(initial_search=""):
                 "BL/AWB", "PO", "DR", "Gatepass", "Description",
                 "Last Saved")
     widths = (115, 120, 105, 170, 110, 110, 90, 90, 220, 130)
+    if withdrawal_labels:           # room for the "[Withdrawal]" label
+        widths = (200, *widths[1:])
 
     tree_frame = tb.Frame(dialog)
     tree_frame.pack(fill="both", expand=True, padx=15, pady=5)
@@ -5943,8 +6040,10 @@ def open_saved_report_dialog(initial_search=""):
         key = dict(SEARCH_FIELDS)[field_var.get()]
         for row in reports:
             parts = search_index.get(row[0], {})
+            label = (f"{row[0]} [Withdrawal]" if row[0] in withdrawal_labels
+                     else row[0])
             if key is None:
-                text = " ".join(row) + " " + " ".join(
+                text = label + " " + " ".join(row) + " " + " ".join(
                     " ".join(values) for values in parts.values())
             else:
                 text = " ".join(parts.get(key, []))
@@ -5952,7 +6051,7 @@ def open_saved_report_dialog(initial_search=""):
                 def joined(name):
                     return ", ".join(dict.fromkeys(parts.get(name, [])))
                 tree.insert("", "end", iid=row[0], values=(
-                    row[0], row[1], row[2], row[3], joined("bl"),
+                    label, row[1], row[2], row[3], joined("bl"),
                     joined("po"), joined("dr"), joined("gatepass"),
                     joined("description"), row[4]))
 
@@ -6021,6 +6120,13 @@ def change_excel_file():
     form restarts as a new report with that file's next number."""
     path = choose_excel_path()
     if path is None:
+        return
+    if path.name.casefold() in (fsr_paths.WITHDRAWAL_WORKBOOK_NAME.casefold(),
+                                fsr_paths.PO_MASTER_NAME.casefold(),
+                                fsr_paths.WITHDRAWN_ITEM_NAME.casefold()):
+        messagebox.showwarning(
+            "Change Excel File", f"{path.name} has its own purpose and cannot "
+            "be used as the main Excel file.", parent=window)
         return
     if DEMO_MODE and DATA_DIR.resolve() not in path.resolve().parents:
         messagebox.showwarning(
@@ -6098,18 +6204,29 @@ def save_report():
     for combo in searchable_combos:
         combo.commit()
 
+    if not withdrawal_panel.context_changed():
+        return False
+
     path = excel_state["path"]
     data = collect_report_data()
+    target = path
 
     try:
-        result = busy(
-            write_report_to_excel, path, data, report_state["editing"]
-        )
+        if withdrawal_panel.linked():
+            target = withdrawal_book()
+            result = busy(
+                fsr_withdrawal.write_withdrawal_report, target, data,
+                report_state["editing"], path
+            )
+        else:
+            result = busy(
+                write_report_to_excel, path, data, report_state["editing"]
+            )
 
     except PermissionError:
         messagebox.showerror(
             "File In Use",
-            f"Cannot write to:\n{path}\n\n"
+            f"Cannot write to:\n{target}\n\n"
             "Close the file in Excel and click Save again.",
             parent=window
         )
@@ -6128,6 +6245,7 @@ def save_report():
     set_control_number(result["control"])
     report_state["editing"] = True
     report_state["dirty"] = False
+    withdrawal_panel.saved(data)
     update_status()
 
     # remember SO Number + Consignee for the next report / next start
@@ -6162,6 +6280,22 @@ def save_report():
         incident_note = "\n\n".join(t for t in (incident_note, (
             "The lines of the other Item List forms could not be saved:\n"
             f"{error}\n\nClick Save again to retry.")) if t)
+
+    # PO_Master and Withdrawn_Item follow the saved reports.
+    if (withdrawal_panel.linked()
+            or same_key(data["inspection_schedule"]["activity"], "Receiving")):
+        try:
+            busy(fsr_withdrawal.sync_item_lists, path)
+        except PermissionError:
+            incident_note = "\n\n".join(t for t in (incident_note, (
+                "PO_Master or Withdrawn_Item could not be updated because it "
+                "is open in another program.\nClose it and click Save again."
+                )) if t)
+        except Exception as error:
+            log.exception("Updating the item lists failed")
+            incident_note = "\n\n".join(t for t in (incident_note, (
+                f"PO_Master and Withdrawn_Item could not be updated:\n{error}"
+                )) if t)
 
     # Also store the report in MySQL (when db_config.json is set up).
     db_note = None
@@ -6224,6 +6358,39 @@ def show_saved_links(data):
             if ref and not widgets.hidden.get("Receiving Ref"):
                 widgets.hidden["Receiving Ref"] = ref
     report_state["dirty"] = was_dirty
+
+
+def export_for_portal():
+    """Write one JSON file with everything, to send to the owner of the portal."""
+    if Workbook is None:
+        excel_missing_message()
+        return
+
+    device = socket.gethostname()
+    chosen = filedialog.asksaveasfilename(
+        parent=window,
+        title="Save the file for the web portal",
+        defaultextension=".json",
+        initialfile=(f"FSR_Portal_Data_{safe_filename(device)}_"
+                     f"{date.today():%Y-%m-%d}.json"),
+        filetypes=[("Portal data file", "*.json")]
+    )
+    if not chosen:
+        return
+
+    try:
+        count = busy(fsr_portal_export.write_export, excel_state["path"],
+                     chosen, device, USER_FULL_NAME)
+    except Exception as error:
+        log.exception("Export for the portal failed")
+        messagebox.showerror("Export for Portal",
+                             f"The file was not written:\n{error}", parent=window)
+        return
+    messagebox.showinfo(
+        "Export for Portal",
+        f"{count} report(s) saved to:\n{chosen}\n\nSend this one file to the owner.",
+        parent=window
+    )
 
 
 def import_master_data_file():
@@ -6360,11 +6527,12 @@ def sync_all_to_mysql():
         reports = []
         for entry in list_saved_reports(path):
             reports.append(read_report(path, entry[0]))
+        reports += fsr_withdrawal.read_all_reports(withdrawal_book())
         saved, errors = db_mysql.sync_reports(reports)
         db_mysql.save_master_lists(master_data)
         return len(reports), saved, errors
 
-    if not list_saved_reports(path):
+    if not list_saved_reports(path) and not withdrawal_control_numbers(path):
         messagebox.showinfo(
             "Sync to MySQL",
             f"There are no saved reports in:\n{path}", parent=window)
@@ -6407,7 +6575,9 @@ def restore_excel_from_mysql():
         return
 
     def work():
+        # A PO-linked report has its home in the Withdrawal workbook.
         have = {row[0] for row in list_saved_reports(path)}
+        have.update(withdrawal_control_numbers(path))
         added, errors = 0, []
         for entry in db_mysql.list_reports():
             control = entry[0]

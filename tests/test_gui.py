@@ -15,6 +15,7 @@ import fsr_storage
 from conftest import ANCHOR
 from warehouse import analytics as an
 from warehouse import sample_data as sd
+from warehouse import tables as tbl
 
 pytestmark = pytest.mark.gui
 
@@ -25,7 +26,7 @@ WORKBOOK = "Field_Survey_Reports.xlsx"
 def app(tmp_path_factory):
     import gui_harness as h
     home = tmp_path_factory.mktemp("fsr_home")
-    sd.generate(home, anchor=ANCHOR, workbook_name=WORKBOOK)
+    sd.generate(home / "excel", anchor=ANCHOR, workbook_name=WORKBOOK)
     try:
         g, answers = h.start_app(home)
     except Exception as error:          # no display available
@@ -79,7 +80,7 @@ def test_application_starts_with_navigation(app):
     g, answers = app
     assert g["app_shell"] is not None
     assert g["control_entry"].get().startswith("FSR-")
-    assert len(g["app_shell"].buttons) == 7
+    assert len(g["app_shell"].buttons) == 8
     assert g["window"].winfo_exists()
 
 
@@ -87,7 +88,8 @@ def test_every_module_opens_without_errors(app):
     g, answers = app
     shell = g["app_shell"]
     wait_for_data(g)
-    for key in ("dashboard", "receiving", "withdrawal", "bad_order", "analytics", "settings", "inspection"):
+    for key in ("dashboard", "receiving", "withdrawal", "warehouse",
+                "bad_order", "analytics", "settings", "inspection"):
         shell.show(key)
         settle(g, 0.8)
         assert shell.current == key
@@ -194,6 +196,101 @@ def test_withdrawal_without_link_goes_to_reconciliation(app):
     assert (issue.line.quantity, issue.line.unit) == (4, "PCS")
 
 
+def test_warehouse_page_lists_inventory_and_issues(app):
+    g, answers = app
+    shell = g["app_shell"]
+    snapshot = wait_for_data(g)
+    shell.show("warehouse")
+    settle(g, 0.3)
+    page = shell.pages["warehouse"]
+
+    assert page.inventory_table.all_rows == \
+        tbl.inventory_rows(snapshot.inventory.items)
+    assert len(page.issue_table.all_rows) == len(snapshot.inventory.issues)
+    assert page.audit_table.all_rows == []
+    assert not errors_shown(answers), answers.calls
+
+
+def test_reconciliation_can_be_proposed_and_confirmed_in_the_ui(app):
+    g, answers = app
+    shell = g["app_shell"]
+    shell.show("inspection")
+    fill_form(
+        g, "SO-GUI-RECON-RECEIVING", "Receiving", "GUI Reconciliation",
+        [{"Description of Goods": "Reconciliation Pump", "Quantity": "10",
+          "UOM": "PCS", "Cargo ID": "GUI-RECON-CARGO"}])
+    assert g["save_report"]() is True
+
+    fill_form(
+        g, "SO-GUI-RECON-WITHDRAWAL", "Withdrawal", "GUI Reconciliation",
+        [{"Description of Goods": "Reconciliation Pump", "Quantity": "4",
+          "UOM": "PCS"}])
+    withdrawal_control = g["control_entry"].get()
+    assert g["save_report"]() is True
+
+    snapshot = wait_for_data(g)
+    shell.show("warehouse")
+    settle(g, 0.3)
+    page = shell.pages["warehouse"]
+    issue_index = next(
+        index for index, (_row, issue) in enumerate(page.issue_table.view)
+        if issue.line and issue.line.control_no == withdrawal_control)
+    page.issue_table.tree.selection_set(str(issue_index))
+    page.issue_table._selected()
+    candidate_index = next(
+        index for index, (_row, candidate) in
+        enumerate(page.suggestion_table.view)
+        if candidate[0].cargo_id == "GUI-RECON-CARGO")
+    page.suggestion_table.tree.selection_set(str(candidate_index))
+    page.suggestion_table._selected()
+    assert str(page.propose_button.cget("state")) == "normal"
+    page.propose_button.invoke()
+
+    snapshot = wait_for_data(g)
+    page = shell.pages["warehouse"]
+    issue_index = next(
+        index for index, (_row, issue) in enumerate(page.issue_table.view)
+        if issue.line and issue.line.control_no == withdrawal_control)
+    page.issue_table.tree.selection_set(str(issue_index))
+    page.issue_table._selected()
+    assert str(page.confirm_button.cget("state")) == "normal"
+
+    page.ctx.is_owner = False
+    page._update_actions()
+    assert str(page.confirm_button.cget("state")) == "disabled"
+    page.ctx.is_owner = True
+    page._update_actions()
+    page.confirm_button.invoke()
+
+    snapshot = wait_for_data(g)
+    item = snapshot.inventory.item("GUI Reconciliation",
+                                   "GUI-RECON-CARGO")
+    assert item.remaining_qty == 6
+    assert [entry["action"] for entry in
+            snapshot.side.history(withdrawal_control + "/1/1")] == [
+                "propose", "confirm"]
+    saved = fsr_storage.read_report(
+        Path(g["excel_state"]["path"]), withdrawal_control)
+    assert saved["item_lists"][0]["rows"][0]["Cargo ID"] == ""
+
+    audit_index = next(
+        index for index, (_row, entry) in enumerate(page.audit_table.view)
+        if entry["subject"] == withdrawal_control + "/1/1"
+        and entry["action"] == "confirm")
+    page.audit_table.tree.selection_set(str(audit_index))
+    page.audit_table._selected()
+    assert str(page.reopen_audit_button.cget("state")) == "normal"
+    page.reopen_audit_button.invoke()
+
+    snapshot = wait_for_data(g)
+    assert any(issue.line and issue.line.control_no == withdrawal_control
+               for issue in snapshot.inventory.unmatched)
+    assert [entry["action"] for entry in
+            snapshot.side.history(withdrawal_control + "/1/1")] == [
+                "propose", "confirm", "reopen"]
+    assert not errors_shown(answers), answers.calls
+
+
 def test_old_quantity_with_unit_is_split_on_load(app):
     g, answers = app
     section = g["item_frames"][0]
@@ -224,8 +321,8 @@ def test_weight_unit_is_split_and_saved_with_the_weight(app):
 
 def test_real_project_files_untouched(app):
     g, _ = app
-    assert Path(g["excel_state"]["path"]).parent == g["home"]
-    assert Path(g["SETTINGS_FILE"]).parent == g["home"]
+    assert Path(g["excel_state"]["path"]).parent == g["home"] / "excel"
+    assert Path(g["SETTINGS_FILE"]).parent == g["home"] / "json" / "private"
 
 
 # ---------- Item List forms: Default / Containerized / Loading ----------

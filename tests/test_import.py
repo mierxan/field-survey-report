@@ -21,6 +21,15 @@ def phone_report(control="FSR-202610-0001", so="SO-PHONE", saved="26-Oct-2026 10
     return data
 
 
+def test_a_renumbered_phone_report_keeps_its_inspectors_initials(tmp_path):
+    book = tmp_path / "data.xlsx"
+    s.write_report_to_excel(book, phone_report("FSR-JDC-202611-0001", so="ON-PC"), False)
+    summary = imp.import_master_data(book, fresh(master_file(phone_report("FSR-JDC-202611-0001"))))
+    (old, new), = summary["renumbered"]
+    assert old == "FSR-JDC-202611-0001"
+    assert new.startswith("FSR-JDC-") and new.endswith("-0002")
+
+
 def master_file(*reports, device="phone-1", inspector="Juan Dela Cruz"):
     return {"format": imp.FORMAT, "version": 1, "device_id": device,
             "inspector": inspector, "reports": list(reports),
@@ -178,3 +187,4 @@ def test_file_written_by_the_android_code(book):
     assert back["inspection_schedule"]["commenced_time"] == "0800H"
     assert back["general_information"]["supplier"] == "ABB <PTE> & Co"
     assert "Loading" in s.load_other_item_forms(book, summary["added"][0])
+

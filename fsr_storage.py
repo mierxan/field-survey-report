@@ -16,6 +16,7 @@ import os
 import re
 from datetime import date, datetime, timedelta
 from pathlib import Path
+import fsr_paths
 
 try:
     from openpyxl import Workbook, load_workbook
@@ -27,6 +28,8 @@ except ImportError:
 log = logging.getLogger("fsr")
 
 CONTROL_PREFIX = "FSR"
+NO_INITIALS = "XX"               # as the Android app, when no inspector is known
+_control_initials = {"value": NO_INITIALS}
 
 
 def write_json_atomic(path, data):
@@ -184,7 +187,7 @@ def goods_types_from_text(text):
 
 # Incident reports are NOT stored in the Excel file (to keep it small).
 # Each report with incidents gets one small JSON file, named after its
-# Control #, in the "Incident Reports" folder beside the Excel file.
+# Control #, in the managed JSON tree or beside an external workbook.
 INCIDENT_FOLDER_NAME = "Incident Reports"
 INCIDENT_MAX_LINES = 15           # lines on one Incident Report form
 INCIDENT_HEADER_FIELDS = [        # (label, key) in display order
@@ -206,7 +209,7 @@ def incident_title(number):
 
 
 def incident_json_path(excel_path, control_no):
-    return (Path(excel_path).parent / INCIDENT_FOLDER_NAME
+    return (fsr_paths.json_dir_for_workbook(excel_path) / INCIDENT_FOLDER_NAME
             / f"{safe_filename(control_no)}.json")
 
 
@@ -346,7 +349,7 @@ ITEM_FORM_FOLDER_NAME = "Item Forms"
 
 
 def other_item_forms_path(excel_path, control_no):
-    return (Path(excel_path).parent / ITEM_FORM_FOLDER_NAME
+    return (fsr_paths.json_dir_for_workbook(excel_path) / ITEM_FORM_FOLDER_NAME
             / f"{safe_filename(control_no)}.json")
 
 
@@ -409,7 +412,7 @@ def split_quantity_unit(quantity, uom=""):
 
 
 def default_receiving_ref(control_no, list_no, line_no):
-    """RCV-FSR-202610-0001-1-03 for line 3 of Item List 1 of FSR-202610-0001."""
+    """RCV-FSR-JDC-202610-0001-1-03 for line 3 of Item List 1 of FSR-JDC-202610-0001."""
     return f"RCV-{control_no}-{list_no}-{int(line_no):02d}"
 
 
@@ -423,7 +426,7 @@ def default_receiving_ref(control_no, list_no, line_no):
 #   Item List      - one row per line of every Item List
 #   Remarks        - one row per remark / finding
 #
-# Control # is generated automatically (FSR-2026-0001, 0002, ...).
+# Control # is generated automatically (FSR-JDC-202610-0001, 0002, ...).
 # Saving a report whose Control # is already in the file UPDATES it.
 
 REPORT_HEADERS = (
@@ -536,11 +539,39 @@ def same_key(value, key):
 
 # ---------- control number ---------------------------------
 
-def next_control_number(existing_numbers):
-    """FSR-<year><month>-<running number>, e.g. FSR-202610-0007.
-    The running number starts again at 0001 every month."""
+def set_control_initials(initials):
+    """The signed-in inspector's initials, used for every new Control #."""
+    cleaned = re.sub(r"[^A-Z0-9]", "", str(initials or "").upper())
+    _control_initials["value"] = cleaned or NO_INITIALS
+
+
+def control_initials_of(control_no):
+    """'FSR-JDC-202610-0001' -> 'JDC'; None for any other format."""
+    match = re.match(rf"^{CONTROL_PREFIX}-([A-Z0-9]+)-\d{{6}}-\d+$",
+                     str(control_no or "").strip())
+    return match.group(1) if match else None
+
+
+def control_sort_key(control_no):
+    """Sorts by period and running number, whoever the inspector, so a list is
+    in order of age. Numbers of the older formats have the same order."""
+    text = str(control_no or "").strip()
+    match = re.match(
+        rf"^{CONTROL_PREFIX}-(?:[A-Z0-9]*[A-Z][A-Z0-9]*-)?(\d{{4}})(\d{{2}})?-(\d+)$", text)
+    if not match:
+        return (0, 0, 0, text)
+    period = int(match.group(1)) * 100 + int(match.group(2) or 0)
+    return (1, period, int(match.group(3)), text)
+
+
+def next_control_number(existing_numbers, initials=None):
+    """FSR-<initials>-<year><month>-<running number>, e.g. FSR-JDC-202610-0007.
+    Each inspector's running number starts again at 0001 every month. Numbers
+    of the older FSR-<year><month>-NNNN format stay as they are and do not count."""
     period = datetime.now().strftime("%Y%m")
-    pattern = re.compile(rf"^{CONTROL_PREFIX}-{period}-(\d+)$")
+    initials = initials or _control_initials["value"]
+    prefix = f"{CONTROL_PREFIX}-{initials}-{period}-"
+    pattern = re.compile(rf"^{re.escape(prefix)}(\d+)$")
 
     highest = 0
     for value in existing_numbers:
@@ -548,7 +579,34 @@ def next_control_number(existing_numbers):
         if match:
             highest = max(highest, int(match.group(1)))
 
-    return f"{CONTROL_PREFIX}-{period}-{highest + 1:04d}"
+    return f"{prefix}{highest + 1:04d}"
+
+
+# PO-linked Withdrawal reports live in their own workbook beside this one
+# (fsr_withdrawal.py). A Control # must stay unique across both files, because
+# incident files and printed forms are named after it.
+WITHDRAWAL_HEADER_SHEET = "Withdrawal Reports"
+
+
+def withdrawal_control_numbers(path):
+    """The Control #s in the Withdrawal workbook beside `path` ([] when there
+    is none). Reads only the first column, so a file with a damaged layout
+    still reserves its numbers."""
+    other = Path(path).resolve().with_name(fsr_paths.WITHDRAWAL_WORKBOOK_NAME)
+    if Workbook is None or other == Path(path).resolve() or not other.exists():
+        return []
+    try:
+        wb = load_workbook(other, data_only=True)
+        if WITHDRAWAL_HEADER_SHEET not in wb.sheetnames:
+            return []
+        return [
+            cell_text(row[0]) for row in wb[WITHDRAWAL_HEADER_SHEET].iter_rows(
+                min_row=2, max_col=1, values_only=True
+            ) if row[0]
+        ]
+    except Exception:
+        log.exception("Could not read control numbers from %s", other)
+        return []
 
 
 def check_layout(wb):
@@ -665,7 +723,7 @@ def generate_control_number(path):
         log.exception("Could not read control numbers from %s", path)
         numbers = []   # unreadable file: the save itself will report it
 
-    return next_control_number(numbers)
+    return next_control_number([*numbers, *withdrawal_control_numbers(path)])
 
 
 # ---------- reading saved reports --------------------------
@@ -691,7 +749,8 @@ def list_saved_reports(path):
             cell_text(values.get("Last Saved"), with_time=True),
         ))
 
-    reports.sort(reverse=True)     # newest control # first
+    reports.sort(key=lambda entry: control_sort_key(entry[0]),
+                 reverse=True)     # newest control # first
     return reports
 
 
@@ -987,55 +1046,13 @@ def finalize_sheet(ws, table_name, headers):
         )
 
 
-def write_report_to_excel(path, data, editing):
-    """
-    Save one report. If its Control # is already in the file the
-    report is UPDATED, otherwise it is ADDED.
-    Returns {"control", "updated", "goods", "items", "remarks"}.
-    """
-
-    path = Path(path)
-
-    if path.exists():
-        wb = load_workbook(path)
-        check_layout(wb)
-    else:
-        wb = Workbook()
-        wb.remove(wb.active)
-
-    sheets = {
-        name: get_or_create_sheet(wb, name, headers)
-        for name, (_, headers) in EXCEL_SHEETS.items()
-    }
-
-    # Older files: add the newer columns, keep the saved reports.
-    for name, (_, headers) in EXCEL_SHEETS.items():
-        rename_legacy_headers(sheets[name], headers)
-    migrate_reports_sheet(sheets["Reports"])
-    for name, (_, headers) in EXCEL_SHEETS.items():
-        if name != "Reports":
-            extend_sheet_headers(sheets[name], headers)
-
+def report_row_values(data, control_no):
+    """One report as the values of a REPORT_HEADERS row."""
     general = data["general_information"]
     schedule = data["inspection_schedule"]
     transport = data["transport_details"]
     documents = data["documents_used"]
-    reports_ws = sheets["Reports"]
 
-    control_no = data["control_no"]
-    existing_row = find_row(reports_ws, control_no)
-
-    # A NEW report must never overwrite someone else's report that
-    # got the same number in the meantime -> take the next free one.
-    if existing_row and not editing:
-        control_no = next_control_number(
-            row[0] for row in reports_ws.iter_rows(
-                min_row=2, max_col=1, values_only=True
-            )
-        )
-        existing_row = None
-
-    # --- Reports sheet (updated in place when it already exists) --
     values_by_header = {
         "Control #": control_no,
         "SO Number": text_or_none(general["so_number"]),
@@ -1067,7 +1084,65 @@ def write_report_to_excel(path, data, editing):
     for label, key in DOCUMENT_FIELDS:
         values_by_header[label] = text_or_none(documents[key])
 
-    report_values = [values_by_header[header] for header in REPORT_HEADERS]
+    return [values_by_header[header] for header in REPORT_HEADERS]
+
+
+def write_report_to_excel(path, data, editing):
+    """
+    Save one report. If its Control # is already in the file the
+    report is UPDATED, otherwise it is ADDED.
+    Returns {"control", "updated", "goods", "items", "remarks"}.
+    """
+
+    path = Path(path)
+
+    if path.exists():
+        wb = load_workbook(path)
+        check_layout(wb)
+    else:
+        wb = Workbook()
+        wb.remove(wb.active)
+
+    sheets = {
+        name: get_or_create_sheet(wb, name, headers)
+        for name, (_, headers) in EXCEL_SHEETS.items()
+    }
+
+    # Older files: add the newer columns, keep the saved reports.
+    for name, (_, headers) in EXCEL_SHEETS.items():
+        rename_legacy_headers(sheets[name], headers)
+    migrate_reports_sheet(sheets["Reports"])
+    for name, (_, headers) in EXCEL_SHEETS.items():
+        if name != "Reports":
+            extend_sheet_headers(sheets[name], headers)
+
+    schedule = data["inspection_schedule"]
+    reports_ws = sheets["Reports"]
+
+    control_no = data["control_no"]
+    existing_row = find_row(reports_ws, control_no)
+    elsewhere = withdrawal_control_numbers(path)
+    taken_elsewhere = any(same_key(n, control_no) for n in elsewhere)
+
+    if editing and taken_elsewhere and not existing_row:
+        raise ValueError(
+            f"Control # {control_no} belongs to the Withdrawal workbook and "
+            "cannot be saved into this file."
+        )
+
+    # A NEW report must never overwrite someone else's report that
+    # got the same number in the meantime -> take the next free one.
+    if (existing_row or taken_elsewhere) and not editing:
+        control_no = next_control_number([
+            *(row[0] for row in reports_ws.iter_rows(
+                min_row=2, max_col=1, values_only=True
+            )),
+            *elsewhere,
+        ])
+        existing_row = None
+
+    # --- Reports sheet (updated in place when it already exists) --
+    report_values = report_row_values(data, control_no)
 
     if existing_row:
         set_row(reports_ws, existing_row, report_values, REPORT_FORMATS)

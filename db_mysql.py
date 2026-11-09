@@ -2,7 +2,8 @@
 MySQL storage for the Field Survey Report program (optional).
 
 Setup:  pip install mysql-connector-python
-        copy db_config.example.json to db_config.json and fill in your login.
+        copy data/json/db_config.example.json to
+        data/json/private/db_config.json and fill in your login.
 If db_config.json is missing (or "enabled" is false) the program works
 exactly as before and just uses Excel.
 """
@@ -11,9 +12,10 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from fsr_storage import split_quantity_unit
+from fsr_storage import control_sort_key, split_quantity_unit
+import fsr_paths
 
-CONFIG_FILE = Path(__file__).resolve().parent / "db_config.json"
+CONFIG_FILE = fsr_paths.JSON_DIR / "private" / "db_config.json"
 DATE_FORMAT = "%d-%b-%Y"
 OLD_DATE_FORMAT = "%d-%m-%Y"
 OTHER_REMARKS = "Other Important Remarks"
@@ -40,6 +42,9 @@ LINK_COLUMN_SQL = {"cargo_id": "VARCHAR(100) NULL",
                    "unit_no": "VARCHAR(100) NULL"}
 MASTER_KEYS = ["consignee_list", "supplier_list", "broker_list", "hauler_list",
                "location_list", "destination_list", "country_of_origin_list"]
+
+
+ACCESS_DENIED = 1142                # the login may not run this command
 
 
 def load_config():
@@ -115,11 +120,18 @@ def explain_error(error):
                 "MySQL80 > Start) and that host/port in db_config.json are right.\n"
                 f"Original message: {error}")
     if code == 1049:
-        return ("The database does not exist yet. Run field_survey_schema.sql "
+        return ("The database does not exist yet. Run "
+                "data/schema/field_survey_schema.sql "
                 f"in MySQL Workbench first.\nOriginal message: {error}")
     if code in (1146, 1054):
         return ("A table or column is missing. Run the latest "
-                f"field_survey_schema.sql in Workbench.\nOriginal message: {error}")
+                "data/schema/field_survey_schema.sql in Workbench.\n"
+                f"Original message: {error}")
+    if code == ACCESS_DENIED:
+        return (f"The MySQL login '{user}' is not allowed to do this. The "
+                "program's login normally only reads and writes rows; changing "
+                "tables needs an admin login such as root.\n"
+                f"Original message: {error}")
     return str(error)
 
 
@@ -142,6 +154,9 @@ def test_connection(config=None):
     finally:
         conn.close()
     return True, f"Connected. The database has {count} report(s)."
+
+
+CONTROL_NO_LENGTH = 40
 
 
 # ---------- value helpers ----------
@@ -186,9 +201,52 @@ def missing_link_columns(connection=None):
             conn.close()
 
 
+def short_control_tables(connection=None):
+    """Tables whose control_no is too short for FSR-<initials>-YYYYMM-NNNN."""
+    own = connection is None
+    conn = connection or connect()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT c.table_name FROM information_schema.columns c "
+            "JOIN information_schema.tables t ON t.table_schema = c.table_schema "
+            "AND t.table_name = c.table_name AND t.table_type = 'BASE TABLE' "
+            "WHERE c.table_schema = DATABASE() AND c.column_name = 'control_no' "
+            f"AND c.character_maximum_length < {CONTROL_NO_LENGTH}")
+        tables = [row[0] for row in cur.fetchall()]
+        cur.close()
+        return tables
+    finally:
+        if own:
+            conn.close()
+
+
+def _widen_control_no(conn, tables):
+    """Foreign keys must match the column they point to, so they are dropped,
+    the columns widened, and the keys put back. Rows are kept."""
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT table_name, constraint_name FROM "
+        "information_schema.key_column_usage WHERE table_schema = DATABASE() "
+        "AND referenced_table_name = 'reports' "
+        "AND referenced_column_name = 'control_no'")
+    keys = cur.fetchall()
+    for table, name in keys:
+        cur.execute(f"ALTER TABLE {table} DROP FOREIGN KEY {name}")
+    for table in tables:
+        cur.execute(f"ALTER TABLE {table} MODIFY control_no "
+                    f"VARCHAR({CONTROL_NO_LENGTH}) NOT NULL")
+    for table, name in keys:
+        cur.execute(f"ALTER TABLE {table} ADD CONSTRAINT {name} FOREIGN KEY "
+                    "(control_no) REFERENCES reports (control_no) "
+                    "ON DELETE CASCADE ON UPDATE CASCADE")
+    cur.close()
+
+
 def upgrade_schema(connection=None):
-    """Add the warehouse link columns to item_lines (existing rows are
-    kept). Returns the columns added. Needs the ALTER privilege."""
+    """Add the warehouse link columns to item_lines and widen control_no
+    (existing rows are kept). Returns what changed. Needs the ALTER and
+    REFERENCES privileges, which the program's own login does not have."""
     own = connection is None
     conn = connection or connect()
     try:
@@ -214,11 +272,24 @@ def upgrade_schema(connection=None):
                         "VARCHAR(20) NULL")
             added.append("item_form")
         cur.close()
+        short = short_control_tables(conn)
+        if short:
+            _widen_control_no(conn, short)
+            added.append("control_no")
         conn.commit()
         return added
     finally:
         if own:
             conn.close()
+
+
+def upgrade_schema_as(user, password):
+    """upgrade_schema() with a one-time admin login, which is never saved."""
+    conn = connect({**load_config(), "user": user, "password": password})
+    try:
+        return upgrade_schema(conn)
+    finally:
+        conn.close()
 
 
 def save_report(data, connection=None):
@@ -473,6 +544,8 @@ def list_reports(connection=None):
             last.strftime("%d-%b-%Y %H:%M") if hasattr(last, "strftime") else "",
         ) for control, so, day, consignee, last in cur.fetchall()]
         cur.close()
+        # Initials in a Control # would otherwise sort by inspector, not by age.
+        rows.sort(key=lambda row: control_sort_key(row[0]), reverse=True)
         return rows
     finally:
         if own:

@@ -2,7 +2,7 @@
 from PyInstaller.utils.hooks import collect_submodules
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('First_Page.xlsx', '.'), ('Cargo_Details.xlsx', '.'), ('Containerized_Loading_Form.xlsx', '.'), ('Incident_Report.xlsx', '.'), ('master_list.json', '.'), ('logo.png', '.'), ('logo.ico', '.'), ('installer_defaults/db_config.json', '.'), ('auth_seed.json', '.')]
+datas = [('data/excel/First_Page.xlsx', 'data/excel'), ('data/excel/Cargo_Details.xlsx', 'data/excel'), ('data/excel/Containerized_Loading_Form.xlsx', 'data/excel'), ('data/excel/Incident_Report.xlsx', 'data/excel'), ('data/json/master_list.json', 'data/json'), ('logo.png', '.'), ('logo.ico', '.'), ('data/json/private/installer_defaults/db_config.json', 'data/json/private/installer_defaults'), ('data/json/private/auth_seed.json', 'data/json/private')]
 binaries = []
 hiddenimports = ['matplotlib.backends.backend_tkagg', 'win32com.client']
 hiddenimports += collect_submodules('mysql.connector')

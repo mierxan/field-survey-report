@@ -14,11 +14,11 @@ ON EACH NEW PC
    item and an optional Desktop icon. Sign in with the Owner initials MPR.
  * The program's files go to  C:\Program Files\Field Survey Report .
    Your data goes here (so it is safe when you update or uninstall):
-     Documents\Field Survey Report\     Excel file, Report Forms, master_list.json,
-                                        db_config.json  (MySQL settings)
-     AppData\Roaming\FieldSurveyReport\ users, settings, log
+     Documents\Field Survey Report\     excel\ (workbooks, report forms),
+                                        json\ (master lists and sidecars)
+     AppData\Roaming\FieldSurveyReport\ users, settings, MySQL settings, log
  * MySQL is OFF by default on a new PC. To use it, edit
-   Documents\Field Survey Report\db_config.json : "enabled": true and, if the
+   AppData\Roaming\FieldSurveyReport\db_config.json : "enabled": true and, if the
    database is on another PC, "host": "<that PC's IP address>"  (see INSTALL_GUIDE.txt).
  * PDF / Print needs Microsoft Excel or LibreOffice on that PC.
 

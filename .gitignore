@@ -9,14 +9,21 @@ installer_defaults/api_config.json
 allow_network_access.sql
 set_password.sql
 MYSQL_SETUP.txt
+/data/json/private/
+/data/schema/private/
+/data/json/migration_output/
 
 # Business data and generated output
 Field_Survey_Reports*.xlsx
+Withdrawal_Reports*.xlsx
+PO_Master*.xlsx
+Withdrawn_Item*.xlsx
 Incident Reports/
 Item Forms/
 Report Forms/
 Warehouse Data/
 Warehouse Reports/
+migration_output/
 *.log
 
 # Build output

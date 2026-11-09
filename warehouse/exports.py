@@ -435,7 +435,8 @@ def write_pdf(doc, path):
     from reportlab.lib.units import mm
     from reportlab.pdfgen import canvas as rl_canvas
     from reportlab.platypus import (KeepTogether, Paragraph,
-                                    SimpleDocTemplate, Spacer, Table)
+                                    PageBreak, SimpleDocTemplate, Spacer,
+                                    Table)
 
     navy = colors.HexColor("#" + NAVY)
     styles = getSampleStyleSheet()
@@ -478,7 +479,11 @@ def write_pdf(doc, path):
 
     page = landscape(A4)
     frame_width = page[0] - 24 * mm
+    max_cell_lines = max(1, int(
+        (page[1] - 26 * mm) / small.leading * 0.55))
     story = [Paragraph(doc.title, title_style)]
+    long_details = []
+    seen_long_details = set()
     meta_text = (f"<b>Reporting Period:</b> {doc.period}<br/>"
                  f"<b>Date Generated:</b> "
                  f"{doc.generated:%d-%b-%Y %H:%M}<br/>"
@@ -513,28 +518,91 @@ def write_pdf(doc, path):
             story.append(Paragraph(f"<b>{esc(topic)}:</b> {esc(text)}",
                                    meta))
     for section in doc.sections:
-        heading = Paragraph(esc(section.title), h2)
         if not section.rows:
-            story.append(KeepTogether([heading, Paragraph(
+            story.append(KeepTogether([Paragraph(esc(section.title), h2), Paragraph(
                 "No records for the selected filters.", meta)]))
             continue
-        weights = [max(c[2], 6) for c in section.columns]
-        total_w = sum(weights)
-        widths = [frame_width * w / total_w for w in weights]
-        data = [[Paragraph(esc(c[0]), small_bold) for c in section.columns]]
-        for values in section.rows:
-            data.append([Paragraph(esc(tb.cell_text(v, c[1])), small)
-                         for c, v in zip(section.columns, values)])
-        if section.totals:
-            data.append([Paragraph(f"<b>{esc(tb.cell_text(v, c[1]))}</b>"
-                                   if v is not None else "", small)
-                         for c, v in zip(section.columns, section.totals)])
-        table = Table(data, colWidths=widths, repeatRows=1)
-        table.setStyle(_table_style(navy, has_totals=bool(section.totals)))
-        story.append(heading)
-        if section.note:
-            story.append(Paragraph(f"<i>{esc(section.note)}</i>", small))
-        story.append(table)
+        identifiers = [
+            index for index, (heading, _, _) in enumerate(section.columns)
+            if heading in ("Report Control #", "Control #", "SO Number",
+                           "Date", "Activity")
+        ]
+        remaining = [index for index in range(len(section.columns))
+                     if index not in identifiers]
+        if len(section.columns) > 14:
+            groups = [
+                identifiers + remaining[start:start + 9]
+                for start in range(0, len(remaining), 9)
+            ]
+        else:
+            groups = [list(range(len(section.columns)))]
+
+        for group_number, indices in enumerate(groups, start=1):
+            columns = [section.columns[index] for index in indices]
+            weights = [max(column[2], 6) for column in columns]
+            total_w = sum(weights)
+            widths = [frame_width * weight / total_w for weight in weights]
+            data = [[Paragraph(esc(column[0]), small_bold)
+                     for column in columns]]
+
+            def append_row(values, bold=False):
+                identifier_index = next((
+                    index for index, (heading, _, _) in
+                    enumerate(section.columns)
+                    if heading in ("Report Control #", "Control #",
+                                   "SO Number")
+                ), 0)
+                identifier = tb.cell_text(
+                    values[identifier_index],
+                    section.columns[identifier_index][1])
+                cells = []
+                for index, width in zip(indices, widths):
+                    column = section.columns[index]
+                    text = tb.cell_text(values[index], column[1])
+                    characters_per_line = max(
+                        1, int(width / (small.fontSize * 0.5)))
+                    chunk_width = max(
+                        32, min(500, characters_per_line * max_cell_lines))
+                    if len(text) > chunk_width:
+                        detail = (section.title, identifier, column[0], text)
+                        if detail not in seen_long_details:
+                            seen_long_details.add(detail)
+                            long_details.append(detail)
+                        text = "[Full text in Long Text Details section]"
+                    text = esc(text)
+                    cells.append(Paragraph(
+                        f"<b>{text}</b>" if bold else text, small))
+                data.append(cells)
+
+            for values in section.rows:
+                append_row(values)
+            if section.totals:
+                append_row(section.totals, bold=True)
+            table = Table(data, colWidths=widths, repeatRows=1)
+            table.setStyle(_table_style(
+                navy, has_totals=bool(section.totals)))
+            heading = section.title
+            if len(groups) > 1:
+                heading += f" (Part {group_number} of {len(groups)})"
+            group_flowables = [Paragraph(esc(heading), h2)]
+            if section.note and group_number == 1:
+                group_flowables.append(
+                    Paragraph(f"<i>{esc(section.note)}</i>", small))
+            group_flowables.append(table)
+            if len(groups) > 1 and len(section.rows) <= 10:
+                story.append(KeepTogether(group_flowables))
+            else:
+                story.extend(group_flowables)
+
+    if long_details:
+        story.append(PageBreak())
+        story.append(Paragraph("Long Text Details", h2))
+        for section, identifier, column, text in long_details:
+            label = " - ".join(value for value in (section, identifier, column)
+                               if value)
+            story.append(Paragraph(esc(label), meta))
+            story.append(Paragraph(esc(text), meta))
+            story.append(Spacer(1, 2 * mm))
 
     path = Path(path)
     temp = path.with_name(path.stem + ".saving.tmp.pdf")

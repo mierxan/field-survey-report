@@ -17,7 +17,7 @@ Safety:
   * reset removes TEST-... reports and files only - nothing else.
 
 Command line (from the program folder):
-    python -m warehouse.sample_data generate     (into demo_data\\)
+    python -m warehouse.sample_data generate     (into data\\excel\\demo_data\\)
     python -m warehouse.sample_data status
     python -m warehouse.sample_data reset
 """
@@ -30,9 +30,10 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import fsr_storage
+import fsr_paths
 
 ROOT = Path(__file__).resolve().parent.parent
-DEMO_FOLDER = ROOT / "demo_data"
+DEMO_FOLDER = ROOT / "data" / "excel" / "demo_data"
 DEMO_WORKBOOK = "Field_Survey_Reports_DEMO.xlsx"
 MARKER_NAME = ".fsr_test_data"
 TEST_PREFIX = "TEST-"
@@ -88,7 +89,7 @@ def mark_test_folder(folder):
     if folder == ROOT.resolve() or folder in ROOT.resolve().parents:
         raise UnsafeTargetError(
             f"{folder} is the program folder (or above it); sample data "
-            "goes into its own folder such as demo_data.")
+            "goes into its own folder such as data/excel/demo_data.")
     folder.mkdir(parents=True, exist_ok=True)
     for workbook in folder.glob("*.xlsx"):
         real = non_test_controls(workbook)
@@ -446,8 +447,14 @@ def reset(folder=DEMO_FOLDER, workbook_name=DEMO_WORKBOOK):
              if str(c).upper().startswith(TEST_PREFIX)] if path.exists() else []
     removed = fsr_storage.delete_reports_from_excel(path, tests) if tests else 0
     files = 0
-    for sub in (fsr_storage.INCIDENT_FOLDER_NAME, "Report Forms"):
-        for item in (folder / sub).glob(f"{TEST_PREFIX}*"):
+    json_folder = fsr_paths.json_dir_for_workbook(path)
+    test_file_folders = (
+        json_folder / fsr_storage.INCIDENT_FOLDER_NAME,
+        folder / "Report Forms",
+        json_folder / fsr_storage.ITEM_FORM_FOLDER_NAME,
+    )
+    for test_file_folder in test_file_folders:
+        for item in test_file_folder.glob(f"{TEST_PREFIX}*"):
             item.unlink()
             files += 1
     side = side_file_path(path)

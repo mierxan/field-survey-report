@@ -6,6 +6,7 @@ from datetime import date
 import pytest
 
 import fsr_storage
+import fsr_paths
 from factories import rec, wdr
 from warehouse import store
 
@@ -88,3 +89,18 @@ def test_unreadable_side_file_is_reported(workbook):
 def test_missing_workbook_gives_empty_snapshot(tmp_path):
     snap = store.load_snapshot(tmp_path / "none.xlsx")
     assert snap.reports == [] and snap.inventory.items == []
+
+
+def test_managed_workbook_sidecar_uses_parallel_json_tree(tmp_path, monkeypatch):
+    excel_root = tmp_path / "data" / "excel"
+    json_root = tmp_path / "data" / "json"
+    monkeypatch.setattr(fsr_paths, "EXCEL_DIR", excel_root)
+    monkeypatch.setattr(fsr_paths, "JSON_DIR", json_root)
+
+    managed = excel_root / "demo_data" / "Reports.xlsx"
+    assert store.side_file_path(managed) == (
+        json_root / "demo_data" / store.SIDE_FOLDER / "Reports.warehouse.json")
+
+    external = tmp_path / "selected" / "External.xlsx"
+    assert store.side_file_path(external) == (
+        external.parent / store.SIDE_FOLDER / "External.warehouse.json")

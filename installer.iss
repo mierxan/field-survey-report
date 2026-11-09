@@ -36,8 +36,8 @@ Type: filesandordirs; Name: "{app}\_internal"
 [Files]
 Source: "dist\FieldSurveyReport\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion createallsubdirs
 ; database scripts for MySQL Workbench (not used by the program itself)
-Source: "field_survey_schema.sql"; DestDir: "{app}\sql"; Flags: ignoreversion
-Source: "migrations\*.sql"; DestDir: "{app}\sql\migrations"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "data\schema\field_survey_schema.sql"; DestDir: "{app}\sql"; Flags: ignoreversion
+Source: "data\schema\migrations\*.sql"; DestDir: "{app}\sql\migrations"; Flags: ignoreversion skipifsourcedoesntexist
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"

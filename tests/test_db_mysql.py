@@ -71,6 +71,30 @@ def test_old_table_saves_without_links_and_says_so():
     assert conn.committed and "Excel only" in notes[0]
 
 
+def test_upgrade_widens_a_short_control_no_and_restores_its_keys():
+    class ShortCursor(FakeCursor):
+        def execute(self, sql, params=()):
+            super().execute(sql, params)
+            if "character_maximum_length" in sql:
+                self.result = [("reports",), ("item_lines",)]
+            elif "referenced_table_name" in sql:
+                self.result = [("item_lines", "fk_item_report")]
+
+    class ShortConnection(FakeConnection):
+        def cursor(self):
+            return ShortCursor(self)
+
+    conn = ShortConnection(BASE + list(db_mysql.LINK_COLUMN_SQL))
+    assert "control_no" in db_mysql.upgrade_schema(conn)
+    alters = [s for s, _ in conn.statements if s.startswith("ALTER TABLE")
+              and "item_form" not in s]
+    assert alters[0] == "ALTER TABLE item_lines DROP FOREIGN KEY fk_item_report"
+    assert "ALTER TABLE reports MODIFY control_no VARCHAR(40) NOT NULL" in alters
+    assert alters[-1].startswith("ALTER TABLE item_lines ADD CONSTRAINT fk_item_report")
+    assert "ON DELETE CASCADE ON UPDATE CASCADE" in alters[-1]
+    assert conn.committed
+
+
 def test_upgraded_table_saves_links():
     conn = FakeConnection(BASE + ["cargo_id", "receiving_ref"])
     notes = db_mysql.save_report(data(), conn)
@@ -95,3 +119,46 @@ def test_upgrade_adds_only_missing_columns():
                       "VARCHAR(100) NULL",
                       "ALTER TABLE reports ADD COLUMN item_form "
                       "VARCHAR(20) NULL"]
+
+
+def test_upgrade_as_admin_uses_that_login_once_and_keeps_the_saved_one(monkeypatch):
+    saved = {"user": "fsr_app", "password": "app", "database": "field_survey"}
+    used = []
+    conn = FakeConnection(BASE + list(db_mysql.LINK_COLUMN_SQL))
+
+    def fake_connect(config):
+        used.append(config)
+        return conn
+
+    monkeypatch.setattr(db_mysql, "load_config", lambda: saved)
+    monkeypatch.setattr(db_mysql, "connect", fake_connect)
+    db_mysql.upgrade_schema_as("root", "secret")
+    assert used == [{"user": "root", "password": "secret",
+                     "database": "field_survey"}]
+    assert saved["user"] == "fsr_app" and conn.committed
+
+
+def test_denied_command_is_explained(monkeypatch):
+    class Denied(Exception):
+        errno = db_mysql.ACCESS_DENIED
+
+    monkeypatch.setattr(db_mysql, "load_config", lambda: {"user": "fsr_app"})
+    message = db_mysql.explain_error(Denied("ALTER command denied"))
+    assert "'fsr_app' is not allowed" in message and "admin login" in message
+
+
+def test_saved_reports_list_is_in_order_of_age_whoever_the_inspector():
+    class ListCursor(FakeCursor):
+        def execute(self, sql, params=()):
+            super().execute(sql, params)
+            if "FROM reports ORDER BY" in sql:
+                self.result = [(c, "", None, "", None) for c in
+                               ("FSR-ZZ-202610-0001", "FSR-JDC-202611-0001",
+                                "FSR-AB-202611-0002")]
+
+    class ListConnection(FakeConnection):
+        def cursor(self):
+            return ListCursor(self)
+
+    listed = [row[0] for row in db_mysql.list_reports(ListConnection(BASE))]
+    assert listed == ["FSR-AB-202611-0002", "FSR-JDC-202611-0001", "FSR-ZZ-202610-0001"]

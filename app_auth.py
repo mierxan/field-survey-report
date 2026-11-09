@@ -1,8 +1,8 @@
 """
 Sign in / sign up for the Field Survey Report.
 
-* Accounts are kept in users.json next to the program (passwords are stored
-  as salted PBKDF2 hashes - never as plain text).
+* Accounts are kept in the application's private JSON data directory
+  (passwords are stored as salted PBKDF2 hashes - never as plain text).
 * The Owner account is created automatically the first time the program
   starts. A new user signs up, then waits until the Owner approves the
   account (Account menu > Manage Users).
@@ -25,14 +25,15 @@ from tkinter import messagebox, ttk
 import ttkbootstrap as tb
 
 ITERATIONS = 200_000
-MIN_PASSWORD = 6
+MIN_PASSWORD = 12
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
-# Accounts created on first start come from auth_seed.json beside the program
+# Accounts created on first start come from data/json/private/auth_seed.json
 # (not in source control; only password HASHES are kept there). Without the
 # file no account is created here: with the central API, accounts are on the server.
 def _load_seed():
-    path = Path(__file__).resolve().parent / "auth_seed.json"
+    path = (Path(__file__).resolve().parent / "data" / "json" / "private"
+            / "auth_seed.json")
     try:
         with open(path, "r", encoding="utf-8") as file:
             seed = json.load(file)
@@ -53,6 +54,10 @@ STATUS_TEXT = {
 
 class AuthError(Exception):
     """A problem that can be shown to the user as it is."""
+
+
+class UserDataError(AuthError):
+    """The account file could not be safely read."""
 
 
 # ---------------------------------------------------------------------
@@ -106,10 +111,24 @@ class UserStore:
         try:
             with open(self.path, "r", encoding="utf-8") as file:
                 data = json.load(file)
-        except (OSError, json.JSONDecodeError):
+        except FileNotFoundError:
             return []
-        users = data.get("users") if isinstance(data, dict) else None
-        return users if isinstance(users, list) else []
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            raise UserDataError(
+                f"The account file could not be read: {self.path}\n"
+                "It has not been changed. Restore it from a backup before "
+                "signing in."
+            ) from error
+        if (not isinstance(data, dict)
+                or not isinstance(data.get("users"), list)
+                or any(not isinstance(user, dict)
+                       for user in data["users"])):
+            raise UserDataError(
+                f"The account file has an invalid format: {self.path}\n"
+                "It has not been changed. Restore it from a backup before "
+                "signing in."
+            )
+        return data["users"]
 
     def _write(self, users):
         text = json.dumps({"users": users}, indent=2, ensure_ascii=False)

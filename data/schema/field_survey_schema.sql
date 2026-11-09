@@ -12,7 +12,7 @@ USE field_survey;
 -- 1. REPORTS  (one row per report = the "Reports" sheet of the Excel file)
 -- ---------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS reports (
-    control_no          VARCHAR(20)  NOT NULL,            -- FSR-202610-0001
+    control_no          VARCHAR(40)  NOT NULL,            -- FSR-JDC-202610-0001
     so_number           VARCHAR(100) NULL,
     inspection_date     DATE         NULL,
     consignee           VARCHAR(200) NULL,
@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS reports (
 -- ---------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS declared_goods (
     id          INT UNSIGNED NOT NULL AUTO_INCREMENT,
-    control_no  VARCHAR(20)  NOT NULL,
+    control_no  VARCHAR(40)  NOT NULL,
     line_no     SMALLINT UNSIGNED NOT NULL,
     description VARCHAR(500) NULL,
     quantity    VARCHAR(100) NULL,
@@ -85,7 +85,7 @@ ALTER TABLE declared_goods MODIFY quantity VARCHAR(100) NULL;
 -- ---------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS item_lines (
     id              INT UNSIGNED NOT NULL AUTO_INCREMENT,
-    control_no      VARCHAR(20)  NOT NULL,
+    control_no      VARCHAR(40)  NOT NULL,
     item_list       VARCHAR(100) NOT NULL DEFAULT 'Item List 1',
     line_no         SMALLINT UNSIGNED NOT NULL,
     description     VARCHAR(500) NULL,
@@ -115,7 +115,7 @@ CREATE TABLE IF NOT EXISTS item_lines (
 -- ---------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS remarks (
     id          INT UNSIGNED NOT NULL AUTO_INCREMENT,
-    control_no  VARCHAR(20)  NOT NULL,
+    control_no  VARCHAR(40)  NOT NULL,
     section     VARCHAR(60)  NOT NULL,   -- 'Other Important Remarks' / 'Findings and Remarks'
     line_no     SMALLINT UNSIGNED NOT NULL,
     remark      TEXT NULL,
@@ -131,7 +131,7 @@ CREATE TABLE IF NOT EXISTS remarks (
 -- ---------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS incident_reports (
     id          INT UNSIGNED NOT NULL AUTO_INCREMENT,
-    control_no  VARCHAR(20)  NOT NULL,
+    control_no  VARCHAR(40)  NOT NULL,
     report_no   SMALLINT UNSIGNED NOT NULL,        -- 1 = Incident Report, 2 = Additional 1 ...
     vessel      VARCHAR(200) NULL,
     voyage      VARCHAR(100) NULL,
@@ -215,6 +215,6 @@ FROM reports r JOIN item_lines i ON i.control_no = r.control_no;
 --    FLUSH PRIVILEGES;
 -- ---------------------------------------------------------------------
 
--- Quick check: should list the 8 tables and the master list count.
+-- Quick check: should list 7 tables plus the v_item_report view.
 SELECT table_name FROM information_schema.tables WHERE table_schema = 'field_survey' ORDER BY 1;
 SELECT list_name, COUNT(*) AS items FROM master_list GROUP BY list_name;

@@ -18,6 +18,7 @@ from datetime import datetime
 from pathlib import Path
 
 import fsr_storage as storage
+import fsr_paths
 
 FORMAT = "fsr-master-data"
 SUPPORTED_VERSION = 1
@@ -84,7 +85,8 @@ def _report_problem(report):
 
 def ledger_path(excel_path):
     excel_path = Path(excel_path)
-    return excel_path.with_name(f"{excel_path.stem}_imported_reports.json")
+    return (fsr_paths.json_dir_for_workbook(excel_path)
+            / f"{excel_path.stem}_imported_reports.json")
 
 
 def load_ledger(excel_path):
@@ -179,6 +181,8 @@ def import_master_data(excel_path, data, on_saved=None):
             summary["backup"] = str(target)
 
     saved = _last_saved_by_control(excel_path)
+    # Numbers of the PO-linked Withdrawal workbook: never reused by an import.
+    taken_elsewhere = set(storage.withdrawal_control_numbers(excel_path))
 
     for report in data["reports"]:
         phone_no = str(report["control_no"]).strip()
@@ -202,8 +206,11 @@ def import_master_data(excel_path, data, on_saved=None):
         else:
             local = phone_no
             editing = False
-            if local in saved:
-                local = storage.next_control_number(saved)
+            if local in saved or local in taken_elsewhere:
+                # The report keeps the initials of the inspector who made it.
+                local = storage.next_control_number(
+                    [*saved, *taken_elsewhere],
+                    storage.control_initials_of(phone_no))
                 _renumbered(report, phone_no, local)
                 summary["renumbered"].append((phone_no, local))
 

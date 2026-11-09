@@ -1,7 +1,7 @@
 """Master Lists and Settings."""
 
 import tkinter
-from tkinter import messagebox, ttk
+from tkinter import messagebox, simpledialog, ttk
 
 import ttkbootstrap as tb
 
@@ -105,7 +105,7 @@ class SettingsPage(ScrollPage):
         card = Card(self.body, "MySQL",
                     "Optional. The Cargo ID and Receiving Ref columns need a "
                     "one-time table upgrade on databases created before the "
-                    "warehouse monitoring (migrations/"
+                    "warehouse monitoring (data/schema/migrations/"
                     "001_add_item_warehouse_links.sql does the same).")
         card.grid(row=row, column=0, sticky="we", pady=(14, 0))
         c = card.content
@@ -136,14 +136,20 @@ class SettingsPage(ScrollPage):
             return
         try:
             missing = db.missing_link_columns()
+            short = db.short_control_tables()
         except Exception as error:
             messagebox.showerror("MySQL", db.explain_error(error),
                                  parent=self.ctx.window)
             return
-        messagebox.showinfo("MySQL", "The tables are up to date." if not
-                            missing else "Missing columns in item_lines: "
-                            + ", ".join(missing) + "\n\nUse 'Upgrade MySQL "
-                            "Tables'.", parent=self.ctx.window)
+        problems = []
+        if missing:
+            problems.append("Missing columns in item_lines: " + ", ".join(missing))
+        if short:
+            problems.append("control_no is too short for the current Control # "
+                            "format in: " + ", ".join(short))
+        messagebox.showinfo("MySQL", "\n".join(problems) + "\n\nUse 'Upgrade "
+                            "MySQL Tables'." if problems else
+                            "The tables are up to date.", parent=self.ctx.window)
 
     def upgrade(self):
         db = self.ctx.db_mysql
@@ -152,18 +158,48 @@ class SettingsPage(ScrollPage):
             return
         if not messagebox.askyesno(
                 "Upgrade MySQL Tables",
-                "Add the columns cargo_id and receiving_ref to the table "
-                "item_lines?\n\nExisting rows are kept (the new columns start "
-                "empty). The MySQL login needs the ALTER privilege.",
+                "Add any missing columns, and make control_no long enough for "
+                "the Control # with initials?\n\nExisting rows are kept (new "
+                "columns start empty). If the program's MySQL login may not "
+                "change tables, you will be asked for an admin login, which "
+                "is not saved.",
                 parent=self.ctx.window):
             return
         try:
             added = db.upgrade_schema()
         except Exception as error:
+            if getattr(error, "errno", None) == db.ACCESS_DENIED:
+                self._upgrade_as_admin()
+                return
             self.ctx.log.exception("MySQL upgrade failed")
             messagebox.showerror("MySQL", db.explain_error(error),
                                  parent=self.ctx.window)
             return
+        self._upgrade_done(added)
+
+    def _upgrade_as_admin(self):
+        db = self.ctx.db_mysql
+        user = simpledialog.askstring(
+            "MySQL Admin Login", "The program's MySQL login may not change "
+            "tables.\n\nAdmin user name (not saved):", initialvalue="root",
+            parent=self.ctx.window)
+        if not user:
+            return
+        password = simpledialog.askstring(
+            "MySQL Admin Login", f"Password for {user} (not saved):", show="*",
+            parent=self.ctx.window)
+        if password is None:
+            return
+        try:
+            added = db.upgrade_schema_as(user, password)
+        except Exception as error:
+            self.ctx.log.exception("MySQL upgrade failed")
+            # The MySQL message names the admin login, explain_error the saved one.
+            messagebox.showerror("MySQL", str(error), parent=self.ctx.window)
+            return
+        self._upgrade_done(added)
+
+    def _upgrade_done(self, added):
         messagebox.showinfo("MySQL", "Added: " + ", ".join(added) if added
                             else "Nothing to do - the columns exist.",
                             parent=self.ctx.window)

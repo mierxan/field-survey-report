@@ -2,7 +2,8 @@
 
 The inspection reports stay where they are (the Excel file, or MySQL) and
 are only READ here. What the warehouse modules add themselves is kept in
-one small JSON file beside the Excel file:
+one small JSON file in the corresponding JSON data folder for managed
+workbooks, or beside an externally selected workbook:
 
     Warehouse Data/<Excel file name>.warehouse.json
         reconciliation   append-only log of decisions (audit trail)
@@ -14,12 +15,15 @@ on top of the original records every time the ledger is built.
 """
 
 import json
+import logging
 import threading
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
 import fsr_storage
+import fsr_paths
+import fsr_withdrawal
 
 from .inventory import (ACCEPTED, CONFIRMED, DEFAULT_AGING_THRESHOLDS,
                         EXCLUDED, OPEN, PROPOSED, REJECTED, LineDecision,
@@ -41,7 +45,7 @@ OWNER_ACTIONS = {"confirm", "reject", "exclude", "accept", "reopen"}
 
 def side_file_path(excel_path):
     excel_path = Path(excel_path)
-    return (excel_path.parent / SIDE_FOLDER
+    return (fsr_paths.json_dir_for_workbook(excel_path) / SIDE_FOLDER
             / f"{excel_path.stem}.warehouse.json")
 
 
@@ -180,8 +184,26 @@ def load_reports(excel_path, source="excel"):
     """All saved inspection reports of the chosen source."""
     if source == "mysql":
         import db_mysql
-        return db_mysql.load_all_reports()
-    return fsr_storage.read_all_reports(excel_path)
+        return db_mysql.load_all_reports()     # holds both workbooks' reports
+    return merge_withdrawal_reports(
+        fsr_storage.read_all_reports(excel_path),
+        fsr_withdrawal.read_all_reports(
+            fsr_paths.withdrawal_workbook_path(excel_path)))
+
+
+def merge_withdrawal_reports(reports, withdrawal_reports):
+    """Add the PO-linked Withdrawal reports, each counted once. A Control #
+    never should be in both workbooks; if it is, the Withdrawal workbook's
+    copy is the one used, as when the report is opened."""
+    owned = {r["control_no"].strip().casefold() for r in withdrawal_reports}
+    kept = []
+    for report in reports:
+        if report["control_no"].strip().casefold() in owned:
+            logging.getLogger("fsr").warning(
+                "%s is in both workbooks; counted once", report["control_no"])
+        else:
+            kept.append(report)
+    return kept + list(withdrawal_reports)
 
 
 @dataclass
