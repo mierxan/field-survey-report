@@ -62,8 +62,10 @@ class Shell:
                 anchor="w", pady=(0, 8))
         ttk.Label(foot, text=self.ctx.user_name, style="Sidebar.TLabel"
                   ).pack(anchor="w")
-        ttk.Label(foot, text="Owner" if self.ctx.is_owner else "User",
-                  style="SidebarMuted.TLabel").pack(anchor="w")
+        role = "Owner" if self.ctx.is_owner else "User"
+        edition = getattr(self.ctx, "edition_label", "")
+        ttk.Label(foot, text=f"{role}  -  {edition} edition" if edition
+                  else role, style="SidebarMuted.TLabel").pack(anchor="w")
 
     def _highlight(self):
         for key, button in self.buttons.items():

@@ -1,21 +1,35 @@
-; Inno Setup script - builds Installer\FieldSurveyReport_Setup.exe
-; build_installer.bat passes /DAppVersion=<build date>
-#define AppName "Field Survey Report"
+; Inno Setup script - builds one Setup file per edition:
+;   Installer\FieldSurveyReport_Owner_Setup_<version>.exe  (Excel + MySQL)
+;   Installer\FieldSurveyReport_User_Setup_<version>.exe   (this PC only)
+; build_installer.bat passes /DAppVersion=<build date> /DEdition=Owner|User
 #ifndef AppVersion
   #define AppVersion "1.0"
 #endif
+#ifndef Edition
+  #define Edition "Owner"
+#endif
 #define AppExe "FieldSurveyReport.exe"
 
+#if Edition == "Owner"
+  ; same AppId as the earlier single installer, so the owner's PC updates in place
+  #define AppGuid "{{6F0C3C1E-2B7A-4C55-9E61-4F5A5B1D7A10}"
+  #define AppName "Field Survey Report"
+#else
+  #define AppGuid "{{B3E1A7D2-5C49-4F0B-8D36-2A9E71C4F5B8}"
+  #define AppName "Field Survey Report (User)"
+#endif
+
 [Setup]
-AppId={{6F0C3C1E-2B7A-4C55-9E61-4F5A5B1D7A10}
+AppId={#AppGuid}
 AppName={#AppName}
 AppVersion={#AppVersion}
+AppVerName={#AppName} {#Edition} edition {#AppVersion}
 VersionInfoVersion={#AppVersion}
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 OutputDir=Installer
-OutputBaseFilename=FieldSurveyReport_Setup
+OutputBaseFilename=FieldSurveyReport_{#Edition}_Setup_{#AppVersion}
 SetupIconFile=logo.ico
 UninstallDisplayIcon={app}\{#AppExe}
 Compression=lzma2
@@ -34,10 +48,12 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 Type: filesandordirs; Name: "{app}\_internal"
 
 [Files]
-Source: "dist\FieldSurveyReport\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion createallsubdirs
+Source: "dist\{#Edition}\FieldSurveyReport\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion createallsubdirs
+#if Edition == "Owner"
 ; database scripts for MySQL Workbench (not used by the program itself)
 Source: "data\schema\field_survey_schema.sql"; DestDir: "{app}\sql"; Flags: ignoreversion
 Source: "data\schema\migrations\*.sql"; DestDir: "{app}\sql\migrations"; Flags: ignoreversion skipifsourcedoesntexist
+#endif
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"

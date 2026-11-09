@@ -30,7 +30,8 @@ EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 # Accounts created on first start come from data/json/private/auth_seed.json
 # (not in source control; only password HASHES are kept there). Without the
-# file no account is created here: with the central API, accounts are on the server.
+# file no account is created here; the owner creates and approves accounts
+# from Manage Users.
 def _load_seed():
     path = (Path(__file__).resolve().parent / "data" / "json" / "private"
             / "auth_seed.json")

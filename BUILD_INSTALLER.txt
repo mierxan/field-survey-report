@@ -1,27 +1,43 @@
-MAKE THE SETUP (.exe) FOR THE FIELD SURVEY REPORT
-=================================================
-Do this ONCE on your own PC (the one with PyCharm). The result is one file,
-FieldSurveyReport_Setup.exe, that you copy to any PC and double-click.
-The other PCs do NOT need Python.
+MAKE THE SETUP FILES (.exe) FOR THE FIELD SURVEY REPORT
+=======================================================
+Do this ONCE on your own PC (the one with PyCharm). The result is two files
+that you copy to the other PCs and double-click. The other PCs do NOT need Python.
+
+  FieldSurveyReport_Owner_Setup_<date>.exe   for the OWNER's PC only
+        Excel + MySQL (Workbench). "Import Master Data..." brings in the
+        files sent by every site PC and every phone.
+  FieldSurveyReport_User_Setup_<date>.exe    for every SITE PC
+        Excel and JSON files on that PC only (no MySQL, no internet).
+        "Export Master Data..." writes one .json file to send to the owner.
 
 1. Install Inno Setup 6 (free): https://jrsoftware.org/isdl.php  (default options).
-2. Copy the files of this zip over your PyCharm project folder (replace when asked).
-3. Double-click  build_installer.bat  in the project folder. It takes a few minutes.
-4. Your installer appears in the folder  Installer\FieldSurveyReport_Setup.exe
+2. Double-click  build_installer.bat  in the project folder. It takes a few minutes.
+   (build_installer.bat /owner  or  /user  builds only one of them.)
+3. Your installers appear in the  Installer  folder.
 
 ON EACH NEW PC
- * Run FieldSurveyReport_Setup.exe (Next > Next > Install). It adds a Start menu
+ * Run the right Setup file (Next > Next > Install). It adds a Start menu
    item and an optional Desktop icon. Sign in with the Owner initials MPR.
- * The program's files go to  C:\Program Files\Field Survey Report .
+ * The program's files go to  C:\Program Files\Field Survey Report  (Owner) or
+   C:\Program Files\Field Survey Report (User)  (User).
    Your data goes here (so it is safe when you update or uninstall):
      Documents\Field Survey Report\     excel\ (workbooks, report forms),
                                         json\ (master lists and sidecars)
      AppData\Roaming\FieldSurveyReport\ users, settings, MySQL settings, log
- * MySQL is OFF by default on a new PC. To use it, edit
-   AppData\Roaming\FieldSurveyReport\db_config.json : "enabled": true and, if the
-   database is on another PC, "host": "<that PC's IP address>"  (see INSTALL_GUIDE.txt).
+ * Owner PC only: MySQL is OFF until it is set up. Use the account menu (top
+   right) > MySQL Settings..., or edit
+   AppData\Roaming\FieldSurveyReport\db_config.json : "enabled": true
+   (see MYSQL_SETUP.txt / INSTALL_GUIDE.txt). The SQL scripts for MySQL
+   Workbench are installed in the program folder under  sql\ .
  * PDF / Print needs Microsoft Excel or LibreOffice on that PC.
 
-UPDATING: build a new Setup and run it over the old install. Data is kept.
-Windows may warn "unknown publisher" because the file is not code-signed;
-choose More info > Run anyway.
+SENDING THE DATA TO THE OWNER
+ * Site PC (User edition): left panel > Export Master Data... > send the file.
+ * Phone: Settings > Export Master Data > Share (or Save File) > send the file.
+ * Owner PC: left panel > Import Master Data... > choose the file. The reports
+   go into the owner's Excel file and MySQL. Importing the same file again
+   does not duplicate anything.
+
+UPDATING: build new Setup files and run the right one over the old install.
+Data is kept. Windows may warn "unknown publisher" because the file is not
+code-signed; choose More info > Run anyway.

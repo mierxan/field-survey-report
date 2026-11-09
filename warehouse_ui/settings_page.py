@@ -20,12 +20,20 @@ class SettingsPage(ScrollPage):
     def __init__(self, parent, ctx, service):
         super().__init__(parent)
         self.ctx, self.service = ctx, service
-        ttk.Label(self.body, text="Where the data is kept, the MySQL "
-                  "connection, aging thresholds, the drop-down lists of the "
-                  "inspection form and the Demo Mode.",
+        # Only the Owner edition uses MySQL; a User (site) PC keeps its data
+        # in Excel/JSON files and sends Master Data files to the owner.
+        self.owner_edition = getattr(ctx, "owner_edition", True)
+        ttk.Label(self.body, text=(
+                  "Where the data is kept, the MySQL connection, aging "
+                  "thresholds, the drop-down lists of the inspection form "
+                  "and the Demo Mode." if self.owner_edition else
+                  "Where the data is kept, the drop-down lists of the "
+                  "inspection form and the Demo Mode."),
                   style="PageMuted.TLabel").grid(row=1, column=0, sticky="w")
+        self.mysql_label = None
         self._data_card(2)
-        self._mysql_card(3)
+        if self.owner_edition:
+            self._mysql_card(3)
         self._lists_card(4)
         self._demo_card(5)
 
@@ -34,12 +42,18 @@ class SettingsPage(ScrollPage):
 
     # ---- data ----
     def _data_card(self, row):
-        card = Card(self.body, "Data Storage",
+        card = Card(self.body, "Data Storage", (
                     "The Excel data file is the primary store; every saved "
                     "report also goes to MySQL when it is set up. The "
                     "warehouse decisions (reconciliation log, Bad Order case "
                     "status, aging thresholds) are kept in the 'Warehouse "
-                    "Data' folder beside the Excel file.")
+                    "Data' folder beside the Excel file."
+                    if self.owner_edition else
+                    "User edition: every report is kept on this PC, in the "
+                    "Excel data file and the JSON files beside it. Use "
+                    "Export Master Data (left panel of the inspection form) "
+                    "and send the file to the owner, who brings it into the "
+                    "owner's MySQL database and Excel file."))
         card.grid(row=row, column=0, sticky="we", pady=(14, 0))
         c = card.content
         self.file_label = ttk.Label(c, text="", style="Card.TLabel",
@@ -48,18 +62,19 @@ class SettingsPage(ScrollPage):
         tb.Button(c, text="Change Excel File...", bootstyle="secondary-outline",
                   command=self.change_file).grid(row=1, column=0, sticky="w",
                                                  pady=(8, 0))
-        ttk.Label(c, text="Dashboard and analytics read from:",
-                  style="CardMuted.TLabel").grid(row=2, column=0, sticky="w",
-                                                 pady=(12, 2))
         self.source = tkinter.StringVar(value=self.ctx.data_source())
-        row_frame = ttk.Frame(c, style="CardPlain.TFrame")
-        row_frame.grid(row=3, column=0, columnspan=3, sticky="w")
-        for value, text in (("excel", "Excel data file"),
-                            ("mysql", "MySQL database")):
-            tb.Radiobutton(row_frame, text=text, value=value,
-                           variable=self.source, style="Card.TRadiobutton",
-                           command=self.set_source).pack(side="left",
-                                                         padx=(0, 16))
+        if self.owner_edition:
+            ttk.Label(c, text="Dashboard and analytics read from:",
+                      style="CardMuted.TLabel").grid(row=2, column=0,
+                                                     sticky="w", pady=(12, 2))
+            row_frame = ttk.Frame(c, style="CardPlain.TFrame")
+            row_frame.grid(row=3, column=0, columnspan=3, sticky="w")
+            for value, text in (("excel", "Excel data file"),
+                                ("mysql", "MySQL database")):
+                tb.Radiobutton(row_frame, text=text, value=value,
+                               variable=self.source, style="Card.TRadiobutton",
+                               command=self.set_source).pack(side="left",
+                                                             padx=(0, 16))
         self.side_label = ttk.Label(c, text="", style="CardMuted.TLabel",
                                     wraplength=900, justify="left")
         self.side_label.grid(row=4, column=0, columnspan=3, sticky="w",
@@ -123,6 +138,8 @@ class SettingsPage(ScrollPage):
                   command=self.upgrade).pack(side="left")
 
     def _mysql_status(self):
+        if self.mysql_label is None:          # User edition: no MySQL card
+            return
         self.mysql_label.configure(
             text="Off in Demo Mode (sample data never reaches MySQL)."
             if self.ctx.demo_mode else

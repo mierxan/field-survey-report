@@ -81,8 +81,9 @@ except ImportError:
 # Field definitions + Excel storage (fsr_storage.py beside this script).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fsr_paths
-import fsr_import                  # reports sent from the Android app
-import fsr_portal_export           # one JSON file for the web portal
+import fsr_edition                 # Owner app (Excel + MySQL) or User app
+import fsr_import                  # Master Data files from the sites/phones
+import fsr_master_export           # one Master Data file for the owner
 import fsr_withdrawal              # PO-linked Withdrawal reports
 import fsr_withdrawal_ui
 from fsr_withdrawal_ui import WithdrawalPanel
@@ -167,21 +168,28 @@ if not DEMO_MODE:
         if legacy_master_list.exists():
             MASTER_LIST_FILE.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(legacy_master_list, MASTER_LIST_FILE)
-    _default_files = (
+    _default_files = [
         (MASTER_LIST_FILE, BASE_DIR / "data" / "json" / "master_list.json"),
-        (PRIVATE_JSON_DIR / "db_config.json",
-         BASE_DIR / "data" / "json" / "private" / "installer_defaults"
-         / "db_config.json"),
-    )
+    ]
+    if fsr_edition.IS_OWNER_EDITION:
+        _default_files.append(
+            (PRIVATE_JSON_DIR / "db_config.json",
+             BASE_DIR / "data" / "json" / "private" / "installer_defaults"
+             / "db_config.json"))
     for _target, _source in _default_files:
         if not _target.exists() and _source.exists() and _target != _source:
             _target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(_source, _target)
 
+# The User edition keeps everything in this PC's Excel/JSON files and sends
+# Master Data files to the owner; only the Owner edition uses MySQL.
+IS_OWNER_EDITION = fsr_edition.IS_OWNER_EDITION
+MYSQL_ALLOWED = IS_OWNER_EDITION and not DEMO_MODE
+
 if db_mysql is not None:
     db_mysql.CONFIG_FILE = PRIVATE_JSON_DIR / "db_config.json"
-    if DEMO_MODE:
-        db_mysql.is_enabled = lambda: False       # never MySQL in Demo Mode
+    if not MYSQL_ALLOWED:
+        db_mysql.is_enabled = lambda: False       # Demo Mode / User edition
 
 # Names of the lists inside master_list.json.
 LOCATION_LIST_KEY = "location_list"
@@ -383,7 +391,8 @@ USER_FULL_NAME = app_auth.full_name(current_user)      # printed on the forms
 set_control_initials(current_user.get("initials"))     # in every new Control #
 print_name = {"value": USER_FULL_NAME}                 # preparer of this printout
 IS_OWNER = current_user.get("role") == "owner"
-window.title(f"Field Survey Report - {USER_FULL_NAME}")
+window.title(f"Field Survey Report ({fsr_edition.LABEL} edition) - "
+             f"{USER_FULL_NAME}")
 
 
 def center_window(win, width, height, top_margin=10):
@@ -1419,8 +1428,9 @@ def rebuild_account_menu():
             command=lambda: app_auth.open_manage_users(
                 window, user_store, current_user,
                 on_change=rebuild_account_menu))
-    account_menu.add_command(
-        label="MySQL Settings...", command=lambda: open_mysql_settings())
+    if IS_OWNER_EDITION:
+        account_menu.add_command(
+            label="MySQL Settings...", command=lambda: open_mysql_settings())
     account_menu.add_command(
         label="Change Password...",
         command=lambda: app_auth.open_change_password(
@@ -1456,6 +1466,12 @@ def sign_out():
 
 def open_mysql_settings():
     """Fill in the MySQL connection (no file editing needed)."""
+    if not IS_OWNER_EDITION:
+        messagebox.showinfo(
+            "MySQL", "This is the User edition: reports are kept on this PC. "
+            "Use Export Master Data and send the file to the owner.",
+            parent=window)
+        return
     if DEMO_MODE:
         messagebox.showinfo(
             "MySQL", "MySQL is switched off in Demo Mode, so the sample "
@@ -1742,12 +1758,13 @@ import_master_button = tb.Button(
     panel, text="Import Master Data...", bootstyle="secondary-outline",
     command=lambda: import_master_data_file()
 )
-import_master_button.pack(fill="x", pady=3)
-portal_export_button = tb.Button(
-    panel, text="Export for Portal...", bootstyle="secondary-outline",
-    command=lambda: export_for_portal()
+if IS_OWNER_EDITION:        # the owner compiles the files of every site
+    import_master_button.pack(fill="x", pady=3)
+export_master_button = tb.Button(
+    panel, text="Export Master Data...", bootstyle="secondary-outline",
+    command=lambda: export_master_data()
 )
-portal_export_button.pack(fill="x", pady=3)
+export_master_button.pack(fill="x", pady=3)
 
 # MySQL: three circles. All three colours = MySQL works,
 # three red circles = it does not. Click them to check again.
@@ -1757,7 +1774,7 @@ DOT_BAD = ("#e0392d",) * 3
 DOT_WAIT = ("#6b7894",) * 3
 mysql_state = {"text": "Checking MySQL..."}
 
-if True:        # the MySQL status and buttons are always shown
+if IS_OWNER_EDITION:    # the User edition never uses MySQL
     section_title(panel, "MySQL")
     mysql_label = tb.Label(mysql_box, text="Checking...",
                            font=bold_font, bootstyle="secondary")
@@ -6360,8 +6377,8 @@ def show_saved_links(data):
     report_state["dirty"] = was_dirty
 
 
-def export_for_portal():
-    """Write one JSON file with everything, to send to the owner of the portal."""
+def export_master_data():
+    """Write one Master Data JSON file with everything, to send to the owner."""
     if Workbook is None:
         excel_missing_message()
         return
@@ -6369,39 +6386,41 @@ def export_for_portal():
     device = socket.gethostname()
     chosen = filedialog.asksaveasfilename(
         parent=window,
-        title="Save the file for the web portal",
+        title="Save the Master Data file for the owner",
         defaultextension=".json",
-        initialfile=(f"FSR_Portal_Data_{safe_filename(device)}_"
+        initialfile=(f"FSR_Master_Data_{safe_filename(device)}_"
                      f"{date.today():%Y-%m-%d}.json"),
-        filetypes=[("Portal data file", "*.json")]
+        filetypes=[("Master data file", "*.json")]
     )
     if not chosen:
         return
 
     try:
-        count = busy(fsr_portal_export.write_export, excel_state["path"],
-                     chosen, device, USER_FULL_NAME)
+        count = busy(fsr_master_export.write_export, excel_state["path"],
+                     chosen, device, USER_FULL_NAME, master_data)
     except Exception as error:
-        log.exception("Export for the portal failed")
-        messagebox.showerror("Export for Portal",
+        log.exception("Export Master Data failed")
+        messagebox.showerror("Export Master Data",
                              f"The file was not written:\n{error}", parent=window)
         return
     messagebox.showinfo(
-        "Export for Portal",
-        f"{count} report(s) saved to:\n{chosen}\n\nSend this one file to the owner.",
+        "Export Master Data",
+        f"{count} report(s) saved to:\n{chosen}\n\nSend this one file to the "
+        "owner. Sending it again later is fine: reports the owner already "
+        "has are not duplicated.",
         parent=window
     )
 
 
 def import_master_data_file():
-    """Bring in the reports an inspector sent from the Android app."""
+    """Bring in a Master Data file sent from a site PC or the Android app."""
     if Workbook is None:
         excel_missing_message()
         return
 
     chosen = filedialog.askopenfilename(
         parent=window,
-        title="Select the master data file from the phone",
+        title="Select the Master Data file (from a site PC or a phone)",
         filetypes=[("Master data file", "*.json"), ("All files", "*.*")]
     )
     if not chosen:
@@ -6464,7 +6483,7 @@ def import_master_data_file():
             name for names in new_names.values() for name in names[:20])
         if messagebox.askyesno(
             "Import Master Data",
-            f"Add {total_names} new name(s) from the phone to your master "
+            f"Add {total_names} new name(s) from the file to your master "
             f"lists?\n\n{listing}",
             parent=window
         ):
@@ -6747,6 +6766,7 @@ if warehouse_ui is not None:
     ui_context = SimpleNamespace(
         window=window, sidebar=sidebar, inspection_frame=body, log=log,
         log_file=LOG_FILE, user_name=USER_FULL_NAME, is_owner=IS_OWNER,
+        owner_edition=IS_OWNER_EDITION, edition_label=fsr_edition.LABEL,
         demo_mode=DEMO_MODE, data_dir=DATA_DIR, db_mysql=db_mysql,
         master_data=master_data, save_master_lists=save_master_lists,
         excel_path=lambda: Path(excel_state["path"]),

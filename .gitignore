@@ -1,11 +1,9 @@
 # Credentials and per-PC configuration: never commit these
 db_config.json
-api_config.json
 auth_seed.json
 users.json
 settings.json
 installer_defaults/auth_seed.json
-installer_defaults/api_config.json
 allow_network_access.sql
 set_password.sql
 MYSQL_SETUP.txt

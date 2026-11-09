@@ -156,10 +156,29 @@ use temporary data and do not touch the real Excel file, accounts, or a
 MySQL server. Latest results are in
 [docs/TESTING_REPORT.md](docs/TESTING_REPORT.md).
 
-## 7. MySQL (optional, unchanged behaviour)
+## 7. Owner and User editions, MySQL
 
-Every save still goes to the Excel file and, when set up, to MySQL. The
-dashboards read Excel by default; MySQL can be chosen under Settings.
+There is no online server. Each PC and phone keeps its own data, and the
+owner collects everything with Master Data files (JSON):
+
+| Edition | Where | Storage | Master Data |
+|---|---|---|---|
+| **Owner** (`FieldSurveyReport_Owner_Setup_*.exe`) | the owner's PC | Excel + MySQL (Workbench) | **Import Master Data...** brings in the files of every site PC and phone |
+| **User** (`FieldSurveyReport_User_Setup_*.exe`) | each site PC | Excel and JSON files on that PC only; MySQL is never used | **Export Master Data...** writes `FSR_Master_Data_<PC>_<date>.json` to send to the owner |
+| **Android app** | each inspector's phone | the phone's own database | **Export Master Data** (Save File / Share), sent to the owner |
+
+The owner's import adds each report to the owner's Excel file and MySQL
+database, offers the new consignee/supplier/... names for the master lists,
+and remembers what it brought in (by PC or phone and Control #), so sending
+the same file again never duplicates a report. A Control # that is already
+taken on the owner's PC gets the next free number with the same initials.
+
+Run from source, the program is the Owner edition; `set FSR_EDITION=user`
+starts the User edition for testing.
+
+In the Owner edition every save still goes to the Excel file and, when set
+up, to MySQL. The dashboards read Excel by default; MySQL can be chosen
+under Settings.
 
 Databases created before this update need two new columns on
 `item_lines`. Either run `data/schema/migrations/001_add_item_warehouse_links.sql` in
@@ -211,9 +230,12 @@ isolates every file in that folder, which is what the tests use.
 
 ## 9. Building the installer
 
-`build_installer.bat` / `FieldSurveyReport.spec` work as before; the new
-packages and the Matplotlib Tk backend have been added to them. See
-`BUILD_INSTALLER.txt`.
+`build_installer.bat` builds both editions in one run:
+`Installer\FieldSurveyReport_Owner_Setup_<date>.exe` and
+`Installer\FieldSurveyReport_User_Setup_<date>.exe` (`/owner` or `/user`
+builds only one). The two install side by side as separate programs; only
+the Owner edition carries the MySQL driver, the MySQL defaults and the SQL
+scripts for Workbench. See `BUILD_INSTALLER.txt`.
 
 ## 10. PO-linked Withdrawal reports
 

@@ -1,22 +1,32 @@
 @echo off
 rem ============================================================
-rem  Builds  FieldSurveyReport_Setup.exe  (run on YOUR Windows PC)
+rem  Builds the two Setup files  (run on YOUR Windows PC)
+rem    Installer\FieldSurveyReport_Owner_Setup_<version>.exe
+rem        the owner's PC: Excel + MySQL (Workbench) + Import Master Data
+rem    Installer\FieldSurveyReport_User_Setup_<version>.exe
+rem        the site PCs: Excel/JSON on that PC only + Export Master Data
+rem
 rem  1) Installs/updates the packages in .venv
 rem  2) Runs the automated tests (if pytest is installed)
-rem  3) PyInstaller turns the program into FieldSurveyReport.exe
-rem  4) Inno Setup (free) wraps it into one Setup file
+rem  3) PyInstaller turns the program into FieldSurveyReport.exe (per edition)
+rem  4) Inno Setup (free) wraps each one into a Setup file
 rem
 rem  Options:  build_installer.bat /nopause   (do not wait for a key)
 rem            build_installer.bat /notests   (skip the tests)
+rem            build_installer.bat /owner     (only the Owner edition)
+rem            build_installer.bat /user      (only the User edition)
 rem ============================================================
 setlocal
 cd /d "%~dp0"
 
 set NOPAUSE=
 set NOTESTS=
+set ONLY=
 for %%A in (%*) do (
   if /i "%%A"=="/nopause" set NOPAUSE=1
   if /i "%%A"=="/notests" set NOTESTS=1
+  if /i "%%A"=="/owner" set ONLY=Owner
+  if /i "%%A"=="/user" set ONLY=User
 )
 
 set PY=.venv\Scripts\python.exe
@@ -47,53 +57,39 @@ if defined NOTESTS (
     "%PY%" -m pytest -q
     if errorlevel 1 (
       echo.
-      echo The tests failed - the installer was NOT built.
+      echo The tests failed - the installers were NOT built.
       goto failed
     )
   )
 )
 
-echo [3/4] Building FieldSurveyReport.exe ...
-if exist build rmdir /s /q build
-if exist dist rmdir /s /q dist
-"%PY%" -m PyInstaller --noconfirm --clean --windowed ^
-  --name FieldSurveyReport --icon logo.ico ^
-  --collect-all ttkbootstrap ^
-  --collect-submodules mysql.connector ^
-  --collect-submodules warehouse ^
-  --collect-submodules warehouse_ui ^
-  --hidden-import matplotlib.backends.backend_tkagg ^
-  --hidden-import win32com.client ^
-  --add-data "data\excel\First_Page.xlsx;data\excel" ^
-  --add-data "data\excel\Cargo_Details.xlsx;data\excel" ^
-  --add-data "data\excel\Containerized_Loading_Form.xlsx;data\excel" ^
-  --add-data "data\excel\Incident_Report.xlsx;data\excel" ^
-  --add-data "data\json\master_list.json;data\json" ^
-  --add-data "logo.png;." ^
-  --add-data "logo.ico;." ^
-  --add-data "data\json\private\installer_defaults\db_config.json;data\json\private\installer_defaults" ^
-  --add-data "data\json\private\auth_seed.json;data\json\private" ^
-  field_survey_report.py
-if errorlevel 1 goto failed
-if not exist "dist\FieldSurveyReport\FieldSurveyReport.exe" goto failed
-
-echo [4/4] Building the Setup file...
 set ISCC=
 if exist "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" set "ISCC=%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe"
 if exist "%ProgramFiles%\Inno Setup 6\ISCC.exe" set "ISCC=%ProgramFiles%\Inno Setup 6\ISCC.exe"
 if exist "%LocalAppData%\Programs\Inno Setup 6\ISCC.exe" set "ISCC=%LocalAppData%\Programs\Inno Setup 6\ISCC.exe"
+
+if exist build rmdir /s /q build
+if exist dist rmdir /s /q dist
+
+if /i not "%ONLY%"=="User" (
+  call :edition Owner
+  if errorlevel 1 goto failed
+)
+if /i not "%ONLY%"=="Owner" (
+  call :edition User
+  if errorlevel 1 goto failed
+)
+
+echo.
 if not defined ISCC (
-  echo.
-  echo FieldSurveyReport.exe is ready in:  dist\FieldSurveyReport
-  echo To make the Setup file install Inno Setup 6 ^(jrsoftware.org^) and run
+  echo The programs are ready in  dist\Owner  and  dist\User.
+  echo To make the Setup files install Inno Setup 6 ^(jrsoftware.org^) and run
   echo this file again.
   goto done
 )
-"%ISCC%" /Q "/DAppVersion=%APPVER%" installer.iss
-if errorlevel 1 goto failed
-
-echo.
-echo DONE.  Your installer ^(version %APPVER%^):  Installer\FieldSurveyReport_Setup.exe
+echo DONE.  Your installers ^(version %APPVER%^) are in the Installer folder:
+if /i not "%ONLY%"=="User"  echo    FieldSurveyReport_Owner_Setup_%APPVER%.exe   - the owner's PC
+if /i not "%ONLY%"=="Owner" echo    FieldSurveyReport_User_Setup_%APPVER%.exe    - the site PCs
 :done
 if not defined NOPAUSE pause
 exit /b 0
@@ -103,3 +99,50 @@ echo.
 echo The build failed. Read the messages above ^(send them to me^).
 if not defined NOPAUSE pause
 exit /b 1
+
+
+rem ---- one edition: %1 = Owner or User -------------------------------
+:edition
+set ED=%~1
+echo.
+echo [3/4] Building FieldSurveyReport.exe - %ED% edition ...
+set EDDIR=build\edition_%ED%\data\json
+mkdir "%EDDIR%" 2>nul
+if /i "%ED%"=="Owner" (
+  >"%EDDIR%\edition.json" echo {"edition": "owner"}
+) else (
+  >"%EDDIR%\edition.json" echo {"edition": "user"}
+)
+
+rem Only the Owner edition carries the MySQL driver and the MySQL defaults.
+set EXTRA=
+if /i "%ED%"=="Owner" set EXTRA=--collect-submodules mysql.connector --add-data "%CD%\data\json\private\installer_defaults\db_config.json;data\json\private\installer_defaults"
+if /i "%ED%"=="User" set EXTRA=--exclude-module mysql --exclude-module mysql.connector
+
+"%PY%" -m PyInstaller --noconfirm --clean --windowed ^
+  --name FieldSurveyReport --icon "%CD%\logo.ico" ^
+  --distpath "dist\%ED%" --workpath "build\work_%ED%" --specpath "build" ^
+  --collect-all ttkbootstrap ^
+  --collect-submodules warehouse ^
+  --collect-submodules warehouse_ui ^
+  --hidden-import matplotlib.backends.backend_tkagg ^
+  --hidden-import win32com.client ^
+  --add-data "%CD%\data\excel\First_Page.xlsx;data\excel" ^
+  --add-data "%CD%\data\excel\Cargo_Details.xlsx;data\excel" ^
+  --add-data "%CD%\data\excel\Containerized_Loading_Form.xlsx;data\excel" ^
+  --add-data "%CD%\data\excel\Incident_Report.xlsx;data\excel" ^
+  --add-data "%CD%\data\json\master_list.json;data\json" ^
+  --add-data "%CD%\%EDDIR%\edition.json;data\json" ^
+  --add-data "%CD%\logo.png;." ^
+  --add-data "%CD%\logo.ico;." ^
+  --add-data "%CD%\data\json\private\auth_seed.json;data\json\private" ^
+  %EXTRA% ^
+  field_survey_report.py
+if errorlevel 1 exit /b 1
+if not exist "dist\%ED%\FieldSurveyReport\FieldSurveyReport.exe" exit /b 1
+
+if not defined ISCC exit /b 0
+echo [4/4] Building the %ED% Setup file...
+"%ISCC%" /Q "/DAppVersion=%APPVER%" "/DEdition=%ED%" installer.iss
+if errorlevel 1 exit /b 1
+exit /b 0

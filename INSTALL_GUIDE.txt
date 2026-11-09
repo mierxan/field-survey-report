@@ -13,28 +13,22 @@ A. ON THE NEW PC (once)
     Sign in with the Owner initials MPR, or sign up and wait for approval.
  5. PDF / Print needs Microsoft Excel or LibreOffice on that PC.
 
-B. CHOOSE HOW THE PC STORES DATA
- Option 1 - separate PC (simplest): each PC keeps its own Excel file, its own
-   users and its own reports. In db_config.json set  "enabled": false
-   (or delete db_config.json). Nothing else is needed.
+B. HOW THE DATA IS STORED (Owner and User editions)
+ There is no shared or online database. The installers are the normal way to
+ set up a PC (see BUILD_INSTALLER.txt):
+   * Site PCs: the User edition. Reports stay in that PC's Excel and JSON files;
+     MySQL is never used. Export Master Data writes one file for the owner.
+   * The owner's PC: the Owner edition. Excel + MySQL on that same PC (MySQL
+     Workbench to look at it). Import Master Data brings in the files from
+     every site PC and every phone.
+ Run from this folder (START_FSR.bat), the program is the Owner edition; for a
+ site PC set  FSR_EDITION=user  or use the User installer.
 
- Option 2 - all PCs share ONE MySQL database (reports are saved to the same
-   place; every PC can open every report):
-   1. Pick the PC that has MySQL ("the server PC"). Find its address:
-      open Command Prompt there and type  ipconfig  (IPv4 Address, e.g. 192.168.1.20).
-      Give that PC a fixed IP (router setting) so the address does not change.
-   2. On the server PC, MySQL Workbench > root > run  allow_network_access.sql
-   3. On the server PC allow port 3306 in Windows Firewall:
-      Windows Defender Firewall > Advanced settings > Inbound Rules > New Rule
-      > Port > TCP 3306 > Allow the connection > name it "MySQL".
-   4. Make sure MySQL listens on the network: in my.ini (C:\ProgramData\MySQL\
-      MySQL Server 8.0) the line  bind-address  must not be 127.0.0.1
-      (remove it or use 0.0.0.0), then restart the MySQL80 service.
-   5. On each other PC edit db_config.json:
-        "host": "192.168.1.20"      <- the server PC's address
-      then open the program: the three circles show the colours when it works.
-   Note: sign in accounts (users.json) are still kept on each PC separately.
-   Excel files stay on each PC; the shared copy of every report is in MySQL.
+ MySQL accepts connections from the owner's PC only: my.ini has
+   bind-address=127.0.0.1   (set 2026-11-09; the backup of the earlier file is
+   my.ini.before_bind_127_20261109 in C:\ProgramData\MySQL\MySQL Server 8.0)
+ Other PCs never connect to it. The earlier "Option 2" (all PCs sharing one
+ MySQL over the network) is retired; do not open port 3306 in the firewall.
 
 C. UPDATING LATER
  Replace field_survey_report.py (and the other .py files) in the folder.
