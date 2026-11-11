@@ -41,7 +41,9 @@ Install `FieldSurveyReport_User_Setup_<date>.exe` over the existing program.
 | 4 | A normal site user signs in with their usual password | Works. In `users.json` that account now has `"iterations": 600000`. |
 | 5 | Open two saved reports, one of them with a Control # containing DSG if there is one | Both open and print as before. |
 | 6 | Sign out. Type a wrong password five times for one account (wait when asked) | "Please wait … seconds" after the 2nd–4th, then "locked for 15 minutes". Another account can still sign in. After 15 minutes the first one can too. |
-| 7 | An Administrator signs in | The recovery code is shown once. Write it down for that PC. |
+| 7 | **New site PC only:** the Administrator created in "Set Up This PC" | Was shown the recovery code right after creating the account. A normal user signing in is never shown it. |
+| 7a | **Site PC that had the program before:** the Owner signs in with the OLD owner password | Only "Set a New Password" opens (one button, nothing else). A password under 12 characters or the old one again is refused. After a good new password the program opens and the recovery code of that PC is shown once - write it down. Then search `%APPDATA%\FieldSurveyReport` for the first characters of the old hash: no file contains it. |
+| 7b | Sign out, sign in as a normal user, Account menu | There is no "Recovery Code" entry. As Owner / Administrator: Account > Recovery Code asks for the password again before showing anything. |
 | 8 | Close the program. Open `users.json` in Notepad, change one `"status"` value, save. Start the program | Red message "changed outside the program". A normal user cannot sign in. The Administrator signs in, sees the change listed, clicks "Restore the last good copy", signs in again. |
 | 9 | Export Master Data and import it on the owner's PC | Works as before. |
 | 10 | Look inside `C:\Program Files\Field Survey Report (User)\_internal\data\json` | Only `edition.json` and `master_list.json`. No `private` folder. |
@@ -50,7 +52,25 @@ On a site PC that never had the program: step 1 shows "Set Up This PC"
 instead; create the Administrator account, write down the recovery code,
 then do steps 6–10.
 
-## 3. Undo the update on that PC
+## 3. The owner's visit to each site PC
+
+The old owner hash stays on a site PC until the Owner has signed in there
+once and set the new password (step 7a). It can be done in person or over a
+remote-desktop session; the password is typed on that PC and never sent.
+Until then nobody else can use the Owner account there either, and the
+site's own users keep working normally.
+
+Track it here (one line per site PC):
+
+| Site PC | Update installed (date) | Owner signed in and changed password (date) | Recovery code written down | users.before_update file deleted |
+|---|---|---|---|---|
+| | | | | |
+| | | | | |
+| | | | | |
+
+A PC without a date in the third column still holds the 9 November hash.
+
+## 4. Undo the update on that PC
 
 1. Close the program.
 2. Uninstall "Field Survey Report (User)" (Windows Settings > Apps) and
@@ -70,7 +90,14 @@ once ("Accept the changed file").
 On the owner's PC an undo also needs the MySQL password typed again in
 MySQL Settings (the earlier program does not read the Credential Manager).
 
-## 4. After the roll-out: delete by hand
+If the Owner had already set the new password on that PC (step 7a), the
+Owner's hash is blank in `users.before_update_<time>.json`: after an undo
+from that file the site's users sign in as before, but the Owner account
+cannot sign in on that PC with the earlier program. The safety copy of the
+whole folder made before installing still has the old hash - which is the
+reason to delete that copy once the update is confirmed.
+
+## 5. After the roll-out: delete by hand
 
 On the owner's PC / project folder:
 

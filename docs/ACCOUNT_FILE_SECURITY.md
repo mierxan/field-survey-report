@@ -30,6 +30,31 @@ other's accounts.
   manages the other accounts of that PC.
 * **User** – signs up, waits for approval.
 
+Nobody but the Owner can change the Owner account. A site Administrator
+cannot disable, reject, delete or reset the password of the Owner account on
+that PC, and the program has no function that changes a role at all (so
+nobody can be promoted or demoted). The Owner's password changes only with
+the Owner's current password. Changing a role in the file by hand is caught
+by the signature (below). Tests: `tests/test_auth_owner_on_site.py`.
+
+### The Owner account on site PCs installed before the update
+
+The 9 November User installer put the Owner account, with its password
+hash, on every site PC. The update keeps that account, but:
+
+* The first time it signs in on a site PC (with the old password) the only
+  screen that opens is "Set a New Password". Closing it signs nobody in.
+* When the new password is set it is stored at 600,000 iterations and the
+  old hash is removed from `users.json`, from `users.lastgood.json` and
+  from every `users.before_update_…` / `users.rejected_…` file in that
+  folder (in those backups the Owner's hash and salt become empty; the
+  other accounts stay).
+* Wrong tries count towards the 15-minute lock like any sign in.
+* Until the Owner has done this on a PC, the old hash is still on that PC.
+  `docs/PHASE1_ROLLOUT.md` has a table to track it.
+
+The new password never travels: it is typed on each site PC.
+
 The User installer contains no account, no email and no password hash.
 `build_installer.bat` runs `fsr_build_check.py` on the User build and stops
 if it finds an account file or any email, salt or hash of this PC's accounts.
@@ -53,8 +78,19 @@ if it finds an account file or any email, salt or hash of this PC's accounts.
 Every time the program saves `users.json` it adds a signature (HMAC-SHA256
 over the whole file). The key is derived from the **recovery code** of that
 PC: 24 letters and digits, made on the first save, kept in the Windows
-Credential Manager and shown to the Administrator once ("write it down").
-An Administrator can see it again: Account > Recovery Code.
+Credential Manager.
+
+Who sees the code:
+
+* It is shown once, right after an **Owner or Administrator** has signed in
+  with their password (on a new PC: right after the Administrator account
+  was created). A normal user never sees it, also not when they are the
+  first person to open the program after the update. On an updated site PC
+  whose only administrator is the Owner, that means: when the Owner comes,
+  signs in and has set the new password.
+* Later: Account > Recovery Code. Only for an Owner / Administrator, and
+  only after typing the password again; an open session is not enough.
+  Wrong passwords there count towards the lock of that account.
 
 At every start and every sign in the signature is checked:
 
@@ -106,16 +142,42 @@ person using it. The signature makes changes *evident*; it cannot make them
 * Changes made before the update are not detected: the file is signed as it
   is when the update first opens it.
 * The 15-minute lock is counted on the PC clock. Setting the clock forward
-  ends it early. Setting it back while the program has not looked can make
-  a lock last longer than 15 minutes of real time, but never more than 15
-  minutes after the next attempt.
+  ends it early.
+* **Accepted exception to "never longer than 15 minutes":** the program
+  only knows the time when it is looked at. If the clock is set back while
+  the program is closed (or nobody tries to sign in), the lock continues
+  with the time it had left at the last attempt the program saw, so the
+  real time locked out can be more than 15 minutes. It is never more than
+  15 minutes counted from the next sign-in attempt.
 * The reports themselves (Excel, JSON) are not signed or encrypted. Anyone
   with the Windows login can open them without the program.
 * Without a Windows Credential Manager (not Windows, or it is switched off)
   the code and the MySQL password are kept in plain files and none of the
   above applies.
 
-## Later option: a public-key signature (not built)
+## Later option: an owner access file with a public-key signature (not built)
+
+Today the Owner must visit (or remotely open) every site PC once to replace
+the old password. If that becomes impractical, the new hash could be sent
+instead:
+
+1. The owner has a key pair. The private key stays on the owner's PC,
+   encrypted with the owner's password; the public key is built into the
+   User installer.
+2. After changing the password the Owner edition exports a small "owner
+   access file": the Owner's email, the new salt, hash and iteration count,
+   a date, and a signature made with the private key.
+3. On a site PC the file is loaded from the sign-in window. The program
+   checks the signature with the built-in public key, checks that the file
+   is newer than the last one it accepted, and replaces the Owner's hash.
+
+Because only the owner's PC can make the signature, a forged file is
+refused - unlike a file protected only by something the site PC already
+knows (such as the old hash, which everyone with a 9 November installer
+has). Cost: a cryptography library in both installers, safe keeping and
+backup of the private key, and a plan for replacing it if it is lost.
+
+## Later option: a public-key signature for approvals (not built)
 
 To make the file verifiable *without* a secret on the site PC:
 
