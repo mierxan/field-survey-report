@@ -85,6 +85,7 @@ import fsr_edition                 # Owner app (Excel + MySQL) or User app
 import fsr_backup                  # daily backup copy of the workbook
 import fsr_import                  # Master Data files from the sites/phones
 import fsr_master_export           # one Master Data file for the owner
+import fsr_save_journal            # finishes a save that stopped halfway
 import fsr_withdrawal              # PO-linked Withdrawal reports
 import fsr_withdrawal_ui
 from fsr_withdrawal_ui import WithdrawalPanel
@@ -1857,6 +1858,8 @@ if IS_OWNER_EDITION:    # the User edition never uses MySQL
                 return
             ok, message = result.get("value", (False, "No answer"))
             set_mysql_dots("ok" if ok else "bad", message)
+            if ok and "finish_unfinished_saves" in globals():
+                finish_unfinished_saves(mysql_ok=True)   # MySQL catches up
             if show_error and not ok:
                 if db_mysql is None or not db_mysql.is_enabled():
                     open_mysql_settings()
@@ -6257,9 +6260,15 @@ def save_report():
     data = collect_report_data()
     target = path
     backup_note = None
+    linked = withdrawal_panel.linked()
+    mysql_on = db_mysql is not None and db_mysql.is_enabled()
+    stores = fsr_save_journal.Stores(
+        path, mysql=db_mysql if mysql_on else None,
+        required_root=DATA_DIR if DEMO_MODE else None)
+    journal = record = None
 
     try:
-        if withdrawal_panel.linked():
+        if linked:
             target = withdrawal_book()
         # Before the first save of each day the workbook is copied, as it
         # is now, into the Backups folder beside it. A backup that cannot
@@ -6273,17 +6282,30 @@ def save_report():
                 "Today's backup copy of the Excel file could NOT be made:\n"
                 f"{error}\n\nThe report itself was saved. Check the "
                 f"{fsr_backup.FOLDER_NAME} folder beside the Excel file.")
-        if withdrawal_panel.linked():
-            result = busy(
-                fsr_withdrawal.write_withdrawal_report, target, data,
-                report_state["editing"], path
-            )
-        else:
-            result = busy(
-                write_report_to_excel, path, data, report_state["editing"]
-            )
+
+        # The save goes on record before its first write, so a save that
+        # stops halfway (power cut, file open in Excel, MySQL away) is
+        # finished at the next save or the next start (fsr_save_journal).
+        try:
+            journal = fsr_save_journal.Journal(path)
+            record = fsr_save_journal.open_save(
+                journal, stores, data, report_state["editing"], linked,
+                mysql_on)
+        except (OSError, ValueError, TypeError):
+            log.exception("The save record could not be written")
+            journal = None
+            record = fsr_save_journal.new_record(
+                data, report_state["editing"], linked,
+                fsr_save_journal.steps_for(data, linked, mysql_on))
+
+        # Excel first, then the incident file, the other Item List forms,
+        # PO_Master / Withdrawn_Item and MySQL. Only a failure of the Excel
+        # write stops the save.
+        outcome = busy(fsr_save_journal.run, journal, record, stores)
+        result = outcome["result"]
 
     except PermissionError:
+        fsr_save_journal.discard(journal, record)
         messagebox.showerror(
             "File In Use",
             f"Cannot write to:\n{target}\n\n"
@@ -6294,12 +6316,18 @@ def save_report():
 
     except Exception as error:
         log.exception("Save failed")
+        fsr_save_journal.discard(journal, record)
         messagebox.showerror(
             "Save Error",
             f"Unable to save the report:\n{error}",
             parent=window
         )
         return False
+
+    failed = outcome["failed"]
+    data = record["data"]       # as written: Control #, Receiving Refs ...
+    later = ("\n\nIt will also be finished automatically at the next save "
+             "or the next start." if journal is not None else "")
 
     # The report now exists in the file, so further saves update it.
     set_control_number(result["control"])
@@ -6318,63 +6346,59 @@ def save_report():
 
     # Incident reports go to their own JSON file (not into the Excel file).
     incident_note = None
-    try:
-        if data["cargo_condition"] == CONDITION_BAD:
-            busy(save_incident_data, path, result["control"],
-                 data["general_information"]["so_number"],
-                 data["incident_reports"])
-        else:
-            delete_incident_data(path, result["control"])
-    except OSError as error:
-        log.exception("Incident file failed")
+    if "incidents" in failed:
         incident_note = (
-            f"The incident report file could not be saved:\n{error}\n\n"
-            "Click Save again to retry."
+            "The incident report file could not be saved:\n"
+            f"{failed['incidents']}\n\nClick Save again to retry." + later
         )
 
-    try:
-        busy(save_other_item_forms, path, result["control"],
-             data["other_item_forms"])
-    except OSError as error:
-        log.exception("Item form file failed")
+    if "item_forms" in failed:
         incident_note = "\n\n".join(t for t in (incident_note, (
             "The lines of the other Item List forms could not be saved:\n"
-            f"{error}\n\nClick Save again to retry.")) if t)
+            f"{failed['item_forms']}\n\nClick Save again to retry."
+            + later)) if t)
 
     # PO_Master and Withdrawn_Item follow the saved reports.
-    if (withdrawal_panel.linked()
-            or same_key(data["inspection_schedule"]["activity"], "Receiving")):
-        try:
-            busy(fsr_withdrawal.sync_item_lists, path)
-        except PermissionError:
+    if "item_lists" in failed:
+        if isinstance(failed["item_lists"], PermissionError):
             incident_note = "\n\n".join(t for t in (incident_note, (
                 "PO_Master or Withdrawn_Item could not be updated because it "
                 "is open in another program.\nClose it and click Save again."
-                )) if t)
-        except Exception as error:
-            log.exception("Updating the item lists failed")
+                + later)) if t)
+        else:
             incident_note = "\n\n".join(t for t in (incident_note, (
-                f"PO_Master and Withdrawn_Item could not be updated:\n{error}"
-                )) if t)
+                "PO_Master and Withdrawn_Item could not be updated:\n"
+                f"{failed['item_lists']}" + later)) if t)
 
     # Also store the report in MySQL (when db_config.json is set up).
     db_note = None
-    if db_mysql is not None and db_mysql.is_enabled():
-        try:
-            mysql_notes = busy(db_mysql.save_report, data) or []
-            busy(db_mysql.save_master_lists, master_data)
-            db_note = "\n".join(mysql_notes) or None
+    mysql_waits = False
+    if mysql_on:
+        error = failed.get("mysql")
+        if error is None:
+            try:
+                busy(db_mysql.save_master_lists, master_data)
+            except Exception as lists_error:
+                log.exception("MySQL master lists failed")
+                error = lists_error
+        if error is None:
+            db_note = "\n".join(outcome.get("mysql_notes") or []) or None
             if "set_mysql_dots" in globals():
                 set_mysql_dots("ok")
-        except Exception as error:
-            log.exception("MySQL save failed")
+        else:
+            mysql_waits = "mysql" in failed
             if "set_mysql_dots" in globals():
                 set_mysql_dots("bad", db_mysql.explain_error(error))
-            db_note = (
-                "The report was saved to Excel, but NOT to MySQL:\n"
-                f"{db_mysql.explain_error(error)}\n\nClick Save again to retry, or use "
-                "'Sync to MySQL'."
-            )
+            # A server that cannot be reached is normal on an offline PC:
+            # no message box, the notice below says that MySQL comes later.
+            if not (mysql_waits and journal is not None
+                    and getattr(db_mysql, "is_unreachable",
+                                lambda e: False)(error)):
+                db_note = (
+                    "The report was saved to Excel, but NOT to MySQL:\n"
+                    f"{db_mysql.explain_error(error)}\n\nClick Save again "
+                    "to retry, or use 'Sync to MySQL'." + (
+                        later if mysql_waits else ""))
 
     # Also record the report on the official form (First Page + Cargo Details).
     warning, summary = None, ""
@@ -6390,11 +6414,17 @@ def save_report():
         log.exception("Report form failed")
         warning = f"The report form could not be created:\n{error}"
 
-    notify(
-        f"Report {result['control']} {action}  -  "
-        f"{result['goods']} goods, {result['items']} item lines, "
-        f"{result['remarks']} remarks"
-    )
+    if mysql_waits:
+        notify(
+            f"Report {result['control']} {action} on this PC  -  MySQL was "
+            "not reached; it will be sent at the next save or start",
+            bootstyle="warning")
+    else:
+        notify(
+            f"Report {result['control']} {action}  -  "
+            f"{result['goods']} goods, {result['items']} item lines, "
+            f"{result['remarks']} remarks"
+        )
 
     warning = "\n\n".join(
         t for t in (backup_note, incident_note, db_note, warning) if t
@@ -6405,7 +6435,63 @@ def save_report():
     show_saved_links(data)
     if globals().get("app_shell") is not None:
         app_shell.service.invalidate()      # dashboards use the new data
+    # Earlier saves that did not finish are completed now (MySQL only when
+    # it answered just now).
+    finish_unfinished_saves(mysql_ok=mysql_on and "mysql" not in failed,
+                            skip={record["id"]})
     return True
+
+
+unfinished_state = {"unreadable_shown": False}
+
+
+def finish_unfinished_saves(mysql_ok=False, skip=()):
+    """Complete every save on record that stopped halfway and tell the user
+    in plain words what was done. Runs at start, after a save, and when
+    MySQL becomes reachable. Safe to run any number of times."""
+    path = excel_state["path"]
+    try:
+        journal = fsr_save_journal.Journal(path)
+        if not [r for r in journal.pending() if r.get("id") not in skip]:
+            return []
+        use_mysql = bool(mysql_ok and db_mysql is not None
+                         and db_mysql.is_enabled())
+        stores = fsr_save_journal.Stores(
+            path, mysql=db_mysql if use_mysql else None,
+            required_root=DATA_DIR if DEMO_MODE else None)
+        report = busy(fsr_save_journal.repair, journal, stores, use_mysql,
+                      skip)
+    except fsr_save_journal.JournalError as error:
+        log.exception("The record of unfinished saves cannot be read")
+        if not unfinished_state["unreadable_shown"]:
+            unfinished_state["unreadable_shown"] = True
+            messagebox.showwarning(
+                "Unfinished Save",
+                f"{error}\n\nThe file was left as it is. Saving works as "
+                "usual, but a save that stops halfway cannot be finished "
+                "automatically until this file is moved away.",
+                parent=window)
+        return []
+    except Exception:
+        log.exception("Finishing unfinished saves failed")
+        return []
+
+    lines, attention = fsr_save_journal.describe(report)
+    if lines:
+        log.info("Unfinished saves: %s", " | ".join(lines))
+    if attention:
+        still_open = any(
+            step != "mysql" for entry in report for step in entry["failed"])
+        (messagebox.showwarning if still_open else messagebox.showinfo)(
+            "Unfinished Save", "\n\n".join(lines), parent=window)
+    else:
+        caught_up = sum("mysql" in entry["did"] for entry in report)
+        if caught_up:
+            notify(f"MySQL caught up: {caught_up} report(s) saved earlier "
+                   "on this PC are now in MySQL")
+    if report and globals().get("app_shell") is not None:
+        app_shell.service.invalidate()
+    return report
 
 
 def show_saved_links(data):
@@ -6743,6 +6829,10 @@ update_item_list_buttons()
 
 # Start with a new report and its automatic Control #.
 new_report(confirm=False)
+
+# Saves that stopped halfway last time are finished now (this PC's files;
+# MySQL follows when the check below finds the server).
+window.after(300, finish_unfinished_saves)
 
 if "check_mysql_status" in globals():
     window.after(600, check_mysql_status)

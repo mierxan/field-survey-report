@@ -229,6 +229,17 @@ def explain_error(error):
     return str(error)
 
 
+# Connection could not be made / was lost: normal on a PC that is offline
+# or whose MySQL service is stopped.
+UNREACHABLE = (2002, 2003, 2005, 2006, 2013, 2055)
+
+
+def is_unreachable(error):
+    """True when `error` only says that the MySQL server cannot be reached
+    (as opposed to a refused login, a missing table, bad data ...)."""
+    return getattr(error, "errno", None) in UNREACHABLE
+
+
 def test_connection(config=None):
     """(ok, message) - used by the 'Test MySQL' button and test_mysql.py."""
     config = config or load_config()

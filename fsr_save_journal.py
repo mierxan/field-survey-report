@@ -74,6 +74,22 @@ def journal_path(excel_path):
             / f"{excel_path.stem}_pending_saves.json")
 
 
+def new_record(data, editing, linked, steps, stamp_before=None, now=None):
+    """The record of one save (see the module text)."""
+    return {
+        "id": uuid.uuid4().hex,
+        "control": data["control_no"],
+        "started": (now or datetime.now()).isoformat(timespec="seconds"),
+        "editing": bool(editing),
+        "linked": bool(linked),
+        "steps": {step: PENDING for step in steps},
+        "stamp_before": stamp_before,
+        "stamp": None,
+        "errors": {},
+        "data": copy.deepcopy(data),
+    }
+
+
 def steps_for(data, linked, mysql):
     """The steps one save has, in order."""
     steps = ["workbook", "incidents", "item_forms"]
@@ -129,18 +145,8 @@ class Journal:
         record of the same report is replaced: this save supersedes it.
         `stamp_before` is the report's Last Saved time in the workbook
         right now (None for a report that is not there yet)."""
-        record = {
-            "id": uuid.uuid4().hex,
-            "control": data["control_no"],
-            "started": self._now().isoformat(timespec="seconds"),
-            "editing": bool(editing),
-            "linked": bool(linked),
-            "steps": {step: PENDING for step in steps},
-            "stamp_before": stamp_before,
-            "stamp": None,
-            "errors": {},
-            "data": copy.deepcopy(data),
-        }
+        record = new_record(data, editing, linked, steps, stamp_before,
+                            self._now())
         key = storage.control_key(record["control"])
         records = [r for r in self.load()
                    if storage.control_key(r.get("control")) != key]
