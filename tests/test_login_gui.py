@@ -18,10 +18,17 @@ USER_PASS = "correct-horse-1"
 @pytest.fixture(scope="module")
 def root():
     import ttkbootstrap as tb
-    try:
-        window = tb.Window(themename="flatly")
-    except Exception as error:          # no display available
-        pytest.skip(f"GUI cannot start here: {error}")
+    window = None
+    for attempt in (1, 2, 3):           # Windows sometimes refuses once
+        try:
+            window = tb.Window(themename="flatly")
+            break
+        except Exception as error:      # no display available
+            problem = error
+            import time
+            time.sleep(1.0)
+    if window is None:
+        pytest.skip(f"GUI cannot start here: {problem}")
     window.withdraw()
     yield window
     try:

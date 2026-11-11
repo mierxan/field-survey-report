@@ -9,6 +9,9 @@ import pytest
 # memory: the tests never touch the Windows Credential Manager.
 os.environ["FSR_SECRET_STORE"] = "memory"
 
+# Counts skipped tests out loud; --fail-on-gui-skip (tests/skip_report.py).
+pytest_plugins = ["skip_report"]
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))

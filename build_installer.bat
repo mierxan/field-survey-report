@@ -7,7 +7,8 @@ rem    Installer\FieldSurveyReport_User_Setup_<version>.exe
 rem        the site PCs: Excel/JSON on that PC only + Export Master Data
 rem
 rem  1) Installs/updates the packages in .venv
-rem  2) Runs the automated tests (if pytest is installed)
+rem  2) Runs the automated tests; a failed test, or screens that could not
+rem     be tested, stops the build
 rem  3) PyInstaller turns the program into FieldSurveyReport.exe (per edition)
 rem  4) Inno Setup (free) wraps each one into a Setup file
 rem
@@ -52,12 +53,20 @@ if defined NOTESTS (
 ) else (
   "%PY%" -c "import pytest" >nul 2>nul
   if errorlevel 1 (
-    echo   pytest is not installed - skipped ^(pip install -r requirements-dev.txt^)
+    echo.
+    echo The tests could NOT be run: pytest is not installed.
+    echo Install it:  "%PY%" -m pip install -r requirements-dev.txt
+    echo ^(or build without tests on purpose:  build_installer.bat /notests^)
+    echo The installers were NOT built.
+    goto failed
   ) else (
-    "%PY%" -m pytest -q
+    rem -rs lists every skipped test; a test that could not open the
+    rem program's window fails the build ^(a skip is not a pass^).
+    "%PY%" -m pytest -q -rs --fail-on-gui-skip
     if errorlevel 1 (
       echo.
-      echo The tests failed - the installers were NOT built.
+      echo The tests failed, or the screens could not be tested ^(see FAILED
+      echo and SKIPPED above^) - the installers were NOT built.
       goto failed
     )
   )
