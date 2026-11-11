@@ -82,6 +82,7 @@ except ImportError:
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fsr_paths
 import fsr_edition                 # Owner app (Excel + MySQL) or User app
+import fsr_backup                  # daily backup copy of the workbook
 import fsr_import                  # Master Data files from the sites/phones
 import fsr_master_export           # one Master Data file for the owner
 import fsr_withdrawal              # PO-linked Withdrawal reports
@@ -6255,10 +6256,24 @@ def save_report():
     path = excel_state["path"]
     data = collect_report_data()
     target = path
+    backup_note = None
 
     try:
         if withdrawal_panel.linked():
             target = withdrawal_book()
+        # Before the first save of each day the workbook is copied, as it
+        # is now, into the Backups folder beside it. A backup that cannot
+        # be made never stops the save; the user is told below.
+        try:
+            fsr_backup.backup_before_save(
+                target, fsr_backup.keep_setting(settings))
+        except OSError as error:
+            log.exception("Daily backup failed")
+            backup_note = (
+                "Today's backup copy of the Excel file could NOT be made:\n"
+                f"{error}\n\nThe report itself was saved. Check the "
+                f"{fsr_backup.FOLDER_NAME} folder beside the Excel file.")
+        if withdrawal_panel.linked():
             result = busy(
                 fsr_withdrawal.write_withdrawal_report, target, data,
                 report_state["editing"], path
@@ -6382,7 +6397,8 @@ def save_report():
     )
 
     warning = "\n\n".join(
-        t for t in (incident_note, db_note, warning) if t) or None
+        t for t in (backup_note, incident_note, db_note, warning) if t
+    ) or None
     if warning:
         messagebox.showwarning("Report Saved - Note", warning, parent=window)
 
