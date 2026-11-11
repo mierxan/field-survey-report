@@ -52,6 +52,12 @@ LibreOffice (unchanged).
 Sign-in uses local accounts (`app_auth.py`, `data/json/private/users.json`). New accounts and
 password changes require at least 12 characters; existing passwords remain
 valid for sign-in and are not forcibly reset.
+The User edition is installed without any account: its first start shows a
+one-time "Set Up This PC" screen that creates the Administrator of that PC.
+The account file is signed, wrong passwords lock an account for 15 minutes
+after five tries, and the MySQL password is kept in the Windows Credential
+Manager - see [docs/ACCOUNT_FILE_SECURITY.md](docs/ACCOUNT_FILE_SECURITY.md)
+and, for installing the update, [docs/PHASE1_ROLLOUT.md](docs/PHASE1_ROLLOUT.md).
 
 ## 3. The modules (left navigation bar)
 
@@ -196,7 +202,9 @@ fsr_storage.py           field definitions + Excel storage (moved unchanged out 
 fsr_withdrawal.py        PO-linked Withdrawal: PO list, quantity rules, Withdrawal workbook
 fsr_withdrawal_ui.py     the PO picker on the Item Lists tab
 db_mysql.py              optional MySQL storage
-app_auth.py              sign in / users (unchanged)
+app_auth.py              sign in / users, signed account file
+fsr_secrets.py           Windows Credential Manager (recovery code, MySQL password)
+fsr_build_check.py       build check: no account data in the User edition
 warehouse/               business logic, no widgets
     periods.py           reporting periods (calendar weeks Mon–Sun)
     transactions.py      reports -> transactions / cargo lines, quantity / unit / weight parsing
