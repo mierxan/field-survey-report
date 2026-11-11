@@ -13,6 +13,10 @@ Sign in / sign up for the Field Survey Report.
   account (Account menu > Manage Users).
 * Roles: "owner", "admin" and "user".   Status: pending / approved /
   rejected / disabled.  Only "approved" accounts can sign in.
+* Wrong passwords slow the sign in down (a short wait after the 2nd, 3rd
+  and 4th) and the 5th locks the account for 15 minutes. The lock ends by
+  itself, is never longer than 15 minutes - also for the Owner - and is
+  kept in users.json, so restarting the program does not clear it.
 * A site PC (User edition) is installed without any account. The first
   account created there becomes the Administrator ("admin") of that PC; a
   record kept outside users.json (fsr_secrets.py) remembers that the PC is
@@ -27,7 +31,8 @@ import re
 import secrets
 import tempfile
 import tkinter
-from datetime import datetime
+import math
+from datetime import datetime, timedelta
 from pathlib import Path
 from tkinter import messagebox, ttk
 
@@ -39,6 +44,12 @@ ITERATIONS = 600_000               # new and changed passwords
 LEGACY_ITERATIONS = 200_000        # accounts saved without "iterations"
 MAX_ITERATIONS = 10_000_000        # a larger stored count is not believed
 FILE_VERSION = 2                   # users.json (1 = files with no "version")
+
+MAX_FAILURES = 5                   # wrong passwords in a row -> locked
+RETRY_DELAYS = (0, 2, 5, 10)       # seconds to wait after failure 1, 2, 3, 4
+LOCKOUT = timedelta(minutes=15)
+CLOCK_TOLERANCE = timedelta(minutes=2)
+MAX_UNKNOWN = 500                  # remembered wrong initials (memory only)
 MIN_PASSWORD = 12
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -134,6 +145,77 @@ def user_password_matches(user, password):
                             user.get("hash", ""), user_iterations(user))
 
 
+# ---------------------------------------------------------------------
+# wrong passwords: wait, then lock
+# ---------------------------------------------------------------------
+# A record is an account of users.json, or - for initials that have no
+# account - a dictionary kept in memory. Two optional fields:
+#   failed_count   wrong passwords since the last success or lock
+#   blocked_until  no attempt is accepted before this time
+
+def _time_text(moment):
+    return moment.isoformat(timespec="seconds")
+
+
+def _parse_time(text):
+    try:
+        return datetime.fromisoformat(text)
+    except (TypeError, ValueError):
+        return None
+
+
+def _blocked_seconds(record, now):
+    """(seconds still to wait, record was corrected). A block further away
+    than a full lockout cannot be real (changed clock, edited file): it is
+    cut down, so nobody is ever kept out for more than 15 minutes."""
+    until = _parse_time(record.get("blocked_until"))
+    if until is None:
+        changed = "blocked_until" in record
+        record.pop("blocked_until", None)
+        return 0, changed
+    if until <= now:
+        del record["blocked_until"]
+        return 0, True
+    changed = until - now > LOCKOUT
+    if changed:
+        until = now + LOCKOUT
+        record["blocked_until"] = _time_text(until)
+    return math.ceil((until - now).total_seconds()), changed
+
+
+def _note_failure(record, now):
+    """Count one wrong password. True when the account is now locked."""
+    count = record.get("failed_count")
+    if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+        count = 0
+    count += 1
+    if count >= MAX_FAILURES:
+        record["failed_count"] = 0
+        record["blocked_until"] = _time_text(now + LOCKOUT)
+        return True
+    record["failed_count"] = count
+    delay = RETRY_DELAYS[min(count, len(RETRY_DELAYS)) - 1]
+    if delay:
+        record["blocked_until"] = _time_text(now + timedelta(seconds=delay))
+    return False
+
+
+def _clear_failures(record):
+    had = "failed_count" in record or "blocked_until" in record
+    record.pop("failed_count", None)
+    record.pop("blocked_until", None)
+    return had
+
+
+def _wait_text(seconds):
+    if seconds > 60:
+        minutes = math.ceil(seconds / 60)
+        return ("Too many wrong passwords. This account is locked for "
+                f"{minutes} more minute{'s' if minutes != 1 else ''}.")
+    return (f"Please wait {seconds} second{'s' if seconds != 1 else ''} "
+            "before trying again.")
+
+
 def full_name(user):
     """'Mierxan P. Rojo' - the name printed on the forms."""
     middle = (user.get("middle_name") or "").strip()
@@ -155,8 +237,11 @@ def suggest_initials(first, middle, last):
 # ---------------------------------------------------------------------
 
 class UserStore:
-    def __init__(self, path, secrets=None, use_seed=True):
+    def __init__(self, path, secrets=None, use_seed=True, clock=None):
         self.path = Path(path)
+        self._now = clock or datetime.now
+        self._time_seen = None          # newest time written to the file
+        self._unknown = {}              # failures of initials with no account
         self.secrets = (secrets if secrets is not None
                         else fsr_secrets.default_store(self.path.parent))
         self._secret_name = "accounts-" + hashlib.sha256(
@@ -240,11 +325,18 @@ class UserStore:
                 f"to {FILE_VERSION}):\n{self.path}\n"
                 "It has not been changed. Install the newer program on "
                 "this PC.")
+        if isinstance(data.get("time_seen"), str):
+            self._time_seen = data["time_seen"]
         return data
 
-    def _write(self, users):
-        text = json.dumps({"version": FILE_VERSION, "users": users},
-                          indent=2, ensure_ascii=False)
+    def _write(self, users, now=None):
+        if now is not None:
+            self._time_seen = _time_text(now)
+        document = {"version": FILE_VERSION}
+        if self._time_seen:
+            document["time_seen"] = self._time_seen
+        document["users"] = users
+        text = json.dumps(document, indent=2, ensure_ascii=False)
         fd, temp = tempfile.mkstemp(
             dir=str(self.path.parent), prefix="users_", suffix=".tmp")
         try:
@@ -369,33 +461,78 @@ class UserStore:
         self._write(users)
 
     def sign_in(self, initials, password):
-        user = self.find_by_initials(initials)
-        if user is None or not user_password_matches(user, password):
-            raise AuthError("Incorrect initials or password.")
-        status = user.get("status")
-        if status == "pending":
-            raise AuthError(
-                "Your account is waiting for the Owner's approval.\n"
-                "Please try again after it is approved.")
-        if status == "rejected":
-            raise AuthError("Your sign up request was not approved.")
-        if status != "approved":
-            raise AuthError("This account is disabled. Please contact "
-                            "the Administrator.")
-        if user_iterations(user) < ITERATIONS:
-            user = self._upgrade_hash(user, password)
-        return user
+        now = self._now()
+        document = self._load()
+        users = document["users"]
+        changed = self._clock_went_back(document, now)
+        key = (initials or "").strip().upper()
+        user = next((u for u in users if key and
+                     u.get("initials", "").strip().upper() == key), None)
+        if user is None:
+            if len(self._unknown) >= MAX_UNKNOWN:
+                self._unknown.clear()
+            record = self._unknown.setdefault(key, {})
+        else:
+            record = user
 
-    def _upgrade_hash(self, user, password):
-        """Re-hash a password that was just proven correct with the current
-        iteration count. A file that cannot be written does not stop the
-        sign in; the upgrade is tried again next time."""
-        fields = new_password_fields(password)
+        wait, corrected = _blocked_seconds(record, now)
+        if wait:
+            # Saved even when nothing else changed: the time seen is what
+            # keeps a lock running if the PC clock is set back afterwards.
+            if changed or user is not None:
+                self._write_quietly(users, now)
+            raise AuthError(_wait_text(wait))
+
+        if user is None or not user_password_matches(user, password):
+            locked = _note_failure(record, now)
+            if user is not None or changed:
+                self._write_quietly(users, now)
+            raise AuthError(
+                "Incorrect initials or password." + (
+                    "\nToo many wrong passwords: this account is now "
+                    "locked for 15 minutes." if locked else ""))
+
+        # The password is right: the count starts again.
+        _clear_failures(record)
+        status = user.get("status")
+        problem = None
+        if status == "pending":
+            problem = ("Your account is waiting for the Owner's approval.\n"
+                       "Please try again after it is approved.")
+        elif status == "rejected":
+            problem = "Your sign up request was not approved."
+        elif status != "approved":
+            problem = ("This account is disabled. Please contact the "
+                       "Administrator.")
+        elif user_iterations(user) < ITERATIONS:
+            # proven correct just now: re-hash with the current count
+            user.update(new_password_fields(password))
+        # Also records the time seen. A file that cannot be written does
+        # not stop the sign in; the same is done again next time.
+        self._write_quietly(users, now)
+        if problem:
+            raise AuthError(problem)
+        return dict(user)
+
+    def _write_quietly(self, users, now):
         try:
-            self._change(user["email"], lambda u: u.update(fields))
-        except (OSError, AuthError):
-            return user
-        return {**user, **fields}
+            self._write(users, now)
+        except OSError:
+            pass
+
+    def _clock_went_back(self, document, now):
+        """The PC clock is earlier than a time this file has seen: a block
+        keeps the time it had left (never more than a full lockout), so
+        setting the clock back neither removes nor stretches it."""
+        seen = _parse_time(document.get("time_seen"))
+        if seen is None or now >= seen - CLOCK_TOLERANCE:
+            return False
+        for record in [*document["users"], *self._unknown.values()]:
+            until = _parse_time(record.get("blocked_until"))
+            if until is not None:
+                left = min(max(until - seen, timedelta(0)), LOCKOUT)
+                record["blocked_until"] = _time_text(now + left)
+        return True
 
     # -- owner actions --
     def _change(self, email, func):
@@ -430,7 +567,12 @@ class UserStore:
             raise AuthError(
                 f"The password needs at least {MIN_PASSWORD} characters.")
         fields = new_password_fields(password)
-        self._change(email, lambda user: user.update(fields))
+
+        def apply(user):
+            user.update(fields)
+            _clear_failures(user)       # a new password also ends a lock
+
+        self._change(email, apply)
 
     def change_own_password(self, email, old, new, confirm):
         user = self.find(email)
