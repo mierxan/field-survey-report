@@ -364,7 +364,9 @@ if app_auth is None:
     sys.exit(1)
 
 try:
-    user_store = app_auth.UserStore(USERS_FILE)
+    # Only the Owner edition is installed with the owner's account.
+    user_store = app_auth.UserStore(
+        USERS_FILE, use_seed=fsr_edition.IS_OWNER_EDITION)
 except app_auth.UserDataError as error:
     messagebox.showerror(
         "Field Survey Report",
@@ -390,7 +392,8 @@ save_settings()
 USER_FULL_NAME = app_auth.full_name(current_user)      # printed on the forms
 set_control_initials(current_user.get("initials"))     # in every new Control #
 print_name = {"value": USER_FULL_NAME}                 # preparer of this printout
-IS_OWNER = current_user.get("role") == "owner"
+IS_OWNER = app_auth.is_admin(current_user)   # Owner or site Administrator
+ROLE_LABEL = app_auth.role_text(current_user)
 window.title(f"Field Survey Report ({fsr_edition.LABEL} edition) - "
              f"{USER_FULL_NAME}")
 
@@ -1411,7 +1414,7 @@ mysql_box.pack(side="right")
 user_box = tb.Frame(topbar)
 user_box.pack(side="right", padx=(0, 22))
 account_menu_button = tb.Menubutton(
-    user_box, text=f"{USER_FULL_NAME}  ({'Owner' if IS_OWNER else 'User'})  \u25be",
+    user_box, text=f"{USER_FULL_NAME}  ({ROLE_LABEL})  \u25be",
     bootstyle="secondary-outline"
 )
 account_menu_button.pack()
@@ -6766,6 +6769,7 @@ if warehouse_ui is not None:
     ui_context = SimpleNamespace(
         window=window, sidebar=sidebar, inspection_frame=body, log=log,
         log_file=LOG_FILE, user_name=USER_FULL_NAME, is_owner=IS_OWNER,
+        role_label=ROLE_LABEL,
         owner_edition=IS_OWNER_EDITION, edition_label=fsr_edition.LABEL,
         demo_mode=DEMO_MODE, data_dir=DATA_DIR, db_mysql=db_mysql,
         master_data=master_data, save_master_lists=save_master_lists,

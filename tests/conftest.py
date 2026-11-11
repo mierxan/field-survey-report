@@ -1,8 +1,13 @@
+import os
 import sys
 from datetime import date
 from pathlib import Path
 
 import pytest
+
+# Secrets (the set-up record of users.json, the MySQL password) stay in
+# memory: the tests never touch the Windows Credential Manager.
+os.environ["FSR_SECRET_STORE"] = "memory"
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))

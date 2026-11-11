@@ -6,8 +6,12 @@ Sign in / sign up for the Field Survey Report.
 * The Owner account is created automatically the first time the program
   starts. A new user signs up, then waits until the Owner approves the
   account (Account menu > Manage Users).
-* Roles: "owner" and "user".   Status: pending / approved / rejected /
-  disabled.  Only "approved" accounts can sign in.
+* Roles: "owner", "admin" and "user".   Status: pending / approved /
+  rejected / disabled.  Only "approved" accounts can sign in.
+* A site PC (User edition) is installed without any account. The first
+  account created there becomes the Administrator ("admin") of that PC; a
+  record kept outside users.json (fsr_secrets.py) remembers that the PC is
+  set up, so deleting users.json does not offer the set-up again.
 """
 
 import hashlib
@@ -23,6 +27,8 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 
 import ttkbootstrap as tb
+
+import fsr_secrets
 
 ITERATIONS = 200_000
 MIN_PASSWORD = 12
@@ -44,6 +50,19 @@ def _load_seed():
 
 
 OWNER, BUILT_IN_USERS = _load_seed()
+
+ADMIN_ROLES = ("owner", "admin")       # may approve and manage accounts
+ROLE_TEXT = {"owner": "Owner", "admin": "Administrator", "user": "User"}
+
+
+def is_admin(user):
+    """The Owner, or the Administrator of a site PC."""
+    return bool(user) and user.get("role") in ADMIN_ROLES
+
+
+def role_text(user):
+    return ROLE_TEXT.get((user or {}).get("role"), "User")
+
 
 STATUS_TEXT = {
     "pending": "Waiting for approval",
@@ -102,10 +121,50 @@ def suggest_initials(first, middle, last):
 # ---------------------------------------------------------------------
 
 class UserStore:
-    def __init__(self, path):
+    def __init__(self, path, secrets=None, use_seed=True):
         self.path = Path(path)
-        self.ensure_owner()
-        self.ensure_built_in_users()
+        self.secrets = (secrets if secrets is not None
+                        else fsr_secrets.default_store(self.path.parent))
+        self._secret_name = "accounts-" + hashlib.sha256(
+            str(self.path.resolve()).casefold().encode("utf-8")
+        ).hexdigest()[:16]
+        if not self.path.exists() and self._setup_record() is not None:
+            raise UserDataError(
+                f"The account file is missing: {self.path}\n"
+                "This PC was already set up, so the program will not offer "
+                "the first set-up again. Restore users.json from a backup "
+                "before signing in.")
+        if use_seed:
+            self.ensure_owner()
+            self.ensure_built_in_users()
+        if self._has_administrator(self._read()):
+            self._mark_set_up()
+
+    # -- "this PC is set up" (kept outside users.json) --
+    def _setup_record(self):
+        text = self.secrets.get(self._secret_name)
+        if text is None:
+            return None
+        try:
+            record = json.loads(text)
+        except ValueError:
+            record = None
+        return record if isinstance(record, dict) else {}
+
+    def _mark_set_up(self):
+        if self._setup_record() is None:
+            self.secrets.set(self._secret_name, json.dumps({"setup": True}))
+
+    @staticmethod
+    def _has_administrator(users):
+        return any(is_admin(u) and u.get("status") == "approved"
+                   for u in users)
+
+    @property
+    def needs_setup(self):
+        """True on a PC that has no Administrator yet: the next account is
+        created with create_administrator()."""
+        return not self._has_administrator(self._read())
 
     # -- file --
     def _read(self):
@@ -206,6 +265,22 @@ class UserStore:
     # -- sign up / sign in --
     def sign_up(self, first, middle, last, initials, email, password,
                 confirm):
+        self._add_account(first, middle, last, initials, email, password,
+                          confirm, role="user", status="pending")
+
+    def create_administrator(self, first, middle, last, initials, email,
+                             password, confirm):
+        """The one-time set-up of a PC without an Administrator."""
+        if not self.needs_setup:
+            raise AuthError(
+                "This PC already has an Administrator. Create a normal "
+                "account and ask the Administrator to approve it.")
+        self._add_account(first, middle, last, initials, email, password,
+                          confirm, role="admin", status="approved")
+        self._mark_set_up()
+
+    def _add_account(self, first, middle, last, initials, email, password,
+                     confirm, role, status):
         first, middle, last = first.strip(), middle.strip(), last.strip()
         email = email.strip().lower()
         initials = (initials.strip().upper()
@@ -234,7 +309,7 @@ class UserStore:
         users.append({
             "first_name": first, "middle_name": middle, "last_name": last,
             "initials": initials, "email": email, "salt": salt,
-            "hash": digest, "role": "user", "status": "pending",
+            "hash": digest, "role": role, "status": status,
             "created": datetime.now().strftime("%d-%b-%Y %H:%M"),
         })
         self._write(users)
@@ -253,7 +328,7 @@ class UserStore:
             raise AuthError("Your sign up request was not approved.")
         if status != "approved":
             raise AuthError("This account is disabled. Please contact "
-                            "the Owner.")
+                            "the Administrator.")
         return user
 
     # -- owner actions --
@@ -268,16 +343,18 @@ class UserStore:
 
     def set_status(self, email, status):
         user = self.find(email)
-        if user and user.get("role") == "owner":
-            raise AuthError("The Owner account cannot be changed.")
+        if is_admin(user):
+            raise AuthError(
+                f"The {role_text(user)} account cannot be changed.")
         self._change(email, lambda u: u.__setitem__("status", status))
 
     def delete(self, email):
         user = self.find(email)
         if user is None:
             raise AuthError("That account was not found.")
-        if user.get("role") == "owner":
-            raise AuthError("The Owner account cannot be deleted.")
+        if is_admin(user):
+            raise AuthError(
+                f"The {role_text(user)} account cannot be deleted.")
         users = [u for u in self._read()
                  if u.get("email", "").lower() != email.lower()]
         self._write(users)
@@ -416,13 +493,8 @@ def run_login(parent, store, icon=None, last_initials="", on_icon=None):
         dialog.bind("<Return>", submit)
         (password if last_initials else initials).focus_set()
 
-    # ---- sign up ----
-    def sign_up_page():
-        clear()
-        fit(800)
-        heading("Create Account",
-                "The Owner must approve your account before you can sign in.\n"
-                "You will sign in with your Initials.")
+    # ---- the boxes of a new account (sign up and first set-up) ----
+    def account_form():
         row = tb.Frame(content)
         row.pack(fill="x")
         row.columnconfigure((0, 1), weight=1, uniform="n")
@@ -466,22 +538,34 @@ def run_login(parent, store, icon=None, last_initials="", on_icon=None):
             boxes[key].bind("<KeyRelease>", auto_initials, add="+")
         boxes["initials"].bind("<Key>", typed_initials, add="+")
 
-        email = field("Email")
-        password = field("Password", show="*")
-        confirm = field("Confirm Password", show="*")
-        show_password_toggle(password, confirm)
+        boxes["email"] = field("Email")
+        boxes["password"] = field("Password", show="*")
+        boxes["confirm"] = field("Confirm Password", show="*")
+        show_password_toggle(boxes["password"], boxes["confirm"])
+        return boxes
+
+    def form_values(boxes):
+        return [boxes[key].get() for key in (
+            "first", "middle", "last", "initials", "email", "password",
+            "confirm")]
+
+    # ---- sign up ----
+    def sign_up_page():
+        clear()
+        fit(800)
+        heading("Create Account",
+                "An Administrator must approve your account before you can "
+                "sign in.\nYou will sign in with your Initials.")
+        boxes = account_form()
 
         def submit(event=None):
             try:
-                store.sign_up(
-                    boxes["first"].get(), boxes["middle"].get(),
-                    boxes["last"].get(), boxes["initials"].get(),
-                    email.get(), password.get(), confirm.get())
+                store.sign_up(*form_values(boxes))
             except AuthError as error:
                 show_message(str(error))
                 return
             sign_in_page(
-                "Account created. You can sign in after the Owner "
+                "Account created. You can sign in after an Administrator "
                 "approves it.")
 
         tb.Button(content, text="Send for Approval", bootstyle="info",
@@ -492,7 +576,44 @@ def run_login(parent, store, icon=None, last_initials="", on_icon=None):
         dialog.bind("<Return>", submit)
         boxes["first"].focus_set()
 
-    sign_in_page()
+    # ---- first set-up of a PC that has no Administrator ----
+    def setup_page():
+        clear()
+        fit(860)
+        heading("Set Up This PC",
+                "This PC has no Administrator account yet.\n"
+                "The account you create now becomes the ADMINISTRATOR of "
+                "this PC: it approves the other accounts and can reset "
+                "their passwords.\nThis screen is shown only once.")
+        boxes = account_form()
+
+        def submit(event=None):
+            if not messagebox.askyesno(
+                    "Set Up This PC",
+                    "Create the Administrator account of this PC now?\n\n"
+                    "Keep its password safe: it is the only account that "
+                    "can approve the others.", parent=dialog):
+                return
+            try:
+                store.create_administrator(*form_values(boxes))
+            except AuthError as error:
+                show_message(str(error))
+                return
+            sign_in_page(
+                "The Administrator account was created. Sign in with its "
+                "Initials.")
+
+        tb.Button(content, text="Create Administrator Account",
+                  bootstyle="info", command=submit).pack(
+            fill="x", pady=(14, 6))
+        message_label()
+        dialog.bind("<Return>", submit)
+        boxes["first"].focus_set()
+
+    if store.needs_setup:
+        setup_page()
+    else:
+        sign_in_page()
     dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
     dialog.lift()
     dialog.focus_force()
@@ -501,7 +622,7 @@ def run_login(parent, store, icon=None, last_initials="", on_icon=None):
 
 
 def open_manage_users(parent, store, owner, on_change=None):
-    """Owner only: approve / reject / disable / delete accounts."""
+    """Owner / Administrator only: approve, reject, disable, delete."""
     dialog = tb.Toplevel(parent)
     dialog.title("Manage Users")
     dialog.transient(parent)
@@ -532,12 +653,12 @@ def open_manage_users(parent, store, owner, on_change=None):
         tree.delete(*tree.get_children())
         order = {"pending": 0, "approved": 1, "disabled": 2, "rejected": 3}
         users = sorted(store.list_users(), key=lambda u: (
-            0 if u.get("role") == "owner" else 1,
+            0 if is_admin(u) else 1,
             order.get(u.get("status"), 9), u.get("last_name", "")))
         for user in users:
             tree.insert("", "end", iid=user["email"], values=(
                 full_name(user), user.get("initials", ""), user["email"],
-                user.get("role", "user").title(),
+                role_text(user),
                 STATUS_TEXT.get(user.get("status"), user.get("status")),
                 user.get("created", "")))
         if select and tree.exists(select):

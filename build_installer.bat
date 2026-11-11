@@ -114,9 +114,12 @@ if /i "%ED%"=="Owner" (
   >"%EDDIR%\edition.json" echo {"edition": "user"}
 )
 
-rem Only the Owner edition carries the MySQL driver and the MySQL defaults.
+rem Only the Owner edition carries the MySQL driver, the MySQL defaults and
+rem the owner's account (auth_seed.json). The User edition is installed
+rem WITHOUT any account: the first person on a site PC creates the
+rem Administrator account of that PC.
 set EXTRA=
-if /i "%ED%"=="Owner" set EXTRA=--collect-submodules mysql.connector --add-data "%CD%\data\json\private\installer_defaults\db_config.json;data\json\private\installer_defaults"
+if /i "%ED%"=="Owner" set EXTRA=--collect-submodules mysql.connector --add-data "%CD%\data\json\private\installer_defaults\db_config.json;data\json\private\installer_defaults" --add-data "%CD%\data\json\private\auth_seed.json;data\json\private"
 if /i "%ED%"=="User" set EXTRA=--exclude-module mysql --exclude-module mysql.connector
 
 "%PY%" -m PyInstaller --noconfirm --clean --windowed ^
@@ -135,11 +138,21 @@ if /i "%ED%"=="User" set EXTRA=--exclude-module mysql --exclude-module mysql.con
   --add-data "%CD%\%EDDIR%\edition.json;data\json" ^
   --add-data "%CD%\logo.png;." ^
   --add-data "%CD%\logo.ico;." ^
-  --add-data "%CD%\data\json\private\auth_seed.json;data\json\private" ^
   %EXTRA% ^
   field_survey_report.py
 if errorlevel 1 exit /b 1
 if not exist "dist\%ED%\FieldSurveyReport\FieldSurveyReport.exe" exit /b 1
+
+rem The User edition must never contain an account, a password hash or a
+rem MySQL login. The build stops here if it does.
+if /i not "%ED%"=="User" goto checked
+"%PY%" fsr_build_check.py "dist\User\FieldSurveyReport"
+if errorlevel 1 (
+  echo.
+  echo The User edition contains private account data - it was NOT packaged.
+  exit /b 1
+)
+:checked
 
 if not defined ISCC exit /b 0
 echo [4/4] Building the %ED% Setup file...

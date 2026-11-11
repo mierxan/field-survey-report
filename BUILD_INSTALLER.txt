@@ -17,7 +17,14 @@ that you copy to the other PCs and double-click. The other PCs do NOT need Pytho
 
 ON EACH NEW PC
  * Run the right Setup file (Next > Next > Install). It adds a Start menu
-   item and an optional Desktop icon. Sign in with the Owner initials MPR.
+   item and an optional Desktop icon.
+ * Owner Setup: sign in with the Owner initials.
+ * User Setup: the installer contains NO account and no password. The first
+   time the program starts on a site PC it shows "Set Up This PC" once: the
+   person there creates the Administrator account of that PC, which then
+   approves the other accounts on that PC. (build_installer.bat stops with
+   "PRIVATE DATA FOUND" if an account file or a password hash ever ends up
+   in the User edition - see fsr_build_check.py.)
  * The program's files go to  C:\Program Files\Field Survey Report  (Owner) or
    C:\Program Files\Field Survey Report (User)  (User).
    Your data goes here (so it is safe when you update or uninstall):
