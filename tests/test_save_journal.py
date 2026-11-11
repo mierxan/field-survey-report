@@ -449,9 +449,8 @@ def test_old_unwritten_record_does_not_replace_a_later_save(env):
     clock = [datetime.now() - timedelta(hours=3)]
     journal = j.Journal(book, clock=lambda: clock[0])
     data = bad_order(so="SO-STALE")
-    record = j.open_save(journal, j.Stores(book, mysql=mysql), data, False,
+    record = j.open_save(journal, j.Stores(book, mysql=mysql), data, True,
                          False, True)
-    assert record["stamp_before"] is None
     assert record["started"] < datetime.now().isoformat()
     s.write_report_to_excel(book, bad_order(so="SO-LATER"), False)
 
@@ -514,7 +513,6 @@ def test_repair_of_a_new_report_takes_the_next_free_number(env):
         CONTROL, "Receiving", date(2026, 11, 1), so="SO-OTHER"), False)
     journal, record, stores = start_save(book, mysql, crash_at="workbook",
                                          before=True)
-    assert record["stamp_before"] is not None
     with pytest.raises(Crash):
         j.run(journal, record, stores)
 
@@ -610,7 +608,7 @@ def test_two_saves_seconds_apart_are_not_mistaken_for_one(env):
     journal, record, stores = start_save(
         book, mysql, data=bad_order(so="SO-SECOND"), editing=True,
         crash_at="workbook", before=True)
-    assert record["stamp_before"] == j.Stores(book).stamp(record)
+    assert record["stamp_planned"] > j.Stores(book).stamp(record)
     with pytest.raises(Crash):
         j.run(journal, record, stores)
     (entry,) = j.repair(j.Journal(book), j.Stores(book, mysql=mysql))
@@ -629,3 +627,146 @@ def test_report_removed_before_an_unwritten_update_is_not_brought_back(env):
     s.delete_reports_from_excel(book, [CONTROL])
     (entry,) = j.repair(j.Journal(book), j.Stores(book, mysql=mysql))
     assert entry["state"] == "deleted" and s.list_saved_reports(book) == []
+
+
+# ---------- the save's own time is its mark in the workbook ----------
+
+def test_workbook_holds_exactly_the_time_the_save_chose(env):
+    book, mysql = env
+    journal, record, stores = start_save(book, mysql, crash_at="incidents",
+                                         before=True)
+    planned = record["stamp_planned"]
+    assert len(planned) == len("2026-11-11T16:03:07.208")      # milliseconds
+    with pytest.raises(Crash):
+        j.run(journal, record, stores)
+    assert j.Stores(book).stamp(record) == planned
+    (left,) = j.Journal(book).pending()
+    assert left["stamp"] == planned
+    # and the save reads nothing from the workbook to learn it
+    assert "stamp_before" not in left or left["stamp_before"] is None
+
+
+def test_storage_writes_the_given_time(tmp_path):
+    book = tmp_path / "data.xlsx"
+    moment = datetime(2026, 11, 11, 16, 3, 7, 208000)
+    s.write_report_to_excel(book, bad_order(), False, saved_at=moment)
+    wb = s.load_workbook(book, data_only=True)
+    header = [c.value for c in wb["Reports"][1]]
+    assert wb["Reports"].cell(2, header.index("Last Saved") + 1).value == \
+        moment
+    # without it: now, as before
+    s.write_report_to_excel(book, bad_order("FSR-TST-202611-0002"), False)
+    wb = s.load_workbook(book, data_only=True)
+    written = wb["Reports"].cell(3, header.index("Last Saved") + 1).value
+    assert abs((written - datetime.now()).total_seconds()) < 5
+
+
+@pytest.mark.parametrize("gap_ms", [5, 60, 1500])
+def test_two_saves_of_one_report_within_two_minutes_are_told_apart(
+        env, gap_ms):
+    """Save A stops right after its workbook write (not yet ticked off).
+    Milliseconds to seconds later the same report is saved again, B, with
+    other content. The repair must see that the workbook holds B, not A,
+    and must not put A's incident text or forms over B's."""
+    book, mysql = env
+    j.run(*start_save(book, mysql))             # the report exists
+    start = datetime.now() + timedelta(seconds=1)
+    clock = [start]
+    journal = j.Journal(book, clock=lambda: clock[0])
+    a = bad_order(so="SO-A", note="Incident text of save A")
+    record_a = j.open_save(journal, CrashingStores(book, mysql=mysql), a,
+                           True, False, True)
+    with pytest.raises(Crash):
+        j.run(journal, record_a, CrashingStores(book, mysql=mysql,
+                                                crash_at="workbook"))
+    assert j.Stores(book).stamp(record_a) == record_a["stamp_planned"]
+    assert state(book, mysql)["workbook_so"] == "SO-A"
+
+    # save B: the same Control #, complete, `gap_ms` later - done the way an
+    # import does it (no record of its own)
+    b = bad_order(so="SO-B", note="Incident text of save B")
+    s.write_report_to_excel(
+        book, b, True, saved_at=start + timedelta(milliseconds=gap_ms))
+    s.save_incident_data(book, CONTROL, "SO-B", b["incident_reports"])
+    s.save_other_item_forms(book, CONTROL, {})
+
+    (entry,) = j.repair(j.Journal(book), j.Stores(book, mysql=mysql))
+
+    assert entry["state"] == "outdated" and entry["finished"]
+    now = state(book, mysql)
+    assert now["workbook_so"] == "SO-B"
+    assert now["incident"] == [["Incident text of save B"]]
+    assert now["forms"] == []
+    assert now["mysql_so"] == "SO-B"
+    assert now["mysql_incident"] == [["Incident text of save B"]]
+    assert len(s.list_saved_reports(book)) == 1
+
+
+def test_second_save_through_the_program_replaces_the_first_record(env):
+    """The usual way: both saves go through the record. A stops after its
+    workbook write, B (60 ms later) is cut off before its own."""
+    book, mysql = env
+    start = datetime.now()
+    clock = [start]
+    journal = j.Journal(book, clock=lambda: clock[0])
+    a = bad_order(so="SO-A", note="A")
+    record_a = j.open_save(journal, j.Stores(book), a, False, False, True)
+    with pytest.raises(Crash):
+        j.run(journal, record_a, CrashingStores(book, mysql=mysql,
+                                                crash_at="workbook"))
+    clock[0] = start + timedelta(milliseconds=60)
+    b = bad_order(so="SO-B", note="B")
+    record_b = j.open_save(journal, j.Stores(book), b, True, False, True)
+    assert [r["id"] for r in journal.pending()] == [record_b["id"]]
+    with pytest.raises(Crash):
+        j.run(journal, record_b, CrashingStores(
+            book, mysql=mysql, crash_at="workbook", before=True))
+    assert state(book, mysql)["workbook_so"] == "SO-A"
+
+    (entry,) = j.repair(j.Journal(book), j.Stores(book, mysql=mysql))
+
+    # the workbook held A (earlier than B's time): B was never written
+    assert entry["state"] == "" and entry["did"][0] == "workbook"
+    assert state(book, mysql) == {
+        **AGREED, "workbook_so": "SO-B", "mysql_so": "SO-B",
+        "incident": [["B"]], "mysql_incident": [["B"]]}
+
+
+def test_record_from_before_this_rule_is_still_repaired(env):
+    """A record without "stamp_planned" (written by the first Phase 2
+    code) keeps working with the earlier rule."""
+    book, mysql = env
+    journal, record, stores = start_save(book, mysql, crash_at="incidents",
+                                         before=True)
+    with pytest.raises(Crash):
+        j.run(journal, record, stores)
+    document = json.loads(journal.path.read_text(encoding="utf-8"))
+    old = document["saves"][0]
+    del old["stamp_planned"]
+    old["stamp"] = j.Stores(book).stamp(record)
+    journal.path.write_text(json.dumps(document), encoding="utf-8")
+
+    (entry,) = j.repair(j.Journal(book), j.Stores(book, mysql=mysql))
+
+    assert entry["finished"] and entry["state"] == ""
+    assert state(book, mysql) == AGREED
+
+
+def test_new_report_whose_number_was_taken_later_is_not_lost(env):
+    """Cut off before the workbook write; afterwards another report got
+    the same number. The unfinished one is still saved, renumbered."""
+    book, mysql = env
+    journal, record, stores = start_save(book, mysql, crash_at="workbook",
+                                         before=True)
+    with pytest.raises(Crash):
+        j.run(journal, record, stores)
+    s.write_report_to_excel(book, report(
+        CONTROL, "Receiving", date(2026, 11, 1), so="SO-OTHER"), False,
+        saved_at=datetime.now() + timedelta(seconds=30))
+
+    (entry,) = j.repair(j.Journal(book), j.Stores(book, mysql=mysql))
+
+    assert entry["finished"] and entry["control"] != CONTROL
+    assert s.read_report(book, CONTROL)["general_information"][
+        "so_number"] == "SO-OTHER"
+    assert state(book, mysql, entry["control"]) == AGREED

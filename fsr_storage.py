@@ -1101,7 +1101,7 @@ def finalize_sheet(ws, table_name, headers):
         )
 
 
-def report_row_values(data, control_no):
+def report_row_values(data, control_no, saved_at=None):
     """One report as the values of a REPORT_HEADERS row."""
     general = data["general_information"]
     schedule = data["inspection_schedule"]
@@ -1124,7 +1124,9 @@ def report_row_values(data, control_no):
             goods_types_to_text(data.get("goods_types"))
         ),
         "Item List Form": item_form_name(data.get("item_form")),
-        "Last Saved": datetime.now(),
+        # `saved_at`: the time a save chose in advance, so that exactly
+        # this save can be recognised later (fsr_save_journal).
+        "Last Saved": saved_at or datetime.now(),
     }
 
     for _, key, _, kind, header in SCHEDULE_FIELDS:
@@ -1142,10 +1144,11 @@ def report_row_values(data, control_no):
     return [values_by_header[header] for header in REPORT_HEADERS]
 
 
-def write_report_to_excel(path, data, editing):
+def write_report_to_excel(path, data, editing, saved_at=None):
     """
     Save one report. If its Control # is already in the file the
-    report is UPDATED, otherwise it is ADDED.
+    report is UPDATED, otherwise it is ADDED. `saved_at` becomes the
+    report's Last Saved time (default: now).
     Returns {"control", "updated", "goods", "items", "remarks"}.
     """
 
@@ -1197,7 +1200,7 @@ def write_report_to_excel(path, data, editing):
         existing_row = None
 
     # --- Reports sheet (updated in place when it already exists) --
-    report_values = report_row_values(data, control_no)
+    report_values = report_row_values(data, control_no, saved_at)
 
     if existing_row:
         set_row(reports_ws, existing_row, report_values, REPORT_FORMATS)

@@ -27,6 +27,17 @@ Which store is right when they disagree
   * PO_Master / Withdrawn_Item and MySQL are always derived from the
     workbook, never the other way round.
 
+How a save is recognised in the workbook
+  Every save chooses its Last Saved time BEFORE it writes ("stamp_planned",
+  to the millisecond - as exact as Excel keeps a time) and the workbook
+  write uses exactly that time. So the time is the save's own mark:
+    the workbook holds that time   -> it holds this save
+    it holds an earlier time       -> the older version: the save was
+                                      never written, repair writes it
+    it holds a later time          -> the report was saved again since
+  No guessing by "close in time" is involved. (Records written before this
+  rule have no "stamp_planned"; for them the earlier rule is kept.)
+
 Every step can be repeated safely, so running repair() twice - or having it
 interrupted and run again - gives the same result as running it once.
 MySQL not being reachable is normal on an offline PC: the save is complete
@@ -51,7 +62,10 @@ LOCAL_STEPS = STEPS[:-1]
 PENDING, DONE = "pending", "done"
 OUTDATED = "outdated"        # dropped: the report was saved again since
 SETTLED = (DONE, OUTDATED)
-# A workbook time this close after the start of a save is that save.
+# Excel keeps a time to the millisecond: two times this close are equal.
+SAME_TIME = timedelta(milliseconds=1.5)
+# Only for records without "stamp_planned" (written before that rule):
+# a workbook time this close after the start of a save is that save.
 OWN_SAVE_WINDOW = timedelta(seconds=120)
 CLOCK_SLACK = timedelta(seconds=2)
 
@@ -76,10 +90,14 @@ def journal_path(excel_path):
 
 def new_record(data, editing, linked, steps, stamp_before=None, now=None):
     """The record of one save (see the module text)."""
+    now = now or datetime.now()
+    planned = now.replace(microsecond=now.microsecond // 1000 * 1000)
     return {
         "id": uuid.uuid4().hex,
         "control": data["control_no"],
-        "started": (now or datetime.now()).isoformat(timespec="seconds"),
+        "started": now.isoformat(timespec="seconds"),
+        # the Last Saved time this save writes: its mark in the workbook
+        "stamp_planned": planned.isoformat(timespec="milliseconds"),
         "editing": bool(editing),
         "linked": bool(linked),
         "steps": {step: PENDING for step in steps},
@@ -198,11 +216,16 @@ class Stores:
     # -- writes --
     def workbook(self, record):
         data = record["data"]
+        extra = {}
+        planned = _time(record.get("stamp_planned"))
+        if planned is not None:
+            extra["saved_at"] = planned
         if record["linked"]:
             return fsr_withdrawal.write_withdrawal_report(
-                self.home(record), data, record["editing"], self.excel_path)
+                self.home(record), data, record["editing"], self.excel_path,
+                **extra)
         return storage.write_report_to_excel(
-            self.excel_path, data, record["editing"])
+            self.excel_path, data, record["editing"], **extra)
 
     def incidents(self, record):
         data = record["data"]
@@ -247,7 +270,7 @@ class Stores:
                 if row and storage.same_key(row[0], record["control"]):
                     value = row[column] if len(row) > column else None
                     if isinstance(value, datetime):
-                        return value.isoformat(timespec="seconds")
+                        return value.isoformat(timespec="milliseconds")
                     return str(value) if value is not None else ""
             return None
         finally:
@@ -266,11 +289,11 @@ class Stores:
 # ---------------------------------------------------------------------
 
 def open_save(journal, stores, data, editing, linked, mysql):
-    """Put a save on record before its first write. Returns the record."""
-    before = stores.stamp({"linked": bool(linked),
-                           "control": data["control_no"]})
+    """Put a save on record before its first write. Returns the record.
+    Nothing is read from the workbook for this: the save's own time
+    ("stamp_planned") is all the repair needs."""
     return journal.begin(data, editing, linked,
-                         steps_for(data, linked, mysql), stamp_before=before)
+                         steps_for(data, linked, mysql))
 
 
 def _settled(record, steps=STEPS):
@@ -298,7 +321,8 @@ def run(journal, record, stores, mysql=True):
         record["control"] = record["data"]["control_no"] = result["control"]
         record["editing"] = True        # from now on it is an update
         steps["workbook"] = DONE
-        record["stamp"] = stores.stamp(record)
+        record["stamp"] = (record.get("stamp_planned")
+                           or stores.stamp(record))
         _note(journal, record)
 
     data = record["data"]
@@ -367,8 +391,13 @@ def _check_against_workbook(journal, record, stores):
     a word for the report: "" (go on), "outdated" or "deleted"."""
     steps = record["steps"]
     now_stamp = stores.stamp(record)
+    planned = _time(record.get("stamp_planned"))
 
-    if steps.get("workbook") == PENDING:
+    if planned is not None:
+        outdated = _exact_check(journal, record, now_stamp, planned)
+        if outdated in ("", "deleted"):
+            return outdated
+    elif steps.get("workbook") == PENDING:
         if now_stamp == record.get("stamp_before"):
             return ""                   # never written: repair writes it
         if now_stamp is None:           # was there before the save, gone now
@@ -414,6 +443,35 @@ def _check_against_workbook(journal, record, stores):
             record["_mysql_wait"] = True
     _note(journal, record)
     return "outdated"
+
+
+def _exact_check(journal, record, now_stamp, planned):
+    """The rule of the module text. Returns "" (go on), "deleted", or True
+    (the workbook holds a newer save than this record)."""
+    steps = record["steps"]
+    saved = _time(now_stamp)
+    pending = steps.get("workbook") == PENDING
+
+    if now_stamp is None and (not pending or record["editing"]):
+        # It was in the workbook and is not any more: not brought back.
+        for step in steps:
+            steps[step] = OUTDATED
+        _note(journal, record)
+        return "deleted"
+    if saved is not None and abs(saved - planned) <= SAME_TIME:
+        if pending:                     # written just before the stop
+            steps["workbook"] = DONE
+            record["editing"] = True
+            record["stamp"] = record["stamp_planned"]
+            _note(journal, record)
+        return ""
+    if pending and (not record["editing"] or saved is None
+                    or saved < planned):
+        # Not there, or the older version: the save was never written.
+        # (A NEW report is always written: if its number now belongs to
+        # another report, the write gives it the next free number.)
+        return ""
+    return True
 
 
 def repair(journal, stores, mysql=True, skip=()):

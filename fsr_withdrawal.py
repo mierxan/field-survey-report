@@ -592,7 +592,8 @@ def _write_lines(ws, control_no, item_lists):
                     ws, _line_values(control_no, section["name"], line_no, row))
 
 
-def write_withdrawal_report(path, data, editing, main_path):
+def write_withdrawal_report(path, data, editing, main_path,
+                            saved_at=None):
     """Save one PO-linked report here and nowhere else. Same result as
     fsr_storage.write_report_to_excel(). A new report takes the next free number
     when its Control # is used in either workbook."""
@@ -627,7 +628,7 @@ def write_withdrawal_report(path, data, editing, main_path):
         existing_row = None
 
     data["entry_source"] = ENTRY_PO_LINKED
-    values = storage.report_row_values(data, control_no) + [
+    values = storage.report_row_values(data, control_no, saved_at) + [
         ENTRY_PO_LINKED, storage.text_or_none(data.get("po_source_file", ""))]
     if existing_row:
         storage.set_row(header_ws, existing_row, values, storage.REPORT_FORMATS)
