@@ -397,8 +397,67 @@ def upgrade_schema_as(user, password):
         conn.close()
 
 
+# ---------- for fsr_mysql_guard: check and write as one step ----------
+
+def _lock_name(conn, control_no):
+    database = str(getattr(conn, "database", "") or "")
+    key = f"{database}|{str(control_no).strip().casefold()}"
+    return "fsr-" + hashlib.sha1(key.encode("utf-8")).hexdigest()
+
+
+def lock_report(conn, control_no, timeout=10):
+    """Take the MySQL-wide lock of one Control #. While one copy of the
+    program holds it, no other copy can check or write that report. True
+    when the lock was obtained."""
+    cur = conn.cursor()
+    cur.execute("SELECT GET_LOCK(%s, %s)",
+                (_lock_name(conn, control_no), timeout))
+    row = cur.fetchone()
+    cur.close()
+    return bool(row and row[0] == 1)
+
+
+def unlock_report(conn, control_no):
+    cur = conn.cursor()
+    cur.execute("SELECT RELEASE_LOCK(%s)", (_lock_name(conn, control_no),))
+    cur.fetchall()
+    cur.close()
+
+
+def report_exists(conn, control_no):
+    """Inside the open transaction; the row stays locked until commit."""
+    cur = conn.cursor()
+    cur.execute("SELECT control_no FROM reports WHERE control_no = %s "
+                "FOR UPDATE", (control_no,))
+    found = cur.fetchone() is not None
+    cur.close()
+    return found
+
+
+def control_numbers(connection=None):
+    """Every Control # in the database."""
+    own = connection is None
+    conn = connection or connect()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT control_no FROM reports")
+        numbers = [row[0] for row in cur.fetchall()]
+        cur.close()
+        return numbers
+    finally:
+        if own:
+            conn.close()
+
+
+def write_report(conn, data):
+    """Write one report inside the caller's transaction (no commit)."""
+    return _write_report(conn, data)
+
+
 def save_report(data, connection=None):
     """Insert or update ONE report (all its lines) in a single transaction.
+    NOTE: this overwrites whatever MySQL holds under that Control #. The
+    program itself goes through fsr_mysql_guard, which checks first.
     `data` has the same shape as collect_report_data(). Returns a list of
     notes (e.g. link columns this database cannot store yet)."""
     own = connection is None

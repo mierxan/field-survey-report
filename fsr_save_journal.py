@@ -42,6 +42,14 @@ Every step can be repeated safely, so running repair() twice - or having it
 interrupted and run again - gives the same result as running it once.
 MySQL not being reachable is normal on an offline PC: the save is complete
 on this PC and only the "mysql" step waits.
+
+MySQL conflicts
+  The MySQL step goes through fsr_mysql_guard: it never overwrites a report
+  in MySQL that this copy of the program does not own. When MySQL holds a
+  different report under the number, the step stays open with the conflict
+  noted in the record ("conflict"). Such records are the list of waiting
+  conflicts; resolve_keep / resolve_replace / resolve_renumber carry out
+  the user's decision. Nothing local is ever held up by a conflict.
 """
 import copy
 import json
@@ -50,6 +58,7 @@ import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import fsr_mysql_guard
 import fsr_paths
 import fsr_storage as storage
 import fsr_withdrawal
@@ -201,10 +210,14 @@ class Stores:
     """The real writes of one data folder. `mysql` is the db_mysql module
     (or None). Tests replace single methods to make a write fail."""
 
-    def __init__(self, excel_path, mysql=None, required_root=None):
+    def __init__(self, excel_path, mysql=None, required_root=None,
+                 guard=None):
         self.excel_path = Path(excel_path)
         self.mysql_module = mysql
         self.required_root = required_root
+        # fsr_mysql_guard.Guard: checks before every MySQL write. Without
+        # one (older tests with a simple stand-in) the write is direct.
+        self.guard = guard
 
     def home(self, record):
         """The workbook that holds this report."""
@@ -246,7 +259,10 @@ class Stores:
         fsr_withdrawal.sync_item_lists(self.excel_path)
 
     def mysql(self, record, data):
-        return self.mysql_module.save_report(data)
+        if self.guard is None:
+            return self.mysql_module.save_report(data)
+        _, notes = self.guard.save(data, record.get("decision"))
+        return notes
 
     # -- reads --
     def stamp(self, record):
@@ -336,6 +352,15 @@ def run(journal, record, stores, mysql=True):
                     record, record.get("_mysql_data") or data)
             else:
                 getattr(stores, step)(record)
+        except fsr_mysql_guard.MySQLConflict as error:
+            # Not an error: MySQL holds another report under this number.
+            # Nothing was written there; the user decides.
+            log.info("MySQL conflict for %s: %s", record["control"], error)
+            outcome["failed"][step] = error
+            record["conflict"] = error.conflict
+            record["errors"][step] = str(error)
+            _note(journal, record)
+            continue
         except Exception as error:      # noted, the other steps go on
             log.exception("Save step '%s' of %s failed", step,
                           record["control"])
@@ -345,6 +370,9 @@ def run(journal, record, stores, mysql=True):
             continue
         steps[step] = DONE
         record["errors"].pop(step, None)
+        if step == "mysql":
+            record.pop("conflict", None)
+            record.pop("decision", None)
         _note(journal, record)
 
     if _settled(record):
@@ -490,6 +518,18 @@ def repair(journal, stores, mysql=True, skip=()):
     for record in journal.pending():
         if record.get("id") in skip:
             continue
+        if record.get("local_done"):
+            # A conflict found by Import / Sync: only MySQL is open, and
+            # only a decision (or MySQL becoming equal) closes it.
+            if mysql:
+                outcome = _send_only(journal, record, stores)
+                if "mysql" not in outcome["failed"]:
+                    report.append({
+                        "control": record["control"], "started":
+                        record.get("started"), "failed": {}, "state": "",
+                        "did": ["mysql"], "waiting": [], "finished": True,
+                        "local": True, "conflict": False})
+            continue
         before = dict(record["steps"])
         entry = {"control": record.get("control"),
                  "started": record.get("started"), "failed": {}, "state": ""}
@@ -504,8 +544,10 @@ def repair(journal, stores, mysql=True, skip=()):
             entry["failed"] = {"workbook": str(error)}
             record["errors"]["workbook"] = str(error)
             _note(journal, record)
-        if "mysql" in entry["failed"]:
-            mysql = False
+        entry["conflict"] = bool(record.get("conflict")) and \
+            record["steps"].get("mysql") == PENDING
+        if "mysql" in entry["failed"] and not entry["conflict"]:
+            mysql = False               # the server is away: stop asking it
         entry["control"] = record.get("control")
         entry["did"] = [s for s in STEPS if before.get(s) == PENDING
                         and record["steps"].get(s) == DONE]
@@ -517,6 +559,132 @@ def repair(journal, stores, mysql=True, skip=()):
                 or entry["finished"]:
             report.append(entry)
     return report
+
+
+# ---------------------------------------------------------------------
+# MySQL conflicts: the waiting list and the three decisions
+# ---------------------------------------------------------------------
+
+def conflicts(journal):
+    """The records that wait for a decision, oldest first."""
+    return [r for r in journal.pending() if r.get("conflict")
+            and r["steps"].get("mysql") == PENDING]
+
+
+def add_conflict(journal, report, conflict, linked=False):
+    """Put a conflict found outside a save (Import, Sync to MySQL) on the
+    list. A record this report already has is kept and only marked."""
+    key = storage.control_key(report["control_no"])
+    for record in journal.pending():
+        if storage.control_key(record.get("control")) == key:
+            record["conflict"] = conflict
+            record["steps"]["mysql"] = PENDING
+            journal.save(record)
+            return record
+    record = new_record(report, True, linked, ["mysql"])
+    record["conflict"] = conflict
+    record["stamp"] = None
+    record["stamp_planned"] = None      # nothing local belongs to it
+    record["local_done"] = True
+    journal.save(record)
+    return record
+
+
+def _find(journal, record_id):
+    for record in journal.pending():
+        if record.get("id") == record_id:
+            return record
+    raise KeyError(record_id)
+
+
+def resolve_keep(journal, record_id):
+    """Keep MySQL's report: nothing is written, the conflict is closed. The
+    report stays as it is in this copy's workbook."""
+    record = _find(journal, record_id)
+    record["steps"]["mysql"] = OUTDATED
+    record.pop("conflict", None)
+    record.pop("decision", None)
+    if _settled(record):
+        journal.remove(record)
+    else:
+        journal.save(record)
+    return record
+
+
+def resolve_replace(journal, stores, record_id):
+    """The deliberate choice: replace MySQL's report with this copy's. The
+    guard keeps the replaced version first. Returns run()'s outcome."""
+    record = _find(journal, record_id)
+    record["decision"] = fsr_mysql_guard.REPLACE
+    return _send_only(journal, record, stores)
+
+
+def resolve_renumber(journal, stores, record_id, new_control, renumber):
+    """Give this copy's report another number - in the workbook, its JSON
+    files and the PO lists (`renumber(old, new)` does that) - and send it to
+    MySQL under the new number. MySQL's report is untouched."""
+    record = _find(journal, record_id)
+    old = record["control"]
+    renumber(old, new_control)
+    record["control"] = new_control
+    try:
+        record["data"] = stores.read_back(record)
+    except Exception:
+        log.exception("Could not read %s back after renumbering",
+                      new_control)
+        record["data"]["control_no"] = new_control
+    record["data"].setdefault("other_item_forms", {})
+    record["data"].pop("incident_error", None)
+    record.pop("conflict", None)
+    record.pop("decision", None)
+    record["renumbered_from"] = old
+    journal.save(record)
+    return _send_only(journal, record, stores)
+
+
+def _send_only(journal, record, stores):
+    """Do the MySQL step of a record whose local part is complete."""
+    if record.get("local_done"):
+        outcome = {"result": None, "failed": {}}
+        try:
+            outcome["mysql_notes"] = stores.mysql(record, record["data"])
+        except fsr_mysql_guard.MySQLConflict as error:
+            record["conflict"] = error.conflict
+            record.pop("decision", None)
+            journal.save(record)
+            outcome["failed"]["mysql"] = error
+            return outcome
+        except Exception as error:
+            record.pop("decision", None)
+            journal.save(record)
+            outcome["failed"]["mysql"] = error
+            return outcome
+        journal.remove(record)
+        return outcome
+    outcome = run(journal, record, stores)
+    if record.get("decision") and "mysql" in outcome["failed"]:
+        record.pop("decision", None)    # never keep a standing "replace"
+        _note(journal, record)
+    return outcome
+
+
+def send_to_mysql(journal, guard, reports, replace=(), linked=()):
+    """Import and Sync to MySQL: write every report the guard allows, put
+    the conflicts on the waiting list. `replace`: Control #s the user
+    ticked. `linked`: Control #s that live in the Withdrawal workbook.
+    Returns guard.save_many()'s result."""
+    result = guard.save_many(reports, replace)
+    linked_keys = {storage.control_key(c) for c in linked}
+    for report, conflict in result["conflicts"]:
+        add_conflict(journal, report, conflict,
+                     storage.control_key(report["control_no"]) in linked_keys)
+    done = {storage.control_key(c)
+            for c in result["written"] + result["identical"]}
+    for record in conflicts(journal):       # settled by this very run
+        if storage.control_key(record["control"]) in done and \
+                record.get("local_done"):
+            journal.remove(record)
+    return result
 
 
 def describe(report):
@@ -555,6 +723,10 @@ def describe(report):
             attention = True
         if "mysql" in entry["did"]:
             lines.append(f"{control}: now also saved to MySQL.")
-        if "mysql" in entry["failed"]:
+        if entry.get("conflict"):
+            lines.append(f"{control}: NOT sent to MySQL - it holds a "
+                         "different report under this number. Waiting for "
+                         "your decision (MySQL Conflicts).")
+        elif "mysql" in entry["failed"]:
             lines.append(f"{control}: still waiting for MySQL.")
     return lines, attention
