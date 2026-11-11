@@ -145,14 +145,12 @@ if not exist "dist\%ED%\FieldSurveyReport\FieldSurveyReport.exe" exit /b 1
 
 rem The User edition must never contain an account, a password hash or a
 rem MySQL login. The build stops here if it does.
-if /i not "%ED%"=="User" goto checked
-"%PY%" fsr_build_check.py "dist\User\FieldSurveyReport"
+if /i "%ED%"=="User" "%PY%" fsr_build_check.py "dist\User\FieldSurveyReport"
 if errorlevel 1 (
   echo.
   echo The User edition contains private account data - it was NOT packaged.
   exit /b 1
 )
-:checked
 
 if not defined ISCC exit /b 0
 echo [4/4] Building the %ED% Setup file...
