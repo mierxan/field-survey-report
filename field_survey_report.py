@@ -1580,12 +1580,12 @@ def open_mysql_settings():
                                  parent=dialog)
             return
         dialog.destroy()
-        if messagebox.askyesno(
-                "MySQL Settings",
-                "Saved. The program must restart to use the new settings."
-                "\n\nRestart now?", parent=window):
-            if confirm_discard("Restart", "Restart now?"):
-                restart_program()
+        # The settings are read from the file every time MySQL is used, so
+        # no restart is needed: the status at the top right is checked
+        # again right now with what was just saved.
+        if "check_mysql_status" in globals():
+            check_mysql_status()
+        notify("MySQL settings saved - checking the connection...")
 
     row = tb.Frame(body)
     row.grid(row=10, column=0, columnspan=2, sticky="we", pady=(14, 0))
