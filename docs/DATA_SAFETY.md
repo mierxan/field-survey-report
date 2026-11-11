@@ -123,3 +123,62 @@ number already used on this PC in another case counts as taken and the
 incoming report gets the next free number), the Withdrawal workbook, the
 legacy CSV import, Bad Order case status, and Restore Excel from MySQL.
 Nothing in existing files is renamed.
+
+## 4. Proposed, not built
+
+### 4.1 An exact match between a save and the workbook
+
+Today the repair recognises "the workbook already holds this save" by the
+report's Last Saved time lying within two minutes after the save started.
+A different save of the same report inside those two minutes would be
+mistaken for it.
+
+Proposal: the save chooses its Last Saved time **before** writing and puts
+it in the record; the workbook write uses exactly that time instead of
+"now". The time, to the microsecond, is then the save's unique id:
+
+* the workbook holds that exact time -> it is this save;
+* any other time -> it is not, however close.
+
+What it adds:
+
+* Workbook: **nothing**. No new column, no layout change; the Last Saved
+  cell simply holds the chosen time (it is shown to the minute as now).
+* Save record: one field, `stamp_planned`. The two-minute rule stays only
+  for records written before the change.
+* Code: `report_row_values`, `write_report_to_excel` and
+  `write_withdrawal_report` take an optional "saved at" time.
+* Side effect: the save no longer has to read the workbook before and after
+  to learn the times, which takes back most of the 0.15 s the record added.
+
+Not proposed: a "Save ID" column in the Reports sheet. It would be just as
+exact but changes the workbook layout (and, mirrored, the MySQL table) for
+no further gain.
+
+### 4.2 A second backup location
+
+The `Backups` folder is on the same disk as the workbook, so it protects
+against a bad save or a mistake, not against a lost or broken disk.
+
+Proposal: an optional second folder (a USB drive, a network share, a
+synced folder), set in Master Lists and Settings:
+
+* After the daily backup is made, the same file is copied to
+  `<second folder>\<PC name>\`, so several PCs can share one folder.
+* It keeps its own number of backups (suggested 60), with the same rule:
+  only files with the backup's own name pattern are ever removed there.
+* The copy runs after the save, in the background, with a time limit - a
+  slow network or a sleeping drive never delays a save.
+* **When the folder is not available** (USB not plugged in, no network):
+  the local backup is made as usual, nothing is lost, and there is no
+  message box. A line in the status area says "Second backup: not reachable
+  since <date>"; after 3 days without a copy a note is shown once a day.
+* When it is reachable again, every local backup that is missing there is
+  copied, so the gap closes by itself.
+* A "Test" button in the settings writes and removes a small file there.
+* "Restore from backup" (proposed in section 1) would list the
+  backups of both places.
+
+To decide before building: backups hold business data in plain Excel
+files - a USB drive or shared folder should be one only the right people
+can open.
