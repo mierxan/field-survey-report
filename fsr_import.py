@@ -117,17 +117,32 @@ def imported_inspector(excel_path, control_no):
 
 
 def _last_saved_by_control(excel_path):
-    """{Control #: its Last Saved cell}; {} when there is no file yet."""
+    """{Control #: its Last Saved cell}; empty when there is no file yet.
+    Control #s are found without regard to letter case."""
     if not Path(excel_path).exists():
-        return {}
+        return storage.ControlKeyed()
     wb = storage.open_workbook_for_read(excel_path)
     if "Reports" not in wb.sheetnames:
-        return {}
-    return {
+        return storage.ControlKeyed()
+    return storage.ControlKeyed({
         str(row["Control #"]).strip(): str(row.get("Last Saved"))
         for row in storage.report_dicts(wb["Reports"])
         if row.get("Control #")
-    }
+    })
+
+
+def _ledger_key(ledger, device, phone_no):
+    """The ledger key of this phone report: the key already in the ledger
+    when its Control # differs only by letter case, else a new one."""
+    key = f"{device}|{phone_no}"
+    if key in ledger:
+        return key
+    wanted = storage.control_key(phone_no)
+    for existing in ledger:
+        owner, _, control = existing.rpartition("|")
+        if owner == device and storage.control_key(control) == wanted:
+            return existing
+    return key
 
 
 # ---------- import ------------------------------------------
@@ -138,7 +153,7 @@ def _renumbered(report, old, new):
     for item_list in report["item_lists"]:
         for row in item_list.get("rows", []):
             ref = str(row.get("Receiving Ref") or "")
-            if ref.startswith(prefix):
+            if ref.casefold().startswith(prefix.casefold()):
                 row["Receiving Ref"] = f"RCV-{new}-" + ref[len(prefix):]
     report["control_no"] = new
 
@@ -183,14 +198,15 @@ def import_master_data(excel_path, data, on_saved=None):
 
     saved = _last_saved_by_control(excel_path)
     # Numbers of the PO-linked Withdrawal workbook: never reused by an import.
-    taken_elsewhere = set(storage.withdrawal_control_numbers(excel_path))
+    elsewhere = storage.withdrawal_control_numbers(excel_path)
+    taken_elsewhere = {storage.control_key(n) for n in elsewhere}
 
     for original in data["reports"]:
         # A copy: renumbering must never change the caller's data, so the same
         # data can be imported again (and its master lists read) unchanged.
         report = copy.deepcopy(original)
         phone_no = str(report["control_no"]).strip()
-        key = f"{device}|{phone_no}"
+        key = _ledger_key(ledger, device, phone_no)
         phone_saved = str(report.get("last_saved") or "")
         entry = ledger.get(key)
 
@@ -206,14 +222,16 @@ def import_master_data(excel_path, data, on_saved=None):
                 summary["conflicts"].append(local)
                 continue
             editing = True
+            local = saved.name(local)       # as it is spelled in the workbook
             _renumbered(report, phone_no, local)
         else:
             local = phone_no
             editing = False
-            if local in saved or local in taken_elsewhere:
+            if local in saved or \
+                    storage.control_key(local) in taken_elsewhere:
                 # The report keeps the initials of the inspector who made it.
                 local = storage.next_control_number(
-                    [*saved, *taken_elsewhere],
+                    [*saved, *elsewhere],
                     storage.control_initials_of(phone_no))
                 _renumbered(report, phone_no, local)
                 summary["renumbered"].append((phone_no, local))

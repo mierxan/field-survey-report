@@ -22,6 +22,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 import fsr_storage
+from fsr_storage import ControlKeyed, control_key
 import fsr_paths
 import fsr_withdrawal
 
@@ -151,14 +152,14 @@ class SideStore:
     def case_statuses(self):
         """{Control #: latest entry}. A report that is not listed has no
         recorded status (it is NOT counted as unresolved)."""
-        latest = {}
+        latest = ControlKeyed()             # found whatever the letter case
         for entry in self.data["case_status"]:
             latest[entry.get("control_no")] = entry
         return latest
 
     def case_history(self, control_no):
         return [e for e in self.data["case_status"]
-                if e.get("control_no") == control_no]
+                if control_key(e.get("control_no")) == control_key(control_no)]
 
     # ---- settings ----
     def aging_thresholds(self):

@@ -450,11 +450,12 @@ def plan_migration(csv_path, target=None, release_lines=()):
                 result["reason"] = f"same delivery as CSV line {twin['line']}?"
                 plan["duplicates"].append(result)
                 continue
-            if control in controls:
-                result["reason"] = f"identical to CSV line {controls[control]}"
+            if control.casefold() in controls:
+                result["reason"] = ("identical to CSV line "
+                                    f"{controls[control.casefold()]}")
                 plan["duplicates"].append(result)
                 continue
-        controls[control] = record["line"]
+        controls[control.casefold()] = record["line"]
         accepted.append((result, facts))
         plan["import"].append(result)
     return plan

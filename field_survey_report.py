@@ -6540,7 +6540,9 @@ def import_master_data_file():
         lines.append(f"\nCopy of the Excel file before the import:\n"
                      f"{summary['backup']}")
     open_control = control_entry.get().strip()
-    if report_state["editing"] and open_control in summary["updated"]:
+    if report_state["editing"] and any(
+            same_key(open_control, control)
+            for control in summary["updated"]):
         lines.append(f"\nReport {open_control} is open on the form with its "
                      "old values. Open it again before saving.")
     messagebox.showinfo("Import Master Data", "\n".join(lines), parent=window)
@@ -6623,12 +6625,14 @@ def restore_excel_from_mysql():
 
     def work():
         # A PO-linked report has its home in the Withdrawal workbook.
-        have = {row[0] for row in list_saved_reports(path)}
-        have.update(withdrawal_control_numbers(path))
+        have = {str(row[0]).strip().casefold()
+                for row in list_saved_reports(path)}
+        have.update(str(number).strip().casefold()
+                    for number in withdrawal_control_numbers(path))
         added, errors = 0, []
         for entry in db_mysql.list_reports():
             control = entry[0]
-            if control in have:
+            if str(control).strip().casefold() in have:
                 continue
             try:
                 data = db_mysql.load_report(control)

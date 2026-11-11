@@ -537,6 +537,61 @@ def same_key(value, key):
     return str(value or "").strip().casefold() == key.strip().casefold()
 
 
+def control_key(value):
+    """What two Control #s are compared by: no outer spaces, no letter case
+    ('fsr-abc-001' and 'FSR-ABC-001 ' are the same report)."""
+    return str(value or "").strip().casefold()
+
+
+class ControlKeyed(dict):
+    """A dictionary keyed by Control # that finds its entries without regard
+    to letter case or outer spaces. It keeps the spelling of the first key
+    (the one in the workbook); name() returns that spelling."""
+
+    def __init__(self, items=()):
+        super().__init__()
+        self._names = {}
+        self.update(items)
+
+    def name(self, control):
+        """The stored spelling of this Control #, or None."""
+        return self._names.get(control_key(control))
+
+    def __setitem__(self, control, value):
+        name = self._names.setdefault(control_key(control), control)
+        super().__setitem__(name, value)
+
+    def __getitem__(self, control):
+        return super().__getitem__(self._names[control_key(control)])
+
+    def __contains__(self, control):
+        return control_key(control) in self._names
+
+    def __delitem__(self, control):
+        super().__delitem__(self._names.pop(control_key(control)))
+
+    def get(self, control, default=None):
+        name = self._names.get(control_key(control))
+        return default if name is None else super().__getitem__(name)
+
+    def pop(self, control, *default):
+        name = self._names.pop(control_key(control), None)
+        if name is None:
+            if default:
+                return default[0]
+            raise KeyError(control)
+        return super().pop(name)
+
+    def setdefault(self, control, default=None):
+        if control not in self:
+            self[control] = default
+        return self[control]
+
+    def update(self, items=(), **more):
+        for control, value in dict(items, **more).items():
+            self[control] = value
+
+
 # ---------- control number ---------------------------------
 
 def set_control_initials(initials):
@@ -1240,9 +1295,9 @@ def delete_reports_from_excel(path, control_numbers):
     wanted = {str(c).strip() for c in control_numbers}
     removed = 0
     if "Reports" in wb.sheetnames:
-        present = {cell_text(row[0]) for row in wb["Reports"].iter_rows(
+        present = {control_key(row[0]) for row in wb["Reports"].iter_rows(
             min_row=2, max_col=1, values_only=True)}
-        removed = len(wanted & present)
+        removed = len({control_key(c) for c in wanted} & present)
     for name, (table_name, headers) in EXCEL_SHEETS.items():
         if name not in wb.sheetnames:
             continue
