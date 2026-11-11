@@ -29,6 +29,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import tempfile
 import tkinter
 import math
@@ -53,10 +54,10 @@ MAX_UNKNOWN = 500                  # remembered wrong initials (memory only)
 MIN_PASSWORD = 12
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
-# Accounts created on first start come from data/json/private/auth_seed.json
-# (not in source control; only password HASHES are kept there). Without the
-# file no account is created here; the owner creates and approves accounts
-# from Manage Users.
+# The owner account created on first start comes from
+# data/json/private/auth_seed.json (not in source control; only the password
+# HASH is kept there; only the Owner installer contains it). Without the
+# file no account is created here.
 def _load_seed():
     path = (Path(__file__).resolve().parent / "data" / "json" / "private"
             / "auth_seed.json")
@@ -64,11 +65,26 @@ def _load_seed():
         with open(path, "r", encoding="utf-8") as file:
             seed = json.load(file)
     except (OSError, ValueError):
-        return {}, []
-    return seed.get("owner") or {}, seed.get("built_in_users") or []
+        return {}
+    owner = seed.get("owner") if isinstance(seed, dict) else None
+    return owner if isinstance(owner, dict) else {}
 
 
-OWNER, BUILT_IN_USERS = _load_seed()
+OWNER = _load_seed()
+
+# An account that earlier installers created on every PC and that is no
+# longer used. It is removed from an existing users.json when the file is
+# brought up to date (after a backup). It is recognised by the SHA-256 of
+# its email address, so no name or address is written here.
+RETIRED_ACCOUNTS = frozenset({
+    "66f5cc454138521665796ff1f1a3cf5c4799e3f28b1408fedb4477a30d0f0415",
+})
+
+
+def is_retired(user):
+    email = str(user.get("email") or "").strip().lower()
+    return hashlib.sha256(email.encode("utf-8")).hexdigest() \
+        in RETIRED_ACCOUNTS
 
 ADMIN_ROLES = ("owner", "admin")       # may approve and manage accounts
 ROLE_TEXT = {"owner": "Owner", "admin": "Administrator", "user": "User"}
@@ -253,9 +269,11 @@ class UserStore:
                 "This PC was already set up, so the program will not offer "
                 "the first set-up again. Restore users.json from a backup "
                 "before signing in.")
+        self.backup_path = None         # set when an old file was updated
+        self.removed_accounts = []      # retired accounts taken out by it
+        self._update_old_file()
         if use_seed:
             self.ensure_owner()
-            self.ensure_built_in_users()
         if self._has_administrator(self._read()):
             self._mark_set_up()
 
@@ -347,6 +365,27 @@ class UserStore:
             if os.path.exists(temp):
                 os.remove(temp)
 
+    # -- a file of an earlier program --
+    def _update_old_file(self):
+        """Bring a users.json without "version" up to date, once: copy it
+        to users.before_update_<time>.json, take out the retired built-in
+        account, save it in the current format. Reports are not touched -
+        they name their author by initials in the Control # only."""
+        if not self.path.exists():
+            return
+        document = self._load()
+        if document.get("version", 1) >= FILE_VERSION:
+            return
+        stamp = self._now().strftime("%Y%m%d_%H%M%S")
+        backup = self.path.with_name(
+            f"{self.path.stem}.before_update_{stamp}{self.path.suffix}")
+        shutil.copy2(self.path, backup)
+        users = document["users"]
+        kept = [user for user in users if not is_retired(user)]
+        self._write(kept)
+        self.backup_path = backup
+        self.removed_accounts = [u for u in users if is_retired(u)]
+
     # -- owner --
     def ensure_owner(self):
         users = self._read()
@@ -369,22 +408,6 @@ class UserStore:
             "created": datetime.now().strftime("%d-%b-%Y %H:%M"),
         })
         self._write(users)
-
-    def ensure_built_in_users(self):
-        users = self._read()
-        emails = {u.get("email", "").lower() for u in users}
-        initials = {u.get("initials", "").strip().upper() for u in users}
-        added = False
-        for built_in in BUILT_IN_USERS:
-            if (built_in["email"].lower() in emails
-                    or built_in["initials"].upper() in initials):
-                continue
-            users.append(dict(
-                built_in, role="user", status="approved",
-                created=datetime.now().strftime("%d-%b-%Y %H:%M")))
-            added = True
-        if added:
-            self._write(users)
 
     # -- lookups --
     def list_users(self):

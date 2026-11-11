@@ -10,7 +10,6 @@ import app_auth
 @pytest.fixture
 def isolated_auth(monkeypatch):
     monkeypatch.setattr(app_auth, "OWNER", {})
-    monkeypatch.setattr(app_auth, "BUILT_IN_USERS", [])
 
 
 @pytest.mark.parametrize(
@@ -42,7 +41,6 @@ def test_missing_account_file_keeps_first_run_owner_setup(
         "initials": "TO", "email": "owner@example.invalid",
         "salt": salt, "hash": digest,
     })
-    monkeypatch.setattr(app_auth, "BUILT_IN_USERS", [])
     path = tmp_path / "users.json"
 
     store = app_auth.UserStore(path)
@@ -103,7 +101,6 @@ def test_existing_short_password_remains_valid_for_signin(
         "initials": "TO", "email": "owner@example.invalid",
         "salt": salt, "hash": digest,
     })
-    monkeypatch.setattr(app_auth, "BUILT_IN_USERS", [])
     store = app_auth.UserStore(tmp_path / "users.json")
 
     assert store.sign_in("TO", "short1")["role"] == "owner"

@@ -46,7 +46,7 @@ or created at runtime.
 | `master_list.json` | `data/json/master_list.json` | Seven editable master-list categories; tracked application data. | `field_survey_report.py`, Settings page. |
 | `db_config.example.json` | `data/json/db_config.example.json` | Safe example of optional MySQL configuration (no live account values). | `db_mysql.py` setup guidance. |
 | `db_config.json` | `data/json/private/db_config.json` | Local optional-MySQL credentials; ignored by Git. | `db_mysql.py`; Windows application configuration. |
-| `auth_seed.json` | `data/json/private/auth_seed.json` | Local owner/built-in account seed; ignored and not exposed as tracked data. | `app_auth.py`; installer build input. |
+| `auth_seed.json` | `data/json/private/auth_seed.json` | Owner account seed (names and password hash only); ignored by git, bundled into the Owner installer only. Rewritten by `python app_auth.py make-seed`. | `app_auth.py`; Owner installer build input. |
 | `users.json` | `data/json/private/users.json` | Local account records and password hashes; ignored by Git. | `app_auth.py` via `field_survey_report.py`. |
 | `settings.json` | `data/json/private/settings.json` | Per-PC settings and paths; ignored by Git. | `field_survey_report.py`. |
 | `installer_defaults/db_config.json` | `data/json/private/installer_defaults/db_config.json` | Private installer configuration input; ignored and not included in public example data. | Installer build scripts/specification. |
