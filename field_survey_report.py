@@ -190,6 +190,13 @@ if db_mysql is not None:
     db_mysql.CONFIG_FILE = PRIVATE_JSON_DIR / "db_config.json"
     if not MYSQL_ALLOWED:
         db_mysql.is_enabled = lambda: False       # Demo Mode / User edition
+    else:
+        # A password still written in db_config.json goes to the Windows
+        # Credential Manager (the file keeps it if that is not possible).
+        try:
+            db_mysql.move_password_to_store()
+        except OSError:
+            pass
 
 # Names of the lists inside master_list.json.
 LOCATION_LIST_KEY = "location_list"

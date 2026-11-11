@@ -6,14 +6,24 @@ Setup:  pip install mysql-connector-python
         data/json/private/db_config.json and fill in your login.
 If db_config.json is missing (or "enabled" is false) the program works
 exactly as before and just uses Excel.
+
+The MySQL password is kept in the Windows Credential Manager, not in
+db_config.json: the file then has "password": "" and
+"password_store": "credential-manager". A password found in the file is
+moved there at start (move_password_to_store), and the file is blanked only
+after the password was read back from the Credential Manager. Where there
+is no Credential Manager the password stays in the file as before.
 """
 
+import hashlib
 import json
+import logging
+import os
 from datetime import datetime
-from pathlib import Path
 
 from fsr_storage import control_sort_key, split_quantity_unit
 import fsr_paths
+import fsr_secrets
 
 CONFIG_FILE = fsr_paths.JSON_DIR / "private" / "db_config.json"
 DATE_FORMAT = "%d-%b-%Y"
@@ -46,6 +56,40 @@ MASTER_KEYS = ["consignee_list", "supplier_list", "broker_list", "hauler_list",
 
 ACCESS_DENIED = 1142                # the login may not run this command
 
+log = logging.getLogger("fsr")
+PASSWORD_STORE = "credential-manager"   # value of "password_store"
+SECRET_STORE = None                 # None = the store of this PC (tests set one)
+
+
+def _secret_store():
+    return SECRET_STORE or fsr_secrets.default_store(CONFIG_FILE.parent)
+
+
+def _secret_name():
+    """One entry per db_config.json, so Demo Mode, a test folder and the
+    real program never share a password."""
+    return "mysql-" + hashlib.sha256(
+        str(CONFIG_FILE.resolve()).casefold().encode("utf-8")
+    ).hexdigest()[:16]
+
+
+def _with_password(config):
+    """`config` as the program uses it: with the password taken from the
+    protected store when the file says it is kept there."""
+    if config.get("password_store") != PASSWORD_STORE:
+        return config
+    config = {k: v for k, v in config.items() if k != "password_store"}
+    try:
+        password = _secret_store().get(_secret_name())
+    except fsr_secrets.SecretStoreError as error:
+        log.warning("The MySQL password could not be read: %s", error)
+        password = None
+    if password is None:
+        log.warning("The MySQL password is not in the Credential Manager of "
+                    "this Windows login. Type it again in MySQL Settings.")
+    config["password"] = password or ""
+    return config
+
 
 def load_config():
     """The settings dict, or None when MySQL is not set up / turned off."""
@@ -56,7 +100,7 @@ def load_config():
         return None
     if not isinstance(config, dict) or not config.get("enabled", True):
         return None
-    return config if config.get("user") else None
+    return _with_password(config) if config.get("user") else None
 
 
 def is_enabled():
@@ -74,13 +118,61 @@ def read_raw_config():
             defaults.update(data)
     except (OSError, ValueError):
         pass
-    return defaults
+    return _with_password(defaults)
+
+
+def _protect_password(password):
+    """Put the password into the protected store. True only when it is
+    there AND was read back unchanged; otherwise it must stay in the file."""
+    store = _secret_store()
+    if not getattr(store, "protected", False):
+        return False
+    try:
+        store.set(_secret_name(), password)
+        return store.get(_secret_name()) == password
+    except fsr_secrets.SecretStoreError as error:
+        log.warning("The MySQL password stays in db_config.json: the "
+                    "Credential Manager could not be used (%s)", error)
+        return False
 
 
 def write_config(config):
+    """Save the settings. `config["password"]` is the real password; it goes
+    to the Credential Manager when there is one, else into the file."""
+    data = {k: v for k, v in config.items() if k != "password_store"}
+    password = str(data.get("password") or "")
+    if password and _protect_password(password):
+        data["password"] = ""
+        data["password_store"] = PASSWORD_STORE
     CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(CONFIG_FILE, "w", encoding="utf-8") as file:
-        json.dump(config, file, indent=4)
+    temp = CONFIG_FILE.with_name(CONFIG_FILE.name + ".tmp")
+    try:
+        with open(temp, "w", encoding="utf-8") as file:
+            json.dump(data, file, indent=4)
+        os.replace(temp, CONFIG_FILE)
+    finally:
+        if temp.exists():
+            temp.unlink()
+
+
+def move_password_to_store():
+    """Run at start: a password still written in db_config.json is moved to
+    the Credential Manager. Returns "moved", "kept" (no Credential Manager,
+    or it failed - the file is unchanged) or "nothing" (no password in the
+    file)."""
+    try:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as file:
+            data = json.load(file)
+    except (OSError, ValueError):
+        return "nothing"
+    if not isinstance(data, dict) or not str(data.get("password") or ""):
+        return "nothing"
+    if data.get("password_store") == PASSWORD_STORE:
+        return "nothing"
+    if not _protect_password(str(data["password"])):
+        return "kept"
+    write_config(data)          # read back above: now blank it in the file
+    return "moved"
 
 
 def connect(config=None):
@@ -111,8 +203,10 @@ def explain_error(error):
     user = config.get("user", "?")
     if code == 1045:
         return (f"MySQL refused the login for user '{user}'.\n"
-                "Check that the user name and password in db_config.json are "
-                "exactly the ones in MySQL (the user is spelled f-s-r_app).\n"
+                "Check that the user name and password in MySQL Settings are "
+                "exactly the ones in MySQL (the user is spelled f-s-r_app). "
+                "On a new PC or Windows login the password must be typed "
+                "again there.\n"
                 f"Original message: {error}")
     if code in (2003, 2002, 2005):
         return ("The program cannot reach the MySQL server.\n"
