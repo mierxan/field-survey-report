@@ -130,6 +130,8 @@ if /i "%ED%"=="User" set EXTRA=--exclude-module mysql --exclude-module mysql.con
   --collect-submodules warehouse_ui ^
   --hidden-import matplotlib.backends.backend_tkagg ^
   --hidden-import win32com.client ^
+  --hidden-import win32cred ^
+  --hidden-import win32timezone ^
   --add-data "%CD%\data\excel\First_Page.xlsx;data\excel" ^
   --add-data "%CD%\data\excel\Cargo_Details.xlsx;data\excel" ^
   --add-data "%CD%\data\excel\Containerized_Loading_Form.xlsx;data\excel" ^

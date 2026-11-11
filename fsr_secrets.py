@@ -96,6 +96,11 @@ class WindowsCredentialStore:
         try:
             import pywintypes
             import win32cred
+            # Reading an entry returns its "last written" time, which
+            # pywin32 builds with win32timezone - loaded only at that
+            # moment. Imported here so the installer always contains it
+            # and a PC without it falls back instead of failing later.
+            import win32timezone  # noqa: F401
         except ImportError as error:
             raise SecretStoreError(
                 "The Windows Credential Manager is not available "

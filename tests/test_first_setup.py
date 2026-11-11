@@ -212,3 +212,29 @@ def test_installer_script_keeps_the_seed_out_of_the_user_edition():
     assert len(seed_lines) == 1
     assert seed_lines[0].lstrip().startswith('if /i "%ED%"=="Owner"')
     assert 'fsr_build_check.py "dist\\User\\FieldSurveyReport"' in script
+
+
+def test_credential_manager_reads_back_what_it_wrote():
+    """The real Windows store, with a throwaway entry: reading an existing
+    entry needs win32timezone, which an installer once left out."""
+    try:
+        store = fsr_secrets.WindowsCredentialStore()
+    except fsr_secrets.SecretStoreError:
+        pytest.skip("no Windows Credential Manager here")
+    name = "selftest-delete-me"
+    try:
+        store.set(name, "v\u00e4lue 1")
+        assert store.get(name) == "v\u00e4lue 1"
+        store.set(name, "value 2")
+        assert store.get(name) == "value 2"
+    finally:
+        store.delete(name)
+    assert store.get(name) is None
+
+
+def test_installer_script_bundles_what_the_credential_manager_needs():
+    script = (ROOT / "build_installer.bat").read_text(encoding="utf-8")
+    for module in ("win32cred", "win32timezone"):
+        assert f"--hidden-import {module} " in script
+    source = (ROOT / "fsr_secrets.py").read_text(encoding="utf-8")
+    assert "import win32timezone" in source

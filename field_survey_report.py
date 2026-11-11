@@ -193,10 +193,14 @@ if db_mysql is not None:
     else:
         # A password still written in db_config.json goes to the Windows
         # Credential Manager (the file keeps it if that is not possible).
+        # Whatever goes wrong here must never stop the program from
+        # starting: the password then simply stays where it is.
         try:
             db_mysql.move_password_to_store()
-        except OSError:
-            pass
+        except Exception:
+            logging.getLogger("fsr").exception(
+                "The MySQL password could not be moved to the Credential "
+                "Manager")
 
 # Names of the lists inside master_list.json.
 LOCATION_LIST_KEY = "location_list"
