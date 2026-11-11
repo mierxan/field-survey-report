@@ -373,7 +373,8 @@ if app_auth is None:
 try:
     # Only the Owner edition is installed with the owner's account.
     user_store = app_auth.UserStore(
-        USERS_FILE, use_seed=fsr_edition.IS_OWNER_EDITION)
+        USERS_FILE, use_seed=fsr_edition.IS_OWNER_EDITION,
+        site_pc=not fsr_edition.IS_OWNER_EDITION)
 except app_auth.UserDataError as error:
     messagebox.showerror(
         "Field Survey Report",
@@ -1449,7 +1450,8 @@ def rebuild_account_menu():
                 on_change=rebuild_account_menu))
         account_menu.add_command(
             label="Recovery Code...",
-            command=lambda: app_auth.show_recovery_code(window, user_store))
+            command=lambda: app_auth.open_recovery_code(
+                window, user_store, current_user))
     if IS_OWNER_EDITION:
         account_menu.add_command(
             label="MySQL Settings...", command=lambda: open_mysql_settings())

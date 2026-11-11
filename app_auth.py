@@ -25,6 +25,12 @@ Sign in / sign up for the Field Survey Report.
   signed), who then restores that copy or accepts the changed file. On a
   moved PC or a restored Windows profile the recovery code makes the file
   trusted again. See docs/ACCOUNT_FILE_SECURITY.md for the limits.
+* The Owner account that earlier installers put on site PCs keeps working
+  there, but its first sign in on a site PC only allows one thing: setting
+  a new password. The old hash is then removed from users.json, from the
+  last good copy and from the users.before_update backups on that PC.
+* Nobody but the Owner can change the Owner account: a site Administrator
+  cannot disable, delete or reset it, and no account can change a role.
 * A site PC (User edition) is installed without any account. The first
   account created there becomes the Administrator ("admin") of that PC; a
   record kept outside users.json (fsr_secrets.py) remembers that the PC is
@@ -122,6 +128,11 @@ class AuthError(Exception):
 
 class UserDataError(AuthError):
     """The account file could not be safely read."""
+
+
+class MustChangePassword(AuthError):
+    """The password was right, but this account may only set a new one
+    (replace_old_password) before anything else opens."""
 
 
 # ---------------------------------------------------------------------
@@ -350,8 +361,12 @@ def suggest_initials(first, middle, last):
 # ---------------------------------------------------------------------
 
 class UserStore:
-    def __init__(self, path, secrets=None, use_seed=True, clock=None):
+    def __init__(self, path, secrets=None, use_seed=True, clock=None,
+                 site_pc=False):
         self.path = Path(path)
+        # A site PC (User edition): an Owner account still carrying the
+        # hash of an earlier installer must set a new password first.
+        self.site_pc = site_pc
         self.last_good_path = self.path.with_name(
             f"{self.path.stem}.lastgood{self.path.suffix}")
         self._now = clock or datetime.now
@@ -891,6 +906,7 @@ class UserStore:
         _clear_failures(record)
         status = user.get("status")
         problem = None
+        must_change = False
         if status == "pending":
             problem = ("Your account is waiting for the Owner's approval.\n"
                        "Please try again after it is approved.")
@@ -899,6 +915,8 @@ class UserStore:
         elif status != "approved":
             problem = ("This account is disabled. Please contact the "
                        "Administrator.")
+        elif self._must_change(user):
+            must_change = True
         elif user_iterations(user) < ITERATIONS:
             # proven correct just now: re-hash with the current count
             user.update(new_password_fields(password))
@@ -907,7 +925,75 @@ class UserStore:
         self._write_quietly(users, now)
         if problem:
             raise AuthError(problem)
+        if must_change:
+            raise MustChangePassword(
+                "This is the Owner account of an earlier installation. "
+                "Set a new password now; nothing else opens before that.")
         return dict(user)
+
+    def _must_change(self, user):
+        """The Owner account on a site PC, still with the hash an earlier
+        installer shipped (no stored iteration count)."""
+        return (self.site_pc and user.get("role") == "owner"
+                and "iterations" not in user)
+
+    def replace_old_password(self, initials, old, new, confirm):
+        """The only thing such an account may do: prove the old password
+        (wrong tries count towards the lock like any sign in) and set a
+        new one. The old hash is then gone from users.json, from the last
+        good copy and from the backups in this folder."""
+        try:
+            self.sign_in(initials, old)
+        except MustChangePassword:
+            pass
+        else:
+            raise AuthError("This account does not need a new password.")
+        if len(new) < MIN_PASSWORD:
+            raise AuthError(
+                f"The password needs at least {MIN_PASSWORD} characters.")
+        if new != confirm:
+            raise AuthError("The two new passwords do not match.")
+        if new == old:
+            raise AuthError("The new password must be different from the "
+                            "old one.")
+        user = self.find_by_initials(initials)
+        old_hash, old_salt = user.get("hash"), user.get("salt")
+        self._set_password(user["email"], new)
+        self._blank_in_backups(old_hash, old_salt)
+        return self.find_by_initials(initials)
+
+    def _blank_in_backups(self, old_hash, old_salt):
+        """Take one old hash (and its salt) out of every backup of the
+        account file in this folder. The other accounts in those files
+        stay as they are. Returns the files that were changed."""
+        if not old_hash:
+            return []
+        changed = []
+        for kind in ("before_update", "rejected"):
+            pattern = f"{self.path.stem}.{kind}_*{self.path.suffix}"
+            for backup in sorted(self.path.parent.glob(pattern)):
+                try:
+                    document = json.loads(backup.read_text(encoding="utf-8"))
+                    users = document["users"]
+                    hit = False
+                    for account in users:
+                        if account.get("hash") == old_hash:
+                            account["hash"] = account["salt"] = ""
+                            hit = True
+                        elif account.get("salt") == old_salt and old_salt:
+                            account["salt"] = ""
+                            hit = True
+                    if hit:
+                        temp = backup.with_name(backup.name + ".tmp")
+                        temp.write_text(json.dumps(
+                            document, indent=2, ensure_ascii=False),
+                            encoding="utf-8")
+                        os.replace(temp, backup)
+                        changed.append(backup)
+                except (OSError, ValueError, KeyError, TypeError,
+                        AttributeError):
+                    continue
+        return changed
 
     def _write_quietly(self, users, now):
         try:
@@ -958,6 +1044,15 @@ class UserStore:
         self._write(users)
 
     def set_password(self, email, password):
+        """Reset by an Administrator (Manage Users). The Owner's password
+        can only be changed by the Owner, with the current password."""
+        if (self.find(email) or {}).get("role") == "owner":
+            raise AuthError(
+                "The Owner account cannot be changed. Only the Owner can "
+                "change its password (Account > Change Password).")
+        self._set_password(email, password)
+
+    def _set_password(self, email, password):
         if len(password) < MIN_PASSWORD:
             raise AuthError(
                 f"The password needs at least {MIN_PASSWORD} characters.")
@@ -975,7 +1070,20 @@ class UserStore:
             raise AuthError("The current password is not correct.")
         if new != confirm:
             raise AuthError("The two new passwords do not match.")
-        self.set_password(email, new)
+        self._set_password(email, new)
+
+    def recovery_code_for(self, user, password):
+        """The recovery code, for an Administrator who types the password
+        again. Wrong passwords count towards the lock of that account."""
+        if not is_admin(user):
+            raise AuthError("Only an Administrator can see the recovery "
+                            "code.")
+        checked = self.sign_in(user.get("initials", ""), password)
+        if checked.get("email", "").lower() != user.get("email", "").lower() \
+                or not is_admin(checked) or self.problem is not None:
+            raise AuthError("Only an Administrator can see the recovery "
+                            "code.")
+        return self._code()
 
 
 # ---------------------------------------------------------------------
@@ -1051,6 +1159,45 @@ def run_login(parent, store, icon=None, last_initials="", on_icon=None):
         tb.Checkbutton(content, text="Show password", variable=var,
                        command=toggle).pack(anchor="w", pady=(8, 0))
 
+    def finish(user):
+        """Signed in. An Administrator who has not seen the recovery code
+        of this PC yet is shown it now - nobody else ever is."""
+        if is_admin(user) and not store.code_shown and store.recovery_code():
+            show_recovery_code(dialog, store)
+        result["user"] = user
+        dialog.destroy()
+
+    # ---- an old Owner account on a site PC: new password, nothing else ----
+    def new_password_page(initials, old_password):
+        clear()
+        fit(560)
+        heading("Set a New Password",
+                "This is the Owner account of an earlier installation.\n"
+                "Before anything else opens it needs a new password. The "
+                "old password stops working on this PC.")
+        new = field("New password", show="*")
+        confirm = field("Confirm new password", show="*")
+        show_password_toggle(new, confirm)
+
+        def submit(event=None):
+            try:
+                store.replace_old_password(
+                    initials, old_password, new.get(), confirm.get())
+                user = store.sign_in(initials, new.get())
+            except MustChangePassword:
+                return
+            except AuthError as error:
+                show_message(str(error))
+                return
+            finish(user)
+
+        tb.Button(content, text="Set Password and Sign In",
+                  bootstyle="info", command=submit).pack(
+            fill="x", pady=(16, 6))
+        message_label()
+        dialog.bind("<Return>", submit)
+        new.focus_set()
+
     # ---- sign in ----
     def sign_in_page(notice=""):
         blocked = store.problem is not None
@@ -1084,6 +1231,9 @@ def run_login(parent, store, icon=None, last_initials="", on_icon=None):
         def submit(event=None):
             try:
                 user = store.sign_in(initials.get(), password.get())
+            except MustChangePassword:
+                new_password_page(initials.get(), password.get())
+                return
             except AuthError as error:
                 if (store.problem is not None) != blocked:
                     sign_in_page()  # the file was changed just now
@@ -1095,11 +1245,7 @@ def run_login(parent, store, icon=None, last_initials="", on_icon=None):
             if store.problem is not None:
                 review_page()       # an Administrator of the good copy
                 return
-            if is_admin(user) and not store.code_shown \
-                    and store.recovery_code():
-                show_recovery_code(dialog, store)
-            result["user"] = user
-            dialog.destroy()
+            finish(user)
 
         tb.Button(content, text="Sign In", bootstyle="info",
                   command=submit).pack(fill="x", pady=(16, 6))
@@ -1382,6 +1528,56 @@ def show_recovery_code(parent, store):
               command=done).pack(side="bottom", fill="x", pady=(14, 0))
     dialog.grab_set()
     dialog.wait_window()
+
+
+def open_recovery_code(parent, store, user):
+    """Account > Recovery Code: only for an Administrator, and only after
+    the password was typed again."""
+    if not is_admin(user):
+        messagebox.showinfo(
+            "Recovery Code",
+            "Only an Administrator can see the recovery code.",
+            parent=parent)
+        return
+    result = {"code": None}
+    dialog = tb.Toplevel(parent)
+    dialog.title("Recovery Code")
+    dialog.transient(parent)
+    dialog.resizable(False, False)
+    _center(dialog, 400, 250)
+    body = tb.Frame(dialog, padding=20)
+    body.pack(fill="both", expand=True)
+    tb.Label(body, wraplength=350, justify="left",
+             text="Type your password again to see the recovery code of "
+                  "this PC.").pack(anchor="w")
+    tb.Label(body, text="Password").pack(anchor="w", pady=(10, 0))
+    password = tb.Entry(body, show="*")
+    password.pack(fill="x")
+    note = tb.Label(body, text="", bootstyle="danger", wraplength=350,
+                    justify="left")
+    note.pack(anchor="w", pady=(6, 0))
+
+    def ok(event=None):
+        try:
+            result["code"] = store.recovery_code_for(user, password.get())
+        except AuthError as error:
+            note.configure(text=str(error))
+            password.delete(0, "end")
+            return
+        dialog.destroy()
+
+    row = tb.Frame(body)
+    row.pack(fill="x", pady=(8, 0))
+    tb.Button(row, text="Show", bootstyle="info", command=ok,
+              width=10).pack(side="right")
+    tb.Button(row, text="Cancel", bootstyle="secondary-outline",
+              command=dialog.destroy, width=10).pack(side="right", padx=8)
+    dialog.bind("<Return>", ok)
+    password.focus_set()
+    dialog.grab_set()
+    dialog.wait_window()
+    if result["code"]:
+        show_recovery_code(parent, store)
 
 
 def open_manage_users(parent, store, owner, on_change=None):

@@ -342,3 +342,156 @@ def test_missing_file_without_a_copy_starts_again_with_the_code(
     assert "Accept the changed file" not in shown["review"]
     assert "Set Up This PC" in shown["setup"]
     assert user["initials"] == "NA" and user["role"] == "admin"
+
+
+# ---------- the Owner account of an earlier install on a site PC ----------
+
+def old_site_pc(tmp_path):
+    def old(initials, email, password, role):
+        salt, digest = app_auth.hash_password(password)
+        return {"first_name": initials, "middle_name": "",
+                "last_name": "Person", "initials": initials, "email": email,
+                "salt": salt, "hash": digest, "role": role,
+                "status": "approved"}
+
+    path = tmp_path / "users.json"
+    path.write_text(json.dumps({"users": [
+        old("OW", "owner@example.invalid", "old-owner-password", "owner"),
+        old("SU", "site@example.invalid", USER_PASS, "user")]}),
+        encoding="utf-8")
+    secrets = fsr_secrets.MemorySecretStore()
+    return lambda: app_auth.UserStore(path, secrets=secrets, use_seed=False,
+                                      site_pc=True), path
+
+
+def test_normal_user_is_never_shown_the_recovery_code(root, tmp_path,
+                                                      monkeypatch):
+    """An updated site PC, opened first by a normal user."""
+    open_store, _ = old_site_pc(tmp_path)
+    store = open_store()
+
+    def step(window):
+        assert "Recovery code of this PC" not in texts(window)
+        fill(window, "SU", USER_PASS)
+        click(window, "Sign In")
+
+    user, _ = run(root, store, monkeypatch, [step])     # one wait only
+    assert user["role"] == "user"
+    assert not store.code_shown
+
+
+def test_old_owner_must_set_a_new_password_before_anything_opens(
+        root, tmp_path, monkeypatch):
+    open_store, path = old_site_pc(tmp_path)
+    store = open_store()
+    old_hash = json.loads(path.read_text(encoding="utf-8"))["users"][0]["hash"]
+    shown = {"codes": 0}
+    state = {"stage": 0}
+
+    def step(window):
+        if "Recovery code of this PC" in texts(window):
+            shown["codes"] += 1
+            click(window, "I have written it down")
+            return
+        state["stage"] += 1
+        if state["stage"] == 1:
+            fill(window, "OW", "old-owner-password")
+            click(window, "Sign In")
+            shown["page"] = texts(window)
+            shown["buttons"] = sorted(
+                str(w.cget("text")) for w in widgets(window)
+                if w.winfo_class() == "TButton")
+            fill(window, "short", "short")
+            click(window, "Set Password and Sign In")
+            shown["short"] = texts(window)
+            fill(window, "old-owner-password", "old-owner-password")
+            click(window, "Set Password and Sign In")
+            shown["same"] = texts(window)
+            assert window.winfo_exists()        # still on that page
+            fill(window, "new-owner-password-2", "new-owner-password-2")
+            click(window, "Set Password and Sign In")
+
+    # two waits: the sign-in window, then the code shown to the Owner
+    user, _ = run(root, store, monkeypatch, [step, step])
+
+    assert "Set a New Password" in shown["page"]
+    assert "Before anything else opens" in shown["page"]
+    assert shown["buttons"] == ["Set Password and Sign In"]   # nothing else
+    assert "at least 12" in shown["short"]
+    assert "must be different" in shown["same"]
+    assert user["role"] == "owner" and user["iterations"] == 600_000
+    assert shown["codes"] == 1                  # shown to the Owner, once
+    for file in path.parent.glob("users*.json"):
+        assert old_hash not in file.read_text(encoding="utf-8")
+
+
+def test_closing_the_new_password_page_signs_nobody_in(root, tmp_path,
+                                                       monkeypatch):
+    open_store, path = old_site_pc(tmp_path)
+    store = open_store()
+
+    def step(window):
+        fill(window, "OW", "old-owner-password")
+        click(window, "Sign In")
+        assert "Set a New Password" in texts(window)
+        close(window)
+
+    user, _ = run(root, store, monkeypatch, [step])
+    assert user is None
+    with pytest.raises(app_auth.MustChangePassword):
+        store.sign_in("OW", "old-owner-password")
+
+
+# ---------- Account > Recovery Code ----------
+
+def test_recovery_code_menu_asks_for_the_password_again(root, tmp_path,
+                                                        monkeypatch):
+    open_store, _, code = set_up_pc(tmp_path)
+    store = open_store()
+    admin = store.find("admin@example.invalid")
+    seen = []
+    script = []
+
+    def wait_window(self, window=None):
+        target = window or self
+        while target.winfo_exists():
+            assert script, "still open:\n" + texts(target)
+            script.pop(0)(target)
+            root.update()
+
+    monkeypatch.setattr(tkinter.Misc, "wait_window", wait_window)
+    monkeypatch.setattr(tkinter.Misc, "grab_set", lambda self: None)
+    infos = []
+    monkeypatch.setattr(messagebox, "showinfo",
+                        lambda *a, **k: infos.append(a))
+
+    def wrong_then_cancel(window):
+        seen.append(texts(window))
+        fill(window, "wrong-password")
+        click(window, "Show")
+        seen.append(texts(window))
+        assert window.winfo_exists()
+        click(window, "Cancel")
+
+    script[:] = [wrong_then_cancel]
+    app_auth.open_recovery_code(root, store, admin)
+    assert "Type your password again" in seen[0]
+    assert code not in "\n".join(seen)
+    assert "Incorrect initials or password" in seen[1]
+
+    def right(window):
+        fill(window, ADMIN_PASS)
+        click(window, "Show")
+
+    def read_code(window):
+        seen.append(entries(window)[0].get())
+        click(window, "I have written it down")
+
+    script[:] = [right, read_code]
+    app_auth.open_recovery_code(root, store, admin)
+    assert seen[-1] == code and not script
+
+    # a normal user gets no password box at all
+    app_auth.open_recovery_code(root, store,
+                                store.find("user@example.invalid"))
+    assert len(infos) == 1 and "Only an Administrator" in infos[0][1]
