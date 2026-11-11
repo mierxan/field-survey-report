@@ -9,12 +9,16 @@ something to compare with.
 
 | What | Time |
 |---|---|
-| Workbook write alone (as before Phase 2) | 108 ms |
-| **One save with the save record (Phase 2)** | **261 ms** |
+| Workbook write alone (as before Phase 2) | 107 ms |
+| One save with the save record, first version | 261 ms |
+| **One save with the save record, exact match (Phase 2 as it stands)** | **202 ms** |
 
-The difference is two extra reads of the workbook (the report's Last Saved
-time before and after the write) and the small record file. Proposal 4.1 in
-[DATA_SAFETY.md](DATA_SAFETY.md) would remove the two reads.
+Median of nine saves each (range 190 to 210 ms for the last line). The
+first version read the workbook twice more per save; the exact match
+(section 4.1 of [DATA_SAFETY.md](DATA_SAFETY.md)) removed both reads. The
+remaining 95 ms over the plain workbook write is the record file, which is
+written once per step (about five times per save), plus the incident and
+item-form files. **202 ms is the starting figure for Phase 3.**
 
 ## Growth with the number of reports (audit, synthetic workbook)
 
@@ -34,5 +38,5 @@ per report and re-reads the workbook after each one.
 
 ## Test suite
 
-687 tests: 570 without the program window in about 4 min, 117 with it in
+695 tests: 578 without the program window in about 4 min, 117 with it in
 2 to 3 min.

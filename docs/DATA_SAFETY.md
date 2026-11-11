@@ -102,18 +102,24 @@ the workbook.
 
 ### Limits
 
-* If the PC stops in the instant between the workbook being written and
-  that being noted, the program recognises its own write by the time in
-  "Last Saved". A different save of the same report within two minutes of
-  that instant would be mistaken for it.
-* A report that was removed from the workbook after an unfinished save is
-  not brought back, except when the workbook write itself had not been
-  noted yet - then the save is completed. (The program has no "delete
-  report" function outside Demo Mode.)
+* How the program knows whether the workbook already holds a save: every
+  save chooses its "Last Saved" time before it writes (to the millisecond)
+  and the workbook write uses exactly that time. The workbook holding that
+  time means it holds that save; an earlier time means the save was never
+  written; a later time means the report was saved again since. Two saves of
+  the same report seconds apart are told apart exactly.
+* That rule compares times of this PC's clock. If the clock is set back
+  between two saves of the same report, a newer save can look older.
+* A brand-new report (never saved before) whose save stopped before the
+  workbook was written is always written by the repair. If its number has
+  meanwhile been given to another report, it gets the next free number.
+* A report that was removed from the workbook is not brought back by an
+  unfinished save. (The program has no "delete report" function outside
+  Demo Mode.)
 * The official report forms (First Page, Cargo Details) are not part of the
   note; use Print / PDF to make them again.
-* Each save now reads the workbook two more times and writes the small note
-  file: about 0.15 s more per save on today's workbook.
+* Each save writes the small note file several times (once per step):
+  about 0.1 s more per save on today's workbook.
 
 ## 3. Control # and letter case
 
@@ -126,34 +132,12 @@ Nothing in existing files is renamed.
 
 ## 4. Proposed, not built
 
-### 4.1 An exact match between a save and the workbook
+### 4.1 An exact match between a save and the workbook - BUILT
 
-Today the repair recognises "the workbook already holds this save" by the
-report's Last Saved time lying within two minutes after the save started.
-A different save of the same report inside those two minutes would be
-mistaken for it.
-
-Proposal: the save chooses its Last Saved time **before** writing and puts
-it in the record; the workbook write uses exactly that time instead of
-"now". The time, to the microsecond, is then the save's unique id:
-
-* the workbook holds that exact time -> it is this save;
-* any other time -> it is not, however close.
-
-What it adds:
-
-* Workbook: **nothing**. No new column, no layout change; the Last Saved
-  cell simply holds the chosen time (it is shown to the minute as now).
-* Save record: one field, `stamp_planned`. The two-minute rule stays only
-  for records written before the change.
-* Code: `report_row_values`, `write_report_to_excel` and
-  `write_withdrawal_report` take an optional "saved at" time.
-* Side effect: the save no longer has to read the workbook before and after
-  to learn the times, which takes back most of the 0.15 s the record added.
-
-Not proposed: a "Save ID" column in the Reports sheet. It would be just as
-exact but changes the workbook layout (and, mirrored, the MySQL table) for
-no further gain.
+Built on 11 November 2026 (see "Limits" in section 2): the save's chosen
+"Last Saved" time is its mark in the workbook. Nothing was added to the
+workbook; the save record gained one field, `stamp_planned`. Records
+written before that keep the earlier two-minute rule.
 
 ### 4.2 A second backup location
 
