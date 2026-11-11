@@ -17,12 +17,21 @@ Sign in / sign up for the Field Survey Report.
   and 4th) and the 5th locks the account for 15 minutes. The lock ends by
   itself, is never longer than 15 minutes - also for the Owner - and is
   kept in users.json, so restarting the program does not clear it.
+* users.json is signed (HMAC-SHA256). The key comes from a recovery code
+  that is kept in the Windows Credential Manager of this Windows login and
+  shown to the Administrator once. A file that was changed outside the
+  program, lost its signature or went missing blocks every sign in except
+  an Administrator of the LAST GOOD COPY (users.lastgood.json, also
+  signed), who then restores that copy or accepts the changed file. On a
+  moved PC or a restored Windows profile the recovery code makes the file
+  trusted again. See docs/ACCOUNT_FILE_SECURITY.md for the limits.
 * A site PC (User edition) is installed without any account. The first
   account created there becomes the Administrator ("admin") of that PC; a
   record kept outside users.json (fsr_secrets.py) remembers that the PC is
   set up, so deleting users.json does not offer the set-up again.
 """
 
+import base64
 import hashlib
 import hmac
 import json
@@ -162,6 +171,94 @@ def user_password_matches(user, password):
 
 
 # ---------------------------------------------------------------------
+# the signature of users.json
+# ---------------------------------------------------------------------
+
+CODE_GROUPS = 6                     # recovery code: 6 groups of 4 characters
+PROBLEM_TEXT = {
+    "changed": "The account file was changed outside the program.",
+    "unsigned": "The account file was replaced by one this program did not "
+                "write.",
+    "missing": "The account file is missing, but this PC was already set "
+               "up.",
+    "no_key": "The account file cannot be checked with this Windows login "
+              "(a moved PC, a restored backup of Windows, or another "
+              "Windows user).",
+}
+REVIEW_FIRST = ("The account file must be reviewed by an Administrator "
+                "before anything can be changed.")
+
+
+def new_recovery_code():
+    text = base64.b32encode(secrets.token_bytes(15)).decode("ascii")
+    return format_recovery_code(text)
+
+
+def format_recovery_code(text):
+    """'abcd efgh' -> 'ABCD-EFGH' (what the person types may have spaces,
+    lower case or no dashes)."""
+    plain = "".join(ch for ch in str(text or "").upper() if ch.isalnum())
+    return "-".join(plain[i:i + 4] for i in range(0, len(plain), 4))
+
+
+def _signing_key(code):
+    return hashlib.sha256(
+        b"fsr-users-signature-v1|" + code.encode("utf-8")).digest()
+
+
+def sign_document(document, code):
+    """HMAC-SHA256 of everything in the file except the signature."""
+    body = {k: v for k, v in document.items() if k != "signature"}
+    payload = json.dumps(body, sort_keys=True, separators=(",", ":"),
+                         ensure_ascii=False).encode("utf-8")
+    return hmac.new(_signing_key(code), payload, hashlib.sha256).hexdigest()
+
+
+def signature_ok(document, code):
+    signature = document.get("signature")
+    return isinstance(signature, str) and bool(code) and hmac.compare_digest(
+        signature, sign_document(document, code))
+
+
+def _account_label(user):
+    return (f"{full_name(user) or '(no name)'} "
+            f"({user.get('initials', '?')}, {user.get('email', '?')})")
+
+
+def describe_changes(trusted, current):
+    """Plain sentences: how `current` differs from the trusted accounts."""
+    def by_email(users):
+        return {str(u.get("email", "")).lower(): u for u in users}
+
+    before, after = by_email(trusted), by_email(current)
+    lines = []
+    for email, user in after.items():
+        if email not in before:
+            lines.append(
+                f"NEW account: {_account_label(user)} - {role_text(user)}, "
+                f"{STATUS_TEXT.get(user.get('status'), user.get('status'))}")
+    for email, user in before.items():
+        if email not in after:
+            lines.append(f"REMOVED account: {_account_label(user)}")
+            continue
+        new, what = after[email], []
+        if new.get("role") != user.get("role"):
+            what.append(f"role {role_text(user)} -> {role_text(new)}")
+        if new.get("status") != user.get("status"):
+            what.append(f"status {user.get('status')} -> {new.get('status')}")
+        if any(new.get(k) != user.get(k)
+               for k in ("salt", "hash", "iterations")):
+            what.append("password changed")
+        if any(new.get(k) != user.get(k) for k in (
+                "first_name", "middle_name", "last_name", "initials")):
+            what.append("name or initials changed")
+        if what:
+            lines.append(f"CHANGED account: {_account_label(user)} - "
+                         + "; ".join(what))
+    return lines
+
+
+# ---------------------------------------------------------------------
 # wrong passwords: wait, then lock
 # ---------------------------------------------------------------------
 # A record is an account of users.json, or - for initials that have no
@@ -255,6 +352,8 @@ def suggest_initials(first, middle, last):
 class UserStore:
     def __init__(self, path, secrets=None, use_seed=True, clock=None):
         self.path = Path(path)
+        self.last_good_path = self.path.with_name(
+            f"{self.path.stem}.lastgood{self.path.suffix}")
         self._now = clock or datetime.now
         self._time_seen = None          # newest time written to the file
         self._unknown = {}              # failures of initials with no account
@@ -263,23 +362,40 @@ class UserStore:
         self._secret_name = "accounts-" + hashlib.sha256(
             str(self.path.resolve()).casefold().encode("utf-8")
         ).hexdigest()[:16]
-        if not self.path.exists() and self._setup_record() is not None:
-            raise UserDataError(
-                f"The account file is missing: {self.path}\n"
-                "This PC was already set up, so the program will not offer "
-                "the first set-up again. Restore users.json from a backup "
-                "before signing in.")
+        self._use_seed = use_seed
         self.backup_path = None         # set when an old file was updated
         self.removed_accounts = []      # retired accounts taken out by it
+        self.problem = None             # {"kind", "text"}: sign in blocked
+        self._reviewer = None           # who may decide about a problem
+        self._resolving = False
+        self._record = self._read_record()
+        self._open()
+
+    def _open(self):
+        """Check the file; when it can be trusted, bring it up to date."""
+        self.problem = self._find_problem()
+        if self.problem is not None:
+            return
         self._update_old_file()
-        if use_seed:
+        if self._use_seed:
             self.ensure_owner()
+        if self.path.exists() and "signature" not in self._load():
+            self._write(self._read())           # first signature
         if self._has_administrator(self._read()):
             self._mark_set_up()
 
-    # -- "this PC is set up" (kept outside users.json) --
-    def _setup_record(self):
-        text = self.secrets.get(self._secret_name)
+    # -- the record kept outside users.json (fsr_secrets) --
+    # {"setup": this PC has had an Administrator,
+    #  "code": the recovery code = the signing key of users.json,
+    #  "pending": the code was made but the signed file not yet written,
+    #  "shown": an Administrator has seen the code}
+    def _read_record(self):
+        try:
+            text = self.secrets.get(self._secret_name)
+        except fsr_secrets.SecretStoreError as error:
+            raise UserDataError(
+                "The protected storage of Windows could not be read, so "
+                f"the account file cannot be checked:\n{error}") from error
         if text is None:
             return None
         try:
@@ -288,9 +404,36 @@ class UserStore:
             record = None
         return record if isinstance(record, dict) else {}
 
+    def _save_record(self):
+        try:
+            self.secrets.set(self._secret_name, json.dumps(self._record))
+        except fsr_secrets.SecretStoreError as error:
+            raise UserDataError(
+                "The protected storage of Windows could not be written, so "
+                f"the account file was not changed:\n{error}") from error
+
+    def _code(self):
+        code = (self._record or {}).get("code")
+        return code if isinstance(code, str) and code else None
+
     def _mark_set_up(self):
-        if self._setup_record() is None:
-            self.secrets.set(self._secret_name, json.dumps({"setup": True}))
+        if not (self._record or {}).get("setup"):
+            self._record = {**(self._record or {}), "setup": True}
+            self._save_record()
+
+    def recovery_code(self):
+        """For an Administrator who is signed in (None before the first
+        save)."""
+        return self._code()
+
+    @property
+    def code_shown(self):
+        return bool((self._record or {}).get("shown"))
+
+    def mark_code_shown(self):
+        if self._record is not None and not self._record.get("shown"):
+            self._record = {**self._record, "shown": True}
+            self._save_record()
 
     @staticmethod
     def _has_administrator(users):
@@ -301,7 +444,205 @@ class UserStore:
     def needs_setup(self):
         """True on a PC that has no Administrator yet: the next account is
         created with create_administrator()."""
-        return not self._has_administrator(self._read())
+        return self.problem is None and not self._has_administrator(
+            self._read())
+
+    # -- can the file be trusted? --
+    def _find_problem(self):
+        record = self._record or {}
+        code = self._code()
+        if not self.path.exists():
+            # A PC that was set up never offers the first set-up again.
+            return self._problem("missing") if record.get("setup") else None
+        document = self._load()
+        if "signature" not in document:
+            # No code yet (a file of an earlier program), or the first
+            # signed save was interrupted: it is simply signed now.
+            if code is None or record.get("pending"):
+                return None
+            return self._problem("unsigned")
+        if code is None:
+            return self._problem("no_key")
+        if not signature_ok(document, code):
+            return self._problem("changed")
+        return None
+
+    def _problem(self, kind):
+        return {"kind": kind, "text": PROBLEM_TEXT[kind]}
+
+    def trusted_users(self):
+        """The accounts of the last good copy, or None when there is no
+        copy whose signature is right."""
+        code = self._code()
+        if code is None:
+            return None
+        try:
+            with open(self.last_good_path, "r", encoding="utf-8") as file:
+                document = json.load(file)
+        except (OSError, ValueError):
+            return None
+        if (not isinstance(document, dict)
+                or not isinstance(document.get("users"), list)
+                or any(not isinstance(u, dict) for u in document["users"])
+                or not signature_ok(document, code)):
+            return None
+        return document["users"]
+
+    def _current_users_or_none(self):
+        try:
+            return self._read() if self.path.exists() else None
+        except UserDataError:
+            return None
+
+    def changes(self):
+        """What a reviewer is shown."""
+        trusted, current = self.trusted_users(), self._current_users_or_none()
+        if current is None:
+            lines = ["The account file is missing or cannot be read."]
+        elif trusted is None:
+            lines = ["There is no trusted earlier copy to compare with. "
+                     "The file now holds:"]
+            lines += [f"  {_account_label(u)} - {role_text(u)}, "
+                      f"{u.get('status')}" for u in current]
+        else:
+            lines = describe_changes(trusted, current) or [
+                "No account differs from the last good copy (only the "
+                "signature or other details were changed)."]
+        return lines
+
+    # -- deciding about a problem --
+    def _sign_in_for_review(self, initials, password):
+        """Only an Administrator OF THE LAST GOOD COPY gets in - the
+        changed file is not asked who the Administrator is."""
+        now = self._now()
+        key = (initials or "").strip().upper()
+        record = self._unknown.setdefault("review:" + key, {})
+        wait, _ = _blocked_seconds(record, now)
+        if wait:
+            raise AuthError(_wait_text(wait))
+        user = next((u for u in self.trusted_users() or [] if key and
+                     u.get("initials", "").strip().upper() == key), None)
+        if (user is None or not is_admin(user)
+                or user.get("status") != "approved"
+                or not user_password_matches(user, password)):
+            _note_failure(record, now)
+            raise AuthError(
+                "Only an Administrator can sign in until the account file "
+                "has been reviewed (wrong initials or password, or not an "
+                "Administrator).")
+        _clear_failures(record)
+        self._reviewer = dict(user)
+        return dict(user)
+
+    def unlock_with_code(self, text):
+        """The recovery code. On a moved PC / restored Windows it makes the
+        file trusted again (returns "verified"); for a changed or missing
+        file it proves who the Administrator is (returns "review")."""
+        if self.problem is None:
+            raise AuthError("The account file does not need the code now.")
+        now = self._now()
+        record = self._unknown.setdefault("code:", {})
+        wait, _ = _blocked_seconds(record, now)
+        if wait:
+            raise AuthError(_wait_text(wait))
+        entered = format_recovery_code(text)
+        if self.problem["kind"] == "no_key":
+            document = self._load()
+            if not signature_ok(document, entered):
+                _note_failure(record, now)
+                raise AuthError(
+                    "That is not the recovery code of this account file.")
+            self._record = {"setup": True, "code": entered, "shown": True}
+            self._save_record()
+            self._resolved()
+            self._copy_last_good()
+            return "verified"
+        if not hmac.compare_digest(entered, self._code() or ""):
+            _note_failure(record, now)
+            raise AuthError("That is not the recovery code of this PC.")
+        _clear_failures(record)
+        self._reviewer = "code"
+        return "review"
+
+    def cancel_review(self):
+        self._reviewer = None
+
+    def _require_reviewer(self):
+        if self.problem is None:
+            raise AuthError("There is nothing to review.")
+        if self._reviewer is None:
+            raise AuthError("Sign in as an Administrator first.")
+
+    def can_restore(self):
+        return self.trusted_users() is not None
+
+    def can_accept(self):
+        return self._current_users_or_none() is not None
+
+    def can_start_over(self):
+        """Only with the recovery code, and only when nothing can be
+        restored."""
+        return self._reviewer == "code" and not self.can_restore()
+
+    def _keep_rejected_file(self):
+        """Nothing is thrown away: the file that was not trusted is kept
+        as users.rejected_<time>.json."""
+        if not self.path.exists():
+            return None
+        stamp = self._now().strftime("%Y%m%d_%H%M%S")
+        target = self.path.with_name(
+            f"{self.path.stem}.rejected_{stamp}{self.path.suffix}")
+        shutil.copy2(self.path, target)
+        return target
+
+    def restore_last_good(self):
+        self._require_reviewer()
+        if not self.can_restore():
+            raise AuthError("There is no good copy to restore.")
+        kept = self._keep_rejected_file()
+        temp = self.path.with_name(self.path.name + ".restoring.tmp")
+        shutil.copyfile(self.last_good_path, temp)
+        os.replace(temp, self.path)
+        self._resolved()
+        return kept
+
+    def accept_current(self):
+        """The reviewer says the changed file is right: it is signed (an
+        old-format file is brought up to date first, with its backup)."""
+        self._require_reviewer()
+        if not self.can_accept():
+            raise AuthError("There is no readable account file to accept.")
+        self._resolving = True
+        try:
+            self._update_old_file()
+            self._write(self._read())
+        finally:
+            self._resolving = False
+        self._resolved()
+
+    def start_over(self):
+        """No accounts: the PC shows its first set-up again."""
+        self._require_reviewer()
+        if not self.can_start_over():
+            raise AuthError("Starting again needs the recovery code and is "
+                            "only offered when no good copy exists.")
+        kept = self._keep_rejected_file()
+        self._resolving = True
+        try:
+            self._write([])
+        finally:
+            self._resolving = False
+        self._resolved()
+        return kept
+
+    def _resolved(self):
+        self.problem = self._find_problem()
+        if self.problem is not None:
+            raise AuthError(self.problem["text"])
+        self._reviewer = None
+        self._unknown.clear()
+        if self._has_administrator(self._read()):
+            self._mark_set_up()
 
     # -- file --
     def _read(self):
@@ -348,12 +689,22 @@ class UserStore:
         return data
 
     def _write(self, users, now=None):
+        if self.problem is not None and not self._resolving:
+            raise AuthError(REVIEW_FIRST)
+        if self._code() is None:
+            # First save on this PC: make the recovery code (= signing key)
+            # and keep it in the protected storage BEFORE the file is
+            # signed with it.
+            self._record = {**(self._record or {}),
+                            "code": new_recovery_code(), "pending": True}
+            self._save_record()
         if now is not None:
             self._time_seen = _time_text(now)
         document = {"version": FILE_VERSION}
         if self._time_seen:
             document["time_seen"] = self._time_seen
         document["users"] = users
+        document["signature"] = sign_document(document, self._code())
         text = json.dumps(document, indent=2, ensure_ascii=False)
         fd, temp = tempfile.mkstemp(
             dir=str(self.path.parent), prefix="users_", suffix=".tmp")
@@ -364,6 +715,21 @@ class UserStore:
         finally:
             if os.path.exists(temp):
                 os.remove(temp)
+        self._copy_last_good()
+        if self._record.get("pending"):
+            self._record = {k: v for k, v in self._record.items()
+                            if k != "pending"}
+            self._save_record()
+
+    def _copy_last_good(self):
+        """users.lastgood.json = the file as the program last wrote it."""
+        temp = self.last_good_path.with_name(
+            self.last_good_path.name + ".tmp")
+        try:
+            shutil.copyfile(self.path, temp)
+            os.replace(temp, self.last_good_path)
+        except OSError:
+            pass
 
     # -- a file of an earlier program --
     def _update_old_file(self):
@@ -484,6 +850,12 @@ class UserStore:
         self._write(users)
 
     def sign_in(self, initials, password):
+        """The signed-in account. While `self.problem` is set the result is
+        an Administrator who may only review the account file."""
+        if self.problem is None:
+            self.problem = self._find_problem()     # changed while open?
+        if self.problem is not None:
+            return self._sign_in_for_review(initials, password)
         now = self._now()
         document = self._load()
         users = document["users"]
@@ -681,9 +1053,20 @@ def run_login(parent, store, icon=None, last_initials="", on_icon=None):
 
     # ---- sign in ----
     def sign_in_page(notice=""):
+        blocked = store.problem is not None
+        if blocked and store.problem["kind"] == "no_key":
+            code_page()             # no password can be trusted here
+            return
         clear()
-        fit(540)
+        fit(700 if blocked else 540)
         heading("Sign In", "Field Survey Report")
+        if blocked:
+            tb.Label(
+                content, bootstyle="danger", wraplength=380, justify="left",
+                text=store.problem["text"] + "\nUntil it has been reviewed "
+                     "only an Administrator can sign in - with the password "
+                     "from before the change."
+            ).pack(anchor="w", pady=(0, 4))
         initials = field("Initials", value=last_initials)
         password = field("Password", show="*")
         show_password_toggle(password)
@@ -702,17 +1085,30 @@ def run_login(parent, store, icon=None, last_initials="", on_icon=None):
             try:
                 user = store.sign_in(initials.get(), password.get())
             except AuthError as error:
+                if (store.problem is not None) != blocked:
+                    sign_in_page()  # the file was changed just now
+                    return
                 show_message(str(error))
                 password.delete(0, "end")
                 password.focus_set()
                 return
+            if store.problem is not None:
+                review_page()       # an Administrator of the good copy
+                return
+            if is_admin(user) and not store.code_shown \
+                    and store.recovery_code():
+                show_recovery_code(dialog, store)
             result["user"] = user
             dialog.destroy()
 
         tb.Button(content, text="Sign In", bootstyle="info",
                   command=submit).pack(fill="x", pady=(16, 6))
-        tb.Button(content, text="Create an account", bootstyle="link",
-                  command=sign_up_page).pack(anchor="w")
+        if blocked:
+            tb.Button(content, text="Use the recovery code instead",
+                      bootstyle="link", command=code_page).pack(anchor="w")
+        else:
+            tb.Button(content, text="Create an account", bootstyle="link",
+                      command=sign_up_page).pack(anchor="w")
         message_label()
         if notice:
             show_message(notice, "success")
@@ -825,6 +1221,7 @@ def run_login(parent, store, icon=None, last_initials="", on_icon=None):
             except AuthError as error:
                 show_message(str(error))
                 return
+            show_recovery_code(dialog, store)
             sign_in_page(
                 "The Administrator account was created. Sign in with its "
                 "Initials.")
@@ -836,6 +1233,103 @@ def run_login(parent, store, icon=None, last_initials="", on_icon=None):
         dialog.bind("<Return>", submit)
         boxes["first"].focus_set()
 
+    # ---- the account file is not trusted: recovery code ----
+    def code_page():
+        clear()
+        fit(560)
+        no_key = store.problem["kind"] == "no_key"
+        heading("Recovery Code",
+                store.problem["text"] + "\n" + (
+                    "Type the recovery code of this account file. The "
+                    "Administrator wrote it down when the PC was set up."
+                    if no_key else
+                    "The recovery code proves that you are the "
+                    "Administrator of this PC."))
+        code = field("Recovery code")
+
+        def submit(event=None):
+            try:
+                outcome = store.unlock_with_code(code.get())
+            except AuthError as error:
+                show_message(str(error))
+                return
+            if outcome == "verified":
+                sign_in_page("The account file was checked with the "
+                             "recovery code. Sign in as usual.")
+            else:
+                review_page()
+
+        tb.Button(content, text="Continue", bootstyle="info",
+                  command=submit).pack(fill="x", pady=(16, 6))
+        if not no_key:
+            tb.Button(content, text="Back to Sign In", bootstyle="link",
+                      command=lambda: sign_in_page()).pack(anchor="w")
+        message_label()
+        dialog.bind("<Return>", submit)
+        code.focus_set()
+
+    # ---- the account file is not trusted: the Administrator decides ----
+    def review_page():
+        clear()
+        fit(720)
+        heading("Review the Account File",
+                store.problem["text"] + "\nThis is what is different from "
+                "the last copy the program saved itself:")
+        box = tkinter.Text(content, height=9, width=48, wrap="word",
+                           font=("Segoe UI", 9))
+        box.insert("1.0", "\n".join(store.changes()))
+        box.configure(state="disabled")
+        box.pack(fill="x", pady=(0, 10))
+
+        def run(action, question, done):
+            if question and not messagebox.askyesno(
+                    "Review the Account File", question, parent=dialog):
+                return
+            try:
+                action()
+            except (AuthError, OSError) as error:
+                show_message(str(error))
+                return
+            done()
+
+        if store.can_restore():
+            tb.Button(
+                content, text="Restore the last good copy",
+                bootstyle="info", command=lambda: run(
+                    store.restore_last_good, None, lambda: sign_in_page(
+                        "The last good copy was restored (the changed file "
+                        "is kept beside it as users.rejected_...). Sign in "
+                        "again."))
+            ).pack(fill="x", pady=(0, 6))
+        if store.can_accept():
+            tb.Button(
+                content, text="Accept the changed file",
+                bootstyle="danger-outline", command=lambda: run(
+                    store.accept_current,
+                    "Accept every change listed here?\n\nDo this only if "
+                    "you made these changes yourself.",
+                    lambda: sign_in_page(
+                        "The changed file was accepted. Sign in again."))
+            ).pack(fill="x", pady=(0, 6))
+        if store.can_start_over():
+            tb.Button(
+                content, text="Start again with no accounts",
+                bootstyle="danger-outline", command=lambda: run(
+                    store.start_over,
+                    "Remove every account of this PC and set it up again?"
+                    "\n\nReports and other data are not touched.",
+                    setup_page)
+            ).pack(fill="x", pady=(0, 6))
+
+        def cancel():
+            store.cancel_review()
+            sign_in_page()
+
+        tb.Button(content, text="Cancel", bootstyle="link",
+                  command=cancel).pack(anchor="w")
+        message_label()
+        dialog.unbind("<Return>")
+
     if store.needs_setup:
         setup_page()
     else:
@@ -845,6 +1339,49 @@ def run_login(parent, store, icon=None, last_initials="", on_icon=None):
     dialog.focus_force()
     dialog.wait_window()
     return result["user"]
+
+
+def show_recovery_code(parent, store):
+    """Show the recovery code of this PC to an Administrator. Closing the
+    window with its button records that the code has been seen."""
+    code = store.recovery_code()
+    if not code:
+        return
+    dialog = tb.Toplevel(parent)
+    dialog.title("Recovery Code")
+    dialog.transient(parent)
+    dialog.resizable(False, False)
+    _center(dialog, 470, 400)
+    body = tb.Frame(dialog, padding=22)
+    body.pack(fill="both", expand=True)
+    tb.Label(body, text="Recovery code of this PC",
+             font=("Segoe UI", 13, "bold")).pack(anchor="w")
+    entry = tb.Entry(body, font=("Consolas", 13), justify="center")
+    entry.insert(0, code)
+    entry.configure(state="readonly")
+    entry.pack(fill="x", pady=(12, 12))
+    tb.Label(
+        body, wraplength=420, justify="left",
+        text="Write this code down and keep it away from this PC.\n\n"
+             "It is needed when this PC is replaced, Windows is "
+             "reinstalled or the account file is damaged: without it the "
+             "accounts of this PC cannot be brought back.\n\n"
+             "Treat it like a password - whoever has it can take over the "
+             "accounts of this PC. An Administrator can see it again under "
+             "Account > Recovery Code."
+    ).pack(anchor="w")
+
+    def done():
+        try:
+            store.mark_code_shown()
+        except AuthError:
+            pass                    # it is simply shown again next time
+        dialog.destroy()
+
+    tb.Button(body, text="I have written it down", bootstyle="info",
+              command=done).pack(side="bottom", fill="x", pady=(14, 0))
+    dialog.grab_set()
+    dialog.wait_window()
 
 
 def open_manage_users(parent, store, owner, on_change=None):

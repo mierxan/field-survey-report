@@ -47,6 +47,17 @@ def saved(path, initials):
     return next(u for u in users if u["initials"] == initials)
 
 
+def rewrite(store, path, change):
+    """Change the file as the program itself would (signed again): these
+    tests are about odd lock values, not about the signature."""
+    document = json.loads(path.read_text(encoding="utf-8"))
+    change(document)
+    document["signature"] = app_auth.sign_document(
+        document, store.recovery_code())
+    path.write_text(json.dumps(document), encoding="utf-8")
+    store._copy_last_good()
+
+
 def fail(store, initials="SA"):
     with pytest.raises(app_auth.AuthError) as error:
         store.sign_in(initials, "wrong-password")
@@ -188,12 +199,15 @@ def test_clock_set_forward_then_back_cannot_stretch_the_lock(env):
 def test_no_lock_is_ever_longer_than_15_minutes(env, role_initials):
     """Even with a hand-edited or far-future lock in the file."""
     store, clock, path, open_store = env
-    document = json.loads(path.read_text(encoding="utf-8"))
-    for user in document["users"]:
-        user["blocked_until"] = "2099-01-01T00:00:00"
-        user["failed_count"] = 10**6
-    path.write_text(json.dumps(document), encoding="utf-8")
+
+    def far_future(document):
+        for user in document["users"]:
+            user["blocked_until"] = "2099-01-01T00:00:00"
+            user["failed_count"] = 10**6
+
+    rewrite(store, path, far_future)
     store = open_store()
+    assert store.problem is None
     assert "locked for 15 more minutes" in fail(store, role_initials)
     clock.forward(minutes=15)
     password = GOOD if role_initials == "SA" else "correct-horse"
@@ -203,11 +217,11 @@ def test_no_lock_is_ever_longer_than_15_minutes(env, role_initials):
 def test_clock_set_back_with_far_future_lock_still_ends_in_15_minutes(env):
     store, clock, path, open_store = env
     lock(store, clock)
-    document = json.loads(path.read_text(encoding="utf-8"))
-    document["users"][0]["blocked_until"] = "2099-01-01T00:00:00"
-    path.write_text(json.dumps(document), encoding="utf-8")
+    rewrite(store, path, lambda document: document["users"][0].update(
+        blocked_until="2099-01-01T00:00:00"))
     clock.now = START - timedelta(days=30)
     store = open_store()
+    assert store.problem is None
     assert "locked for 15 more minutes" in fail(store)
     clock.forward(minutes=15)
     assert store.sign_in("SA", GOOD)
@@ -216,12 +230,17 @@ def test_clock_set_back_with_far_future_lock_still_ends_in_15_minutes(env):
 @pytest.mark.parametrize("junk", ["soon", 12, None, "", []])
 def test_unreadable_lock_values_do_not_block(env, junk):
     store, clock, path, open_store = env
-    document = json.loads(path.read_text(encoding="utf-8"))
-    document["users"][0]["blocked_until"] = junk
-    document["users"][0]["failed_count"] = junk
-    document["time_seen"] = junk
-    path.write_text(json.dumps(document), encoding="utf-8")
-    assert open_store().sign_in("SA", GOOD)
+
+    def spoil(document):
+        document["users"][0]["blocked_until"] = junk
+        document["users"][0]["failed_count"] = junk
+        document["time_seen"] = junk
+
+    rewrite(store, path, spoil)
+    store = open_store()
+    assert store.problem is None
+    assert store.sign_in("SA", GOOD)
+    assert store.problem is None
 
 
 def test_pending_account_with_right_password_is_not_counted(env):

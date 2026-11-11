@@ -387,6 +387,15 @@ except OSError as error:
     window.destroy()
     sys.exit(1)
 
+if user_store.backup_path is not None:
+    log.info("The account file was brought up to date. The earlier file is "
+             "kept as %s; %d retired account(s) removed.",
+             user_store.backup_path, len(user_store.removed_accounts))
+if user_store.problem is not None:
+    log.warning("The account file is not trusted (%s): sign in is limited "
+                "to an Administrator until it is reviewed.",
+                user_store.problem["kind"])
+
 current_user = app_auth.run_login(
     window, user_store, last_initials=settings.get("last_login_initials", ""),
     on_icon=icon_for_dialog)
@@ -1438,6 +1447,9 @@ def rebuild_account_menu():
             command=lambda: app_auth.open_manage_users(
                 window, user_store, current_user,
                 on_change=rebuild_account_menu))
+        account_menu.add_command(
+            label="Recovery Code...",
+            command=lambda: app_auth.show_recovery_code(window, user_store))
     if IS_OWNER_EDITION:
         account_menu.add_command(
             label="MySQL Settings...", command=lambda: open_mysql_settings())

@@ -88,9 +88,19 @@ def test_deleting_users_json_does_not_offer_the_setup_again(tmp_path):
     store.create_administrator(*ADMIN)
 
     (tmp_path / "users.json").unlink()
+    (tmp_path / "users.lastgood.json").unlink()
 
-    with pytest.raises(app_auth.UserDataError, match="already set up"):
-        new_store(tmp_path, secrets, use_seed=False)
+    again = new_store(tmp_path, secrets, use_seed=False)
+    assert again.problem["kind"] == "missing"
+    assert "already set up" in again.problem["text"]
+    assert not again.needs_setup                 # no second set-up screen
+    with pytest.raises(app_auth.AuthError):
+        again.create_administrator(
+            "Other", "", "Person", "OP", "other@example.invalid",
+            "another-password", "another-password")
+    with pytest.raises(app_auth.AuthError, match="reviewed"):
+        again.sign_up("Other", "", "Person", "OP", "other@example.invalid",
+                      "another-password", "another-password")
     assert not (tmp_path / "users.json").exists()
 
 
@@ -108,8 +118,8 @@ def test_existing_install_is_recorded_as_set_up(tmp_path):
     assert store.sign_in("OO", "owner-password")["role"] == "owner"
 
     (tmp_path / "users.json").unlink()
-    with pytest.raises(app_auth.UserDataError, match="already set up"):
-        new_store(tmp_path, secrets, use_seed=False)
+    again = new_store(tmp_path, secrets, use_seed=False)
+    assert again.problem["kind"] == "missing" and not again.needs_setup
 
 
 # ---------- secret stores ----------
