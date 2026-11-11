@@ -59,6 +59,12 @@ after five tries, and the MySQL password is kept in the Windows Credential
 Manager - see [docs/ACCOUNT_FILE_SECURITY.md](docs/ACCOUNT_FILE_SECURITY.md)
 and, for installing the update, [docs/PHASE1_ROLLOUT.md](docs/PHASE1_ROLLOUT.md).
 
+The workbook is backed up before the first save of each day (`Backups`
+folder beside it, newest 14 kept), and a save that stops halfway is finished
+automatically at the next start or save - see
+[docs/DATA_SAFETY.md](docs/DATA_SAFETY.md), which also explains how to
+restore a backup.
+
 ## 3. The modules (left navigation bar)
 
 | Module | What it does |
@@ -204,6 +210,8 @@ fsr_withdrawal_ui.py     the PO picker on the Item Lists tab
 db_mysql.py              optional MySQL storage
 app_auth.py              sign in / users, signed account file
 fsr_secrets.py           Windows Credential Manager (recovery code, MySQL password)
+fsr_backup.py            daily backup copy of the workbook
+fsr_save_journal.py      record of each save; finishes a save that stopped halfway
 fsr_build_check.py       build check: no account data in the User edition
 warehouse/               business logic, no widgets
     periods.py           reporting periods (calendar weeks Mon–Sun)
