@@ -3,6 +3,11 @@ Sign in / sign up for the Field Survey Report.
 
 * Accounts are kept in the application's private JSON data directory
   (passwords are stored as salted PBKDF2 hashes - never as plain text).
+  users.json carries a "version"; a file written by a newer program is
+  refused with a clear message instead of being misread.
+* Every account stores its own PBKDF2 iteration count. Accounts saved
+  before that (no "iterations") are checked with the old count and are
+  re-hashed with the current one at their next successful sign in.
 * The Owner account is created automatically the first time the program
   starts. A new user signs up, then waits until the Owner approves the
   account (Account menu > Manage Users).
@@ -30,7 +35,10 @@ import ttkbootstrap as tb
 
 import fsr_secrets
 
-ITERATIONS = 200_000
+ITERATIONS = 600_000               # new and changed passwords
+LEGACY_ITERATIONS = 200_000        # accounts saved without "iterations"
+MAX_ITERATIONS = 10_000_000        # a larger stored count is not believed
+FILE_VERSION = 2                   # users.json (1 = files with no "version")
 MIN_PASSWORD = 12
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -84,20 +92,46 @@ class UserDataError(AuthError):
 # passwords + names
 # ---------------------------------------------------------------------
 
-def hash_password(password, salt=None):
+def hash_password(password, salt=None, iterations=LEGACY_ITERATIONS):
+    """(salt, hash). Without `iterations` this is the hash of an account
+    that stores no count - use new_password_fields() for a new password."""
     salt = salt or secrets.token_hex(16)
     digest = hashlib.pbkdf2_hmac(
-        "sha256", password.encode("utf-8"), bytes.fromhex(salt), ITERATIONS
+        "sha256", password.encode("utf-8"), bytes.fromhex(salt), iterations
     ).hex()
     return salt, digest
 
 
-def password_matches(password, salt, digest):
+def new_password_fields(password):
+    """The three fields of an account for a new or changed password."""
+    salt, digest = hash_password(password, None, ITERATIONS)
+    return {"salt": salt, "hash": digest, "iterations": ITERATIONS}
+
+
+def user_iterations(user):
+    """The count this account's hash was made with (0 = not usable)."""
+    value = user.get("iterations")
+    if value is None:
+        return LEGACY_ITERATIONS
+    if isinstance(value, int) and not isinstance(value, bool) \
+            and 0 < value <= MAX_ITERATIONS:
+        return value
+    return 0
+
+
+def password_matches(password, salt, digest, iterations=LEGACY_ITERATIONS):
+    if not iterations:
+        return False
     try:
-        _, test = hash_password(password, salt)
+        _, test = hash_password(password, salt, iterations)
     except ValueError:
         return False
     return hmac.compare_digest(test, digest or "")
+
+
+def user_password_matches(user, password):
+    return password_matches(password, user.get("salt", ""),
+                            user.get("hash", ""), user_iterations(user))
 
 
 def full_name(user):
@@ -168,11 +202,15 @@ class UserStore:
 
     # -- file --
     def _read(self):
+        return self._load()["users"]
+
+    def _load(self):
+        """The whole file: {"version", "users", ...}."""
         try:
             with open(self.path, "r", encoding="utf-8") as file:
                 data = json.load(file)
         except FileNotFoundError:
-            return []
+            return {"version": FILE_VERSION, "users": []}
         except (OSError, UnicodeError, json.JSONDecodeError) as error:
             raise UserDataError(
                 f"The account file could not be read: {self.path}\n"
@@ -188,10 +226,25 @@ class UserStore:
                 "It has not been changed. Restore it from a backup before "
                 "signing in."
             )
-        return data["users"]
+        version = data.get("version", 1)
+        if not isinstance(version, int) or isinstance(version, bool) \
+                or version < 1:
+            raise UserDataError(
+                f"The account file has an invalid version: {self.path}\n"
+                "It has not been changed. Restore it from a backup before "
+                "signing in.")
+        if version > FILE_VERSION:
+            raise UserDataError(
+                f"The account file was written by a newer version of this "
+                f"program (file version {version}, this program reads up "
+                f"to {FILE_VERSION}):\n{self.path}\n"
+                "It has not been changed. Install the newer program on "
+                "this PC.")
+        return data
 
     def _write(self, users):
-        text = json.dumps({"users": users}, indent=2, ensure_ascii=False)
+        text = json.dumps({"version": FILE_VERSION, "users": users},
+                          indent=2, ensure_ascii=False)
         fd, temp = tempfile.mkstemp(
             dir=str(self.path.parent), prefix="users_", suffix=".tmp")
         try:
@@ -217,6 +270,8 @@ class UserStore:
             "email": OWNER["email"],
             "salt": OWNER["salt"],
             "hash": OWNER["hash"],
+            **({"iterations": OWNER["iterations"]}
+               if "iterations" in OWNER else {}),
             "role": "owner",
             "status": "approved",
             "created": datetime.now().strftime("%d-%b-%Y %H:%M"),
@@ -304,20 +359,18 @@ class UserStore:
         if self.find(email):
             raise AuthError("This email already has an account.")
 
-        salt, digest = hash_password(password)
         users = self._read()
         users.append({
             "first_name": first, "middle_name": middle, "last_name": last,
-            "initials": initials, "email": email, "salt": salt,
-            "hash": digest, "role": role, "status": status,
+            "initials": initials, "email": email,
+            **new_password_fields(password), "role": role, "status": status,
             "created": datetime.now().strftime("%d-%b-%Y %H:%M"),
         })
         self._write(users)
 
     def sign_in(self, initials, password):
         user = self.find_by_initials(initials)
-        if user is None or not password_matches(
-                password, user.get("salt", ""), user.get("hash", "")):
+        if user is None or not user_password_matches(user, password):
             raise AuthError("Incorrect initials or password.")
         status = user.get("status")
         if status == "pending":
@@ -329,7 +382,20 @@ class UserStore:
         if status != "approved":
             raise AuthError("This account is disabled. Please contact "
                             "the Administrator.")
+        if user_iterations(user) < ITERATIONS:
+            user = self._upgrade_hash(user, password)
         return user
+
+    def _upgrade_hash(self, user, password):
+        """Re-hash a password that was just proven correct with the current
+        iteration count. A file that cannot be written does not stop the
+        sign in; the upgrade is tried again next time."""
+        fields = new_password_fields(password)
+        try:
+            self._change(user["email"], lambda u: u.update(fields))
+        except (OSError, AuthError):
+            return user
+        return {**user, **fields}
 
     # -- owner actions --
     def _change(self, email, func):
@@ -363,17 +429,12 @@ class UserStore:
         if len(password) < MIN_PASSWORD:
             raise AuthError(
                 f"The password needs at least {MIN_PASSWORD} characters.")
-        salt, digest = hash_password(password)
-
-        def apply(user):
-            user["salt"], user["hash"] = salt, digest
-
-        self._change(email, apply)
+        fields = new_password_fields(password)
+        self._change(email, lambda user: user.update(fields))
 
     def change_own_password(self, email, old, new, confirm):
         user = self.find(email)
-        if user is None or not password_matches(
-                old, user.get("salt", ""), user.get("hash", "")):
+        if user is None or not user_password_matches(user, old):
             raise AuthError("The current password is not correct.")
         if new != confirm:
             raise AuthError("The two new passwords do not match.")
@@ -806,3 +867,69 @@ def open_change_password(parent, store, user):
     dialog.bind("<Return>", ok)
     entries[0].focus_set()
     dialog.grab_set()
+
+
+# ---------------------------------------------------------------------
+# python app_auth.py make-seed
+# ---------------------------------------------------------------------
+
+SEED_FILE = (Path(__file__).resolve().parent / "data" / "json" / "private"
+             / "auth_seed.json")
+
+
+def make_seed(password, owner=None, path=SEED_FILE):
+    """Write auth_seed.json: the owner's names and the HASH of `password`
+    (the Owner installer creates the owner account from it on a new PC).
+    Names come from `owner`, else from the seed that is already there."""
+    if len(password) < MIN_PASSWORD:
+        raise AuthError(
+            f"The password needs at least {MIN_PASSWORD} characters.")
+    path = Path(path)
+    if owner is None:
+        try:
+            owner = json.loads(path.read_text(encoding="utf-8")).get("owner")
+        except (OSError, ValueError, AttributeError):
+            owner = None
+    if not isinstance(owner, dict):
+        raise AuthError(f"No owner was found in {path}.")
+    record = {key: str(owner.get(key) or "").strip() for key in (
+        "first_name", "middle_name", "last_name", "initials", "email")}
+    record["initials"] = record["initials"].upper()
+    record["email"] = record["email"].lower()
+    if not (record["first_name"] and record["last_name"]
+            and record["initials"] and EMAIL_PATTERN.match(record["email"])):
+        raise AuthError("The owner needs a first name, last name, initials "
+                        "and email.")
+    record.update(new_password_fields(password))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_name(path.name + ".tmp")
+    temp.write_text(json.dumps({"owner": record}, indent=2,
+                               ensure_ascii=False), encoding="utf-8")
+    os.replace(temp, path)
+    return record
+
+
+def _main(argv):
+    import getpass
+    if argv != ["make-seed"]:
+        print("Usage:  python app_auth.py make-seed\n"
+              "Asks for the owner's new password (it is not shown and is "
+              "never written down) and rewrites\n" + str(SEED_FILE))
+        return 2
+    password = getpass.getpass("New owner password: ")
+    if password != getpass.getpass("Type it again:      "):
+        print("The two passwords do not match. Nothing was changed.")
+        return 1
+    try:
+        record = make_seed(password)
+    except AuthError as error:
+        print(f"{error} Nothing was changed.")
+        return 1
+    print(f"auth_seed.json now holds the new hash for {record['initials']} "
+          f"({ITERATIONS:,} iterations). Rebuild the Owner installer.")
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(_main(sys.argv[1:]))
