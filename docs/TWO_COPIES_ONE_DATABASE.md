@@ -66,11 +66,15 @@ MySQL's report still has that fingerprint, nobody else changed it.
 * **First start with existing data** (your 10 reports): every report that is
   the same in the Excel file and in MySQL is adopted silently. The same
   happens to reports brought in with Restore Excel from MySQL.
-* **Ledger missing, unreadable, or older than the workbook** (a restored
-  backup, a workbook edited outside the program): the ledger counts as
-  empty. Every report is "not mine" and is asked about - except those that
-  are equal in value, which are adopted again. It never falls back to
-  overwriting.
+* **Ledger missing or unreadable, or the workbook is not as the program
+  last left it** (a restored backup, a workbook edited and saved in Excel):
+  the ledger counts as empty. Every report is "not mine" and is asked
+  about - except those that are equal in value, which are adopted again.
+  It never falls back to overwriting. The ledger notes the size and exact
+  change time of the workbooks after each of the program's own writes
+  (`"books"`); a workbook that differs from the note was changed by
+  something else. The conflict note then says that this copy "has no
+  record of having sent" the report and when its record was reset.
 * **Two copies at the same moment**: the check and the write are done under
   a MySQL lock on that Control # and in one transaction. The second copy
   waits, then sees the first copy's report and gets a conflict.
@@ -116,9 +120,11 @@ number at that moment is kept first, in the same folder.
 
 * The guard protects against copies that **have** it. The installed
   11 November program does not; see the end of this page.
-* The MySQL parts (the lock, the check inside the transaction) were tested
-  with a stand-in database, not against a real MySQL server. The hand checks
-  below are their first real run.
+* The MySQL parts (the lock, the check inside the transaction, what is
+  written reading back equal) are tested against the real test database
+  `field_survey_test` by `tests/test_real_mysql.py`. Those tests are
+  skipped - and listed as skipped, with the reason - on a PC where that
+  database is not set up; they never connect to `field_survey`.
 * "Keep MySQL's" leaves your Excel file and MySQL different for that
   report. Editing it again later asks again.
 * Renumbering changes several files one after another. If the PC stops in
@@ -128,6 +134,38 @@ number at that moment is kept first, in the same folder.
   reports that differ from MySQL are asked about once.
 * The first start on a large workbook compares every report with MySQL
   once.
+
+## The fault found on 12 November 2026
+
+The first version judged the ledger "older than the workbook" by comparing
+the two files' times. During a save the program writes the workbook first
+and MySQL afterwards - so at the MySQL step the workbook was always newer
+than the ledger from the previous save, the ledger was set aside, and the
+program's own report looked like someone else's. It showed only when more
+than five seconds lay between two saves, which the automated tests never
+had. Nothing was overwritten by it: the fault was on the careful side
+(a question too many). Now the ledger carries its own note of the
+workbooks and the note is renewed right after the workbook write, before
+the MySQL step; the tests let time pass between saves, and the same cases
+run against the real test database.
+
+## MySQL not running
+
+A stopped MySQL80 service or an offline PC is normal. No action shows an
+error box for it; each shows the orange notice "MySQL was not reached - ..."
+and says what happens instead:
+
+| Action | With MySQL not reached |
+|---|---|
+| Save | saved on this PC; sent at the next save or start |
+| Open Saved Report (list) | the list shows the reports in this PC's Excel file |
+| Opening one report from the MySQL list | opened from this PC's Excel file |
+| Clicking the three dots, Test MySQL | notice only |
+| Sync to MySQL, Restore Excel from MySQL | nothing sent / restored |
+| A decision in MySQL Conflicts | nothing changed; the conflict keeps waiting |
+
+Other MySQL errors (a refused login, a missing table) still get their box.
+MySQL Settings > Test Connection shows its answer in the window itself.
 
 ## Later option, not built: a column that records the writer
 

@@ -166,3 +166,12 @@ synced folder), set in Master Lists and Settings:
 To decide before building: backups hold business data in plain Excel
 files - a USB drive or shared folder should be one only the right people
 can open.
+
+### Saving the same report again after an unfinished save
+
+When a save could not finish (PO_Master open in Excel, say) and the SAME
+report is saved again, the new save replaces the record of the old one and
+does what it still owed. The note of that save says so: "Unfinished Save:
+an earlier save of this report had not finished. It was completed now:
+PO_Master and Withdrawn_Item." The separate "Unfinished Save" box appears
+when ANOTHER report is saved, or at the next start.
