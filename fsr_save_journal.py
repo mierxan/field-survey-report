@@ -43,6 +43,22 @@ interrupted and run again - gives the same result as running it once.
 MySQL not being reachable is normal on an offline PC: the save is complete
 on this PC and only the "mysql" step waits.
 
+How often the record is written (Phase 3)
+  Because every step can be repeated, the record does not have to be
+  ticked off after each step. It is written
+    * once before the first write (the save's planned time is in it),
+    * once more right after the workbook write, but only for a NEW report
+      (or when the write gave the report another number). For an edit the
+      workbook itself shows whether the save was written: it holds the
+      planned time (written), an earlier one (not written) or a later one
+      (saved again since). For a new report a later time is ambiguous -
+      written and saved again, or never written and the number used by
+      another report since - so the record must say that it was written.
+    * once at the end: removed, or left with what is still open.
+  A save cut off in between is found at the next start with some steps
+  shown as open that were in fact done; repair() does them again, which
+  changes nothing.
+
 MySQL conflicts
   The MySQL step goes through fsr_mysql_guard: it never overwrites a report
   in MySQL that this copy of the program does not own. When MySQL holds a
@@ -355,19 +371,29 @@ def run(journal, record, stores, mysql=True):
     steps = record["steps"]
 
     if steps.get("workbook") == PENDING:
+        planned_control = record["control"]
+        was_new = not record["editing"]
         outcome["result"] = result = stores.workbook(record)
         record["control"] = record["data"]["control_no"] = result["control"]
         record["editing"] = True        # from now on it is an update
         steps["workbook"] = DONE
         record["stamp"] = (record.get("stamp_planned")
                            or stores.stamp(record))
-        _note(journal, record)
+        # On disk at once only when the workbook alone could not show that
+        # this save was written: a new report, one that got another number,
+        # or a record without a planned time (made before that rule).
+        if (was_new or not storage.same_key(result["control"],
+                                            planned_control)
+                or not record.get("stamp_planned")):
+            _note(journal, record)
 
     data = record["data"]
+    changed = outcome["result"] is not None
     for step in ("incidents", "item_forms", "item_lists", "mysql"):
         if steps.get(step) != PENDING or (step == "mysql" and (
                 not mysql or record.get("_mysql_wait"))):
             continue
+        changed = True
         try:
             if step == "mysql":
                 outcome["mysql_notes"] = stores.mysql(
@@ -381,24 +407,24 @@ def run(journal, record, stores, mysql=True):
             outcome["failed"][step] = error
             record["conflict"] = error.conflict
             record["errors"][step] = str(error)
-            _note(journal, record)
             continue
         except Exception as error:      # noted, the other steps go on
             log.exception("Save step '%s' of %s failed", step,
                           record["control"])
             outcome["failed"][step] = error
             record["errors"][step] = str(error)
-            _note(journal, record)
             continue
         steps[step] = DONE
         record["errors"].pop(step, None)
         if step == "mysql":
             record.pop("conflict", None)
             record.pop("decision", None)
-        _note(journal, record)
 
+    # One write for all the steps above (see the module text).
     if _settled(record):
         _forget(journal, record)
+    elif changed:
+        _note(journal, record)
     return outcome
 
 

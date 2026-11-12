@@ -73,6 +73,38 @@ class Counts:
         monkeypatch.setattr(s, "write_json_atomic", write_json)
 
 
+def save(book, data, editing, mysql=False):
+    journal, stores = j.Journal(book), j.Stores(book)
+    record = j.open_save(journal, stores, data, editing, False, mysql)
+    return j.run(journal, record, stores, mysql=False), record
+
+
+def test_edit_save_counts(env, monkeypatch):
+    book = env
+    counts = Counts(monkeypatch, book)
+    outcome, _ = save(book, receiving("FSR-MPR-202611-0003", so="EDITED"),
+                      True)
+    assert outcome["failed"] == {}
+    # the write, and ONE read to rebuild PO_Master / Withdrawn_Item
+    # (it was 1 + 4 before Phase 3)
+    assert counts.loads == {"Field_Survey_Reports": 2, "PO_Master": 1}
+    assert counts.writes == {"Field_Survey_Reports": 1, "PO_Master": 1,
+                             "Withdrawn_Item": 1}
+    # the save record: on record, then removed (it was about 7 writes)
+    assert counts.records == 2
+
+
+def test_new_report_save_counts(env, monkeypatch):
+    book = env
+    counts = Counts(monkeypatch, book)
+    save(book, receiving("FSR-MPR-202611-0006", so="NEW"), False)
+    assert counts.loads["Field_Survey_Reports"] == 2
+    assert counts.writes["Field_Survey_Reports"] == 1
+    # a new report is noted once more right after the workbook write
+    # (fsr_save_journal: the only way to tell its later states apart)
+    assert counts.records == 3
+
+
 def test_rebuild_reads_each_workbook_once(env, monkeypatch):
     book = env
     counts = Counts(monkeypatch, book)
