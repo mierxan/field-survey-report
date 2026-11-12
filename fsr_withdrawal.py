@@ -209,13 +209,13 @@ def line_key(po_number, line_no):
     return (str(po_number).strip().casefold(), str(line_no).strip().casefold())
 
 
-def _receiving_lines(path):
-    """(PO cell, Receiving Ref, Control #, row) of every saved Receiving line."""
+def _main_reports(path):
+    """Every report of the main workbook (one read of it)."""
     path = Path(path)
     if not path.exists():
         raise PoSourceMissing(f"There are no saved reports yet in:\n{path}")
     try:
-        reports = storage.read_all_reports(path)
+        return storage.read_all_reports(path)
     except PermissionError:
         raise
     except (OSError, zipfile.BadZipFile, InvalidFileException, KeyError,
@@ -223,6 +223,13 @@ def _receiving_lines(path):
         raise PoSourceError(
             f"The Receiving reports could not be read:\n{path}\n{error}"
         ) from error
+
+
+def _receiving_lines(path, reports=None):
+    """(PO cell, Receiving Ref, Control #, row) of every saved Receiving line.
+    `reports`: the main workbook's reports when they were read already."""
+    if reports is None:
+        reports = _main_reports(path)
     lines = []
     for report in reports:
         if normalize_activity(report["inspection_schedule"].get(
@@ -245,16 +252,21 @@ def _ref_key(ref):
     return str(ref or "").strip().casefold()
 
 
-def withdrawn_by_ref(path, except_control=""):
+def withdrawn_by_ref(path, except_control="", main_reports=None,
+                     book_reports=None):
     """{Receiving Ref: quantity taken} over every saved Withdrawal of both
-    workbooks, leaving out the report `except_control` (the one being edited)."""
+    workbooks, leaving out the report `except_control` (the one being edited).
+    `main_reports` / `book_reports`: the two workbooks' reports when they
+    were read already."""
     book = Path(path).resolve().with_name(fsr_paths.WITHDRAWAL_WORKBOOK_NAME)
-    reports = read_all_reports(book)
-    if Path(path).exists():
-        reports = reports + [
-            report for report in storage.read_all_reports(path)
-            if normalize_activity(report["inspection_schedule"].get(
-                "activity")) == WITHDRAWAL]
+    reports = (read_all_reports(book) if book_reports is None
+               else list(book_reports))
+    if main_reports is None and Path(path).exists():
+        main_reports = storage.read_all_reports(path)
+    reports = reports + [
+        report for report in main_reports or []
+        if normalize_activity(report["inspection_schedule"].get(
+            "activity")) == WITHDRAWAL]
     totals = {}
     for report in reports:
         if storage.same_key(report["control_no"], except_control):
@@ -757,17 +769,22 @@ def _kept_list_rows(path, saved_controls):
 
 
 def sync_item_lists(main_path):
-    """Rebuild PO_Master.xlsx and Withdrawn_Item.xlsx beside `main_path`."""
+    """Rebuild PO_Master.xlsx and Withdrawn_Item.xlsx beside `main_path`.
+    Each workbook is read once (it used to be read four times)."""
     main_path = Path(main_path).resolve()
     po_path = main_path.with_name(fsr_paths.PO_MASTER_NAME)
     withdrawn_path = main_path.with_name(fsr_paths.WITHDRAWN_ITEM_NAME)
     book = main_path.with_name(fsr_paths.WITHDRAWAL_WORKBOOK_NAME)
 
-    lines = _receiving_lines(main_path) if main_path.exists() else []
+    main_reports = _main_reports(main_path) if main_path.exists() else []
+    book_reports = read_all_reports(book)
+    lines = _receiving_lines(main_path, main_reports)
     saved_controls = {
-        entry[0].casefold() for entry in storage.list_saved_reports(main_path)}
+        storage.cell_text(report["control_no"]).casefold()
+        for report in main_reports}
     rows = _kept_list_rows(po_path, saved_controls)
-    taken = withdrawn_by_ref(main_path)
+    taken = withdrawn_by_ref(main_path, main_reports=main_reports,
+                             book_reports=book_reports)
     for po, ref, control, row, condition in lines:
         findings = str(row.get("Findings") or "").strip() or condition
         received, uom = split_received(row.get("Quantity"), row.get("UOM"))
@@ -790,14 +807,12 @@ def sync_item_lists(main_path):
     _write_list(po_path, LIST_SHEET, LIST_COLUMNS, rows)
 
     withdrawn = []
-    reports = read_all_reports(book)
-    if main_path.exists():
-        reports = reports + [
-            report for report in storage.read_all_reports(main_path)
-            if normalize_activity(report["inspection_schedule"].get(
-                "activity")) == WITHDRAWAL and any(
-                    row.get("Receiving Ref") for section in report["item_lists"]
-                    for row in section["rows"])]
+    reports = list(book_reports) + [
+        report for report in main_reports
+        if normalize_activity(report["inspection_schedule"].get(
+            "activity")) == WITHDRAWAL and any(
+                row.get("Receiving Ref") for section in report["item_lists"]
+                for row in section["rows"])]
     for report in reports:
         day = storage.parse_date(report["general_information"]["inspection_date"])
         for section in report["item_lists"]:
