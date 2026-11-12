@@ -23,6 +23,15 @@ Warehouse Data/
 Warehouse Reports/
 migration_output/
 *.log
+# Files the program keeps beside the workbook's JSON data
+Backups/
+MySQL Replaced/
+*_mysql_ledger.json
+*_pending_saves.json
+*_imported_reports.json
+*_backup_*.xlsx
+users.lastgood.json
+secrets.json
 
 # Build output
 .venv/
