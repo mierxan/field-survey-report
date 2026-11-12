@@ -616,3 +616,31 @@ def test_saving_the_same_report_again_says_what_was_completed(copy,
     assert "MySQL was NOT updated" in note
     journal = fsr_save_journal.Journal(book(g))
     assert fsr_save_journal.open_local_steps(journal, control) == []
+
+
+def test_start_after_a_restored_workbook_does_not_revive_ownership(copy):
+    """The 0002 case of 12 November, with a restored workbook: the
+    comparison at start must not make the old ledger count again."""
+    import os
+    import time
+    g, answers, server, _ = copy
+    control = fill(g, "SO-BEFORE-RESTORE")
+    assert g["save_report"]() is True
+    assert fsr_mysql_guard.Guard(server.client(), book(g)).owns(control)
+    changed = server.get(control)
+    changed["general_information"]["so_number"] = "CHANGED ELSEWHERE"
+    server.put(changed)
+    later = time.time() + 120               # "a backup was put back"
+    os.utime(book(g), (later, later))
+
+    live(g)["adopt_existing_reports"]()
+
+    guard = fsr_mysql_guard.Guard(server.client(), book(g))
+    assert not guard.owns(control)
+    answers.calls.clear()
+    g["set_entry"](g["SO_number_entry"], "SO-EDITED AFTER RESTORE")
+    assert g["save_report"]() is True
+    assert in_mysql(server, control) == "CHANGED ELSEWHERE"
+    (note,) = notes(answers)
+    assert "no record of having sent it" in note
+

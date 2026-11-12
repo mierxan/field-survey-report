@@ -6739,8 +6739,9 @@ def adopt_existing_reports():
         reports += fsr_withdrawal.read_all_reports(withdrawal_book())
         if not reports:
             return []
+        # adopt_identical() stores the ledger itself; nothing was written to
+        # the workbook, so the ledger must NOT be marked current here.
         adopted = busy(guard.adopt_identical, reports)
-        guard.after_local_write()
     except Exception:
         log.exception("Could not compare the reports with MySQL")
         return []

@@ -462,3 +462,26 @@ def test_stand_in_without_the_guarded_interface_still_works(env):
     assert guard.save(make()) == ("written", ["note"])
     assert guard.save_many([make()])["written"] == [REAL]
     assert guard.taken(REAL) is False
+
+
+def test_marking_current_needs_an_announced_write(env):
+    """Found on 12 November: comparing reports with MySQL at start marked
+    an out-of-date ledger as current although nothing had been written. A
+    restored workbook would then have trusted ownership it no longer had."""
+    book, server, guard = env
+    write_and_change_elsewhere(guard, server)
+    book.write_bytes(b"restored from a backup")
+    os.utime(book, (time.time() + 60, time.time() + 60))
+    assert guard.is_stale()
+
+    guard.after_local_write()               # no before_local_write()
+    assert guard.is_stale() and not guard.owns(REAL)
+    with pytest.raises(g.MySQLConflict) as caught:
+        guard.save(make(so="EDITED"))
+    assert caught.value.conflict["kind"] == g.NOT_OWNED
+
+    fresh = g.Guard(server.client(), book)  # a later announced write
+    fresh.before_local_write()
+    fresh.after_local_write()
+    assert not fresh.is_stale() and not fresh.owns(REAL)
+

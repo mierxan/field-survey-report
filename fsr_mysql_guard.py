@@ -204,6 +204,9 @@ class Guard:
         self.path = ledger_path(excel_path)
         self.replaced_dir = (fsr_paths.json_dir_for_workbook(excel_path)
                              / REPLACED_FOLDER)
+        # Set by before_local_write(): only a write announced that way may
+        # mark the ledger as current again (after_local_write).
+        self._armed = False
 
     # ---- the ledger ----
     def _workbooks(self):
@@ -293,11 +296,20 @@ class Guard:
                 self._store(ledger)
             except OSError:
                 log.exception("The MySQL ledger could not be written")
+                return          # not armed: the old ledger stays distrusted
+        self._armed = True
 
     def after_local_write(self):
         """Call right after the program wrote a workbook (and before the
         MySQL step of that save): the ledger belongs to the workbook as it
-        is now. Only valid after before_local_write()."""
+        is now. Does nothing unless before_local_write() came first on
+        this guard: otherwise an out-of-date ledger could be marked current
+        without having been emptied."""
+        if not self._armed:
+            log.warning("after_local_write() without before_local_write(): "
+                        "the MySQL ledger was left as it is.")
+            return
+        self._armed = False
         ledger, _ = self._read()        # not trusted -> a fresh, empty one
         books = self._books()
         if ledger.get("books") == books and self.path.exists():
