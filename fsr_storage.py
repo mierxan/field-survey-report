@@ -1151,7 +1151,15 @@ def write_report_to_excel(path, data, editing, saved_at=None):
     report's Last Saved time (default: now).
     Returns {"control", "updated", "goods", "items", "remarks"}.
     """
+    return write_reports_to_excel(path, [(data, editing, saved_at)])[0]
 
+
+def write_reports_to_excel(path, items):
+    """Save several reports with ONE load and ONE save of the workbook
+    (Import Master Data). `items`: [(data, editing, saved_at), ...], applied
+    in this order exactly as write_report_to_excel() would apply them one
+    by one. The file is replaced as a whole at the end, so either all of
+    them are in it or none. Returns one result per item."""
     path = Path(path)
 
     if path.exists():
@@ -1174,12 +1182,36 @@ def write_report_to_excel(path, data, editing, saved_at=None):
         if name != "Reports":
             extend_sheet_headers(sheets[name], headers)
 
+    elsewhere = withdrawal_control_numbers(path)
+    results = [_apply_report(sheets, data, editing, saved_at, elsewhere)
+               for data, editing, saved_at in items]
+
+    for name, (table_name, headers) in EXCEL_SHEETS.items():
+        finalize_sheet(sheets[name], table_name, headers)
+
+    # Save to a temporary file first so a failed save can never
+    # damage the existing workbook.
+    temp_path = path.with_name(path.stem + ".saving.tmp")
+
+    try:
+        wb.save(temp_path)
+        os.replace(temp_path, path)
+    finally:
+        if temp_path.exists():
+            try:
+                temp_path.unlink()
+            except OSError:
+                pass
+    return results
+
+
+def _apply_report(sheets, data, editing, saved_at, elsewhere):
+    """Put one report into the open workbook's sheets."""
     schedule = data["inspection_schedule"]
     reports_ws = sheets["Reports"]
 
     control_no = data["control_no"]
     existing_row = find_row(reports_ws, control_no)
-    elsewhere = withdrawal_control_numbers(path)
     taken_elsewhere = any(same_key(n, control_no) for n in elsewhere)
 
     if editing and taken_elsewhere and not existing_row:
@@ -1259,23 +1291,6 @@ def write_report_to_excel(path, data, editing, saved_at=None):
                 [control_no, section_name, line_no, remark]
             )
             remark_rows += 1
-
-    for name, (table_name, headers) in EXCEL_SHEETS.items():
-        finalize_sheet(sheets[name], table_name, headers)
-
-    # Save to a temporary file first so a failed save can never
-    # damage the existing workbook.
-    temp_path = path.with_name(path.stem + ".saving.tmp")
-
-    try:
-        wb.save(temp_path)
-        os.replace(temp_path, path)
-    finally:
-        if temp_path.exists():
-            try:
-                temp_path.unlink()
-            except OSError:
-                pass
 
     return {
         "control": control_no,
