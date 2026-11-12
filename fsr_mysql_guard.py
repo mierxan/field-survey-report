@@ -18,9 +18,17 @@ Import Master Data, Sync to MySQL):
 "This copy wrote it" is remembered in a small file beside the workbook's
 JSON data, <workbook name>_mysql_ledger.json: for each Control # a
 fingerprint of the report as MySQL held it right after this copy's write.
-A missing or unreadable ledger, or one older than the workbook, counts as
-empty - every report is then "not owned" and is asked about (identical
-ones are adopted silently). It never falls back to overwriting.
+A missing or unreadable ledger, or one that no longer belongs to the
+workbook as it is now, counts as empty - every report is then "not owned"
+and is asked about (identical ones are adopted silently). It never falls
+back to overwriting.
+
+"Belongs to the workbook as it is now": the ledger notes the size and the
+exact change time of the workbooks as the PROGRAM last left them
+("books"). If a workbook differs from that note, something else changed it
+(a restored backup, an edit in Excel) and the ledger is not relied on.
+The program renews the note right after each of its own workbook writes -
+before the MySQL step of that same save, which needs the ledger.
 
 The check and the write happen together: under a MySQL lock on the Control #
 and inside one transaction, so two copies saving at the same moment cannot
@@ -35,7 +43,6 @@ import csv
 import hashlib
 import json
 import logging
-import os
 import socket
 import uuid
 from datetime import datetime
@@ -52,7 +59,6 @@ REPLACED_FOLDER = "MySQL Replaced"
 NOT_OWNED = "not_owned"                 # this copy never wrote that report
 CHANGED_ELSEWHERE = "changed_elsewhere"  # it did, but MySQL's changed since
 KEEP, REPLACE, RENUMBER = "keep", "replace", "renumber"
-STALE_SLACK = 5.0                       # seconds between two file times
 
 # Not part of a report's content (or not kept by MySQL at all).
 IGNORED = {"incident_error", "last_saved", "entry_source", "po_source_file",
@@ -228,28 +234,45 @@ class Guard:
         ledger.setdefault("copy_id", empty["copy_id"])
         return ledger, True
 
-    def is_stale(self):
-        """The workbook was changed after the ledger was last written (a
-        restored backup, an edit outside the program, a lost ledger)."""
-        try:
-            mine = self.path.stat().st_mtime
-        except OSError:
-            return True
-        newest = 0.0
+    def _books(self):
+        """Size and exact change time of each workbook, as it is now."""
+        found = {}
         for book in self._workbooks():
             try:
-                newest = max(newest, book.stat().st_mtime)
+                info = book.stat()
             except OSError:
-                pass
-        return newest > mine + STALE_SLACK
+                continue
+            found[book.name] = [info.st_mtime_ns, info.st_size]
+        return found
+
+    def is_stale(self, ledger=None):
+        """A workbook is not as the program last left it (a restored
+        backup, an edit outside the program), or the ledger is lost."""
+        if ledger is None:
+            ledger, trusted = self._read()
+            if not trusted:
+                return True
+        return ledger.get("books") != self._books()
+
+    def _empty(self, ledger):
+        """Stop relying on what the ledger says (in memory)."""
+        if ledger["reports"]:
+            ledger["emptied"] = self._now().isoformat(timespec="seconds")
+        ledger["reports"] = {}
+        ledger["books"] = self._books()
 
     def ledger(self):
         """The ledger as it may be relied on right now."""
         ledger, trusted = self._read()
-        if trusted and self.is_stale():
-            log.warning("The MySQL ledger is older than the workbook: every "
-                        "report counts as not owned.")
-            ledger["reports"] = {}
+        if not trusted:
+            ledger["books"] = self._books()
+        elif self.is_stale(ledger):
+            if ledger["reports"]:
+                log.warning(
+                    "The Excel file is not as this program last left it: "
+                    "the MySQL ledger is not relied on, every report "
+                    "counts as not owned.")
+            self._empty(ledger)
         return ledger
 
     def _store(self, ledger):
@@ -261,23 +284,27 @@ class Guard:
         is not to be trusted at this moment it is emptied for good - else
         the program's own write would make it look current again."""
         ledger, trusted = self._read()
-        if trusted and self.is_stale() and ledger["reports"]:
-            ledger["reports"] = {}
-            ledger["emptied"] = self._now().isoformat(timespec="seconds")
+        if trusted and self.is_stale(ledger) and ledger["reports"]:
+            log.warning(
+                "The Excel file is not as this program last left it: the "
+                "MySQL ledger is emptied, every report counts as not owned.")
+            self._empty(ledger)
             try:
                 self._store(ledger)
             except OSError:
                 log.exception("The MySQL ledger could not be written")
 
     def after_local_write(self):
-        """Call after the program wrote the workbook: the ledger is as
-        current as the workbook again."""
-        ledger, trusted = self._read()
+        """Call right after the program wrote a workbook (and before the
+        MySQL step of that save): the ledger belongs to the workbook as it
+        is now. Only valid after before_local_write()."""
+        ledger, _ = self._read()        # not trusted -> a fresh, empty one
+        books = self._books()
+        if ledger.get("books") == books and self.path.exists():
+            return
+        ledger["books"] = books
         try:
-            if trusted:
-                os.utime(self.path, None)
-            else:
-                self._store(ledger)      # a fresh, empty one
+            self._store(ledger)
         except OSError:
             log.exception("The MySQL ledger could not be written")
 
@@ -327,15 +354,26 @@ class Guard:
         if entry and entry.get("fingerprint") == fingerprint(theirs):
             return "update", theirs
         kind = CHANGED_ELSEWHERE if entry else NOT_OWNED
-        return self._conflict(kind, data, theirs), theirs
+        return self._conflict(kind, data, theirs,
+                              ledger.get("emptied")), theirs
 
-    def _conflict(self, kind, mine, theirs):
+    def _conflict(self, kind, mine, theirs, emptied=None):
         control = mine["control_no"]
-        why = ("MySQL already holds a DIFFERENT report numbered "
-               f"{control} that this copy of the program did not put there."
-               if kind == NOT_OWNED else
-               f"Report {control} was changed in MySQL by another copy of "
-               "the program after this copy last saved it.")
+        if kind == CHANGED_ELSEWHERE:
+            why = (f"This copy of the program sent report {control} to "
+                   "MySQL, but afterwards it was changed in MySQL by another "
+                   "copy of the program or directly in the database.")
+        elif emptied:
+            # The program cannot know any more whether it sent this one.
+            why = ("MySQL already holds a DIFFERENT report numbered "
+                   f"{control}, and this copy of the program has no record "
+                   "of having sent it. (Its record was reset on "
+                   f"{str(emptied).replace('T', ' ')}, because the Excel "
+                   "file had been changed outside the program or restored.)")
+        else:
+            why = ("MySQL already holds a DIFFERENT report numbered "
+                   f"{control} that this copy of the program did not put "
+                   "there.")
         return {"kind": kind, "control": control, "text": why,
                 "mine": summary(mine), "theirs": summary(theirs),
                 "differences": differences(mine, theirs),

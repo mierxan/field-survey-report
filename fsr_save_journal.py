@@ -233,12 +233,20 @@ class Stores:
         planned = _time(record.get("stamp_planned"))
         if planned is not None:
             extra["saved_at"] = planned
-        if record["linked"]:
-            return fsr_withdrawal.write_withdrawal_report(
-                self.home(record), data, record["editing"], self.excel_path,
-                **extra)
-        return storage.write_report_to_excel(
-            self.excel_path, data, record["editing"], **extra)
+        # The MySQL ledger must belong to the workbook as THIS write leaves
+        # it, before the MySQL step of the same save looks at the ledger.
+        if self.guard is not None:
+            self.guard.before_local_write()
+        try:
+            if record["linked"]:
+                return fsr_withdrawal.write_withdrawal_report(
+                    self.home(record), data, record["editing"],
+                    self.excel_path, **extra)
+            return storage.write_report_to_excel(
+                self.excel_path, data, record["editing"], **extra)
+        finally:
+            if self.guard is not None:
+                self.guard.after_local_write()
 
     def incidents(self, record):
         data = record["data"]

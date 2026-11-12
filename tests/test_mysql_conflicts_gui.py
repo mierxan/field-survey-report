@@ -394,3 +394,91 @@ def test_first_start_adopts_the_existing_reports_without_questions(copy):
     assert g["save_report"]() is True
     assert in_mysql(server, made[0]) == "ADOPT-1 EDITED"
     assert notes(answers) == [] and waiting(g) == []
+
+
+# =====================================================================
+# Found by hand on 12 November 2026 (a real server, minutes between saves)
+# =====================================================================
+
+def minutes_pass(g):
+    """Ten minutes go by: the ledger file is that much older, the workbook
+    is untouched. The earlier tests saved twice within seconds, which hid
+    that the program judged its own ledger "out of date" during a save."""
+    import os
+    path = fsr_mysql_guard.ledger_path(book(g))
+    info = path.stat()
+    os.utime(path, (info.st_atime - 600, info.st_mtime - 600))
+
+
+def edit_and_save(g, so):
+    g["set_entry"](g["SO_number_entry"], so)
+    assert g["save_report"]() is True
+
+
+def test_my_own_report_is_still_mine_minutes_later(copy):
+    g, answers, server, _ = copy
+    control = fill(g, "SO-OWN-1")
+    assert g["save_report"]() is True
+    for number in (2, 3, 4):
+        minutes_pass(g)
+        edit_and_save(g, f"SO-OWN-{number}")
+        assert in_mysql(server, control) == f"SO-OWN-{number}"
+    assert notes(answers) == [] and waiting(g) == []
+
+
+def test_saved_offline_caught_up_then_edited_minutes_later(copy):
+    g, answers, server, _ = copy
+    server.down = True
+    control = fill(g, "SO-OFFLINE")
+    assert g["save_report"]() is True
+    server.down = False
+    minutes_pass(g)
+    g["finish_unfinished_saves"](mysql_ok=True)         # MySQL is back
+    assert in_mysql(server, control) == "SO-OFFLINE"
+    minutes_pass(g)
+    answers.calls.clear()
+
+    edit_and_save(g, "SO-OFFLINE, EDITED")
+
+    assert in_mysql(server, control) == "SO-OFFLINE, EDITED"
+    assert notes(answers) == [] and waiting(g) == []
+
+
+def test_after_replace_the_report_is_mine_minutes_later(copy):
+    g, answers, server, _ = copy
+    control = offline_collision(g, server)
+    minutes_pass(g)
+    dialog = live(g)["open_mysql_conflicts"]()
+    press(dialog, "Replace MySQL's with mine...")
+    assert in_mysql(server, control) == "MINE, SAVED OFFLINE"
+    replaced = fsr_mysql_guard.Guard(None, book(g)).replaced_dir
+    kept_before = len(list(replaced.glob(f"{control}*.json")))
+    minutes_pass(g)
+    answers.calls.clear()
+
+    g["load_report_into_form"](control, "excel")
+    edit_and_save(g, "MINE, EDITED AFTER THE REPLACE")
+
+    assert in_mysql(server, control) == "MINE, EDITED AFTER THE REPLACE"
+    assert notes(answers) == [] and waiting(g) == []
+    assert len(list(replaced.glob(f"{control}*.json"))) == kept_before
+
+
+def test_changed_in_mysql_after_i_sent_it_says_so(copy):
+    """Finding 4: the note must not claim this copy never sent it."""
+    g, answers, server, _ = copy
+    control = fill(g, "SO-SENT-BY-ME")
+    assert g["save_report"]() is True
+    minutes_pass(g)
+    changed = server.get(control)
+    changed["general_information"]["so_number"] = "CHANGED"
+    server.put(changed)                         # by hand, in the database
+    answers.calls.clear()
+
+    edit_and_save(g, "SO-SENT-BY-ME, EDITED")
+
+    (note,) = notes(answers)
+    assert f"This copy of the program sent report {control} to MySQL" in note
+    assert "afterwards it was changed in MySQL" in note
+    assert "did not put there" not in note
+    assert in_mysql(server, control) == "CHANGED"       # nothing overwritten
