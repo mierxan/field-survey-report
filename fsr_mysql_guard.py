@@ -34,16 +34,26 @@ The check and the write happen together: under a MySQL lock on the Control #
 and inside one transaction, so two copies saving at the same moment cannot
 both pass the check.
 
+Within one copy, the window (saving to the workbook) and the background
+sender (fsr_mysql_sender) both use the ledger. A lock per ledger keeps them
+apart: a workbook write and the renewal of the ledger's note of it
+(local_write()) happen as one step, and the sender reads or changes the
+ledger only between such steps - never while the workbook is newer than
+its note, which would make this copy's own reports look like someone
+else's. The lock is never held while waiting for MySQL.
+
 Before a MySQL report is replaced on the user's decision, the replaced
 version is kept in  <JSON folder>/MySQL Replaced/  with a line in
 replaced_log.csv (who, when, which copy, which Control #). put_back()
 writes such a file into MySQL again.
 """
+import contextlib
 import csv
 import hashlib
 import json
 import logging
 import socket
+import threading
 import uuid
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -182,6 +192,16 @@ def summary(report):
 # the guard of one workbook
 # ---------------------------------------------------------------------
 
+_LOCKS = {}
+_LOCKS_GUARD = threading.Lock()
+
+
+def _lock_for(path):
+    key = str(Path(path).resolve()).casefold()
+    with _LOCKS_GUARD:
+        return _LOCKS.setdefault(key, threading.RLock())
+
+
 def ledger_path(excel_path):
     excel_path = Path(excel_path)
     return (fsr_paths.json_dir_for_workbook(excel_path)
@@ -207,6 +227,7 @@ class Guard:
         # Set by before_local_write(): only a write announced that way may
         # mark the ledger as current again (after_local_write).
         self._armed = False
+        self._lock = _lock_for(self.path)
 
     # ---- the ledger ----
     def _workbooks(self):
@@ -282,6 +303,24 @@ class Guard:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         storage.write_json_atomic(self.path, ledger)
 
+    @contextlib.contextmanager
+    def local_write(self):
+        """Around every write of the program to a workbook: the ledger is
+        emptied first if it is out of date, and its note of the workbooks
+        is renewed right after - as one step for the sender."""
+        with self._lock:
+            self.before_local_write()
+            try:
+                yield
+            finally:
+                self.after_local_write()
+
+    def reading(self):
+        """Hold this while reading a workbook from another thread: the
+        window does not replace the file meanwhile (Windows cannot replace
+        a file that is open)."""
+        return self._lock
+
     def before_local_write(self):
         """Call before the program itself writes the workbook. If the ledger
         is not to be trusted at this moment it is emptied for good - else
@@ -321,21 +360,29 @@ class Guard:
             log.exception("The MySQL ledger could not be written")
 
     def owns(self, control_no):
-        return storage.control_key(control_no) in self.ledger()["reports"]
+        with self._lock:
+            return storage.control_key(control_no) in self.ledger()[
+                "reports"]
 
-    def _remember(self, ledger, control_no, report_in_mysql):
-        ledger["reports"][storage.control_key(control_no)] = {
-            "control": control_no,
-            "fingerprint": fingerprint(report_in_mysql),
-            "written": self._now().isoformat(timespec="seconds"),
-        }
-        self._store(ledger)
+    def _remember(self, control_no, report_in_mysql, adopted=False):
+        """Read the ledger again and add one entry: the window may have
+        renewed the note of the workbooks since the check."""
+        entry = {"control": control_no,
+                 "fingerprint": fingerprint(report_in_mysql),
+                 "written": self._now().isoformat(timespec="seconds")}
+        if adopted:
+            entry["adopted"] = True
+        with self._lock:
+            ledger = self.ledger()
+            ledger["reports"][storage.control_key(control_no)] = entry
+            self._store(ledger)
 
     def forget(self, control_no):
-        ledger, trusted = self._read()
-        if trusted and ledger["reports"].pop(
-                storage.control_key(control_no), None) is not None:
-            self._store(ledger)
+        with self._lock:
+            ledger, trusted = self._read()
+            if trusted and ledger["reports"].pop(
+                    storage.control_key(control_no), None) is not None:
+                self._store(ledger)
 
     # ---- one report ----
     def look(self, data, connection=None):
@@ -345,7 +392,9 @@ class Guard:
         own = connection is None
         conn = connection or self.db.connect()
         try:
-            return self._decide(conn, data, self.ledger())[0]
+            with self._lock:
+                ledger = self.ledger()
+            return self._decide(conn, data, ledger)[0]
         finally:
             if own:
                 try:
@@ -411,12 +460,13 @@ class Guard:
                 raise MySQLBusy(
                     f"Another copy of the program is saving {control} in "
                     "MySQL right now. It will be tried again.")
-            ledger = self.ledger()
+            with self._lock:
+                ledger = self.ledger()
             verdict, theirs = self._decide(conn, data, ledger,
                                            lock_rows=True)
             if verdict == "identical":
                 conn.rollback()
-                self._remember(ledger, control, theirs)
+                self._remember(control, theirs)
                 return "identical", []
             if isinstance(verdict, dict) and decision != REPLACE:
                 conn.rollback()
@@ -428,8 +478,7 @@ class Guard:
                     verdict, dict) else "replaced on request")
             notes = self.db.write_report(conn, data) or []
             conn.commit()
-            self._remember(ledger, control,
-                           self.db.load_report(control, conn))
+            self._remember(control, self.db.load_report(control, conn))
             return "written", notes
         except Exception:
             try:
@@ -455,7 +504,8 @@ class Guard:
         own = connection is None
         conn = connection or self.db.connect()
         try:
-            ledger = self.ledger()
+            with self._lock:
+                ledger = self.ledger()
             for report in reports:
                 verdict, _ = self._decide(conn, report, ledger)
                 if isinstance(verdict, dict):
@@ -507,38 +557,46 @@ class Guard:
             conn.close()
         return result
 
-    def adopt_identical(self, reports):
+    def adopt_identical(self, reports, connection=None):
         """First run with existing data: reports that MySQL holds with the
         same value become this copy's own, without a question. Returns the
         Control #s adopted. Writes nothing to MySQL."""
         if not supports(self.db):
             return []
-        adopted = []
-        conn = self.db.connect()
+        adopted = {}
+        own = connection is None
+        conn = connection or self.db.connect()
         try:
-            ledger = self.ledger()
+            with self._lock:
+                known = set(self.ledger()["reports"])
             for report in reports:
                 control = report["control_no"]
-                if storage.control_key(control) in ledger["reports"]:
+                if storage.control_key(control) in known:
                     continue
                 if not control_in(self.db, conn, control):
                     continue
                 theirs = self.db.load_report(control, conn)
                 if same_value(report, theirs):
-                    ledger["reports"][storage.control_key(control)] = {
+                    adopted[control] = {
                         "control": control,
                         "fingerprint": fingerprint(theirs),
                         "written": self._now().isoformat(timespec="seconds"),
                         "adopted": True}
-                    adopted.append(control)
             if adopted:
-                self._store(ledger)
+                # Read again: the window may have saved in the meantime.
+                with self._lock:
+                    ledger = self.ledger()
+                    for control, entry in adopted.items():
+                        ledger["reports"].setdefault(
+                            storage.control_key(control), entry)
+                    self._store(ledger)
         finally:
             try:
                 conn.rollback()
             finally:
-                conn.close()
-        return adopted
+                if own:
+                    conn.close()
+        return list(adopted)
 
     def taken(self, control_no):
         """True when MySQL has a report with this number that is not this
