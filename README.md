@@ -65,6 +65,12 @@ automatically at the next start or save - see
 [docs/DATA_SAFETY.md](docs/DATA_SAFETY.md), which also explains how to
 restore a backup.
 
+Several copies of the program may share one MySQL database: a copy never
+overwrites a MySQL report it does not own, and a copy run from this folder is
+a TEST COPY that refuses the real database - see
+[docs/TWO_COPIES_ONE_DATABASE.md](docs/TWO_COPIES_ONE_DATABASE.md), which
+also has the steps for the test database.
+
 ## 3. The modules (left navigation bar)
 
 | Module | What it does |
@@ -212,6 +218,9 @@ app_auth.py              sign in / users, signed account file
 fsr_secrets.py           Windows Credential Manager (recovery code, MySQL password)
 fsr_backup.py            daily backup copy of the workbook
 fsr_save_journal.py      record of each save; finishes a save that stopped halfway
+fsr_mysql_guard.py       checks before every write to MySQL; conflicts and replaced versions
+fsr_renumber.py          gives a saved report another Control # everywhere on this PC
+fsr_test_db_script.py    makes the script for the test database from the real schema
 fsr_build_check.py       build check: no account data in the User edition
 warehouse/               business logic, no widgets
     periods.py           reporting periods (calendar weeks Mon–Sun)
