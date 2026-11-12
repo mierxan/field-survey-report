@@ -97,3 +97,7 @@ def stop_app(app, answers):
         pass
     answers.uninstall()
     os.environ.pop("FSR_HOME", None)
+    # The program put the test user's initials into new Control #s; tests
+    # that run after this one start without initials again.
+    import fsr_storage
+    fsr_storage.set_control_initials("")
