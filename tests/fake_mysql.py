@@ -111,6 +111,10 @@ class FakeDB:
         return True, (f"Connected. The database has "
                       f"{len(self.server.reports)} report(s).")
 
+    def check_connection(self, config=None):
+        ok, message = self.test_connection(config)
+        return ok, message, self.server.down
+
     # ---- the guarded interface ----
     def lock_report(self, conn, control, timeout=10):
         key = s.control_key(control)
@@ -131,6 +135,8 @@ class FakeDB:
     has_report = report_exists
 
     def load_report(self, control, connection=None):
+        if connection is None:
+            self.connect()              # a stopped server cannot be read
         report = self.server.reports.get(s.control_key(control))
         if report is None:
             raise ValueError(f"Control # {control} was not found in MySQL.")

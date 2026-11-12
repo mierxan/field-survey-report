@@ -482,3 +482,103 @@ def test_changed_in_mysql_after_i_sent_it_says_so(copy):
     assert "afterwards it was changed in MySQL" in note
     assert "did not put there" not in note
     assert in_mysql(server, control) == "CHANGED"       # nothing overwritten
+
+
+# ---------- Finding 2: MySQL stopped is a notice, never an error box ----------
+
+def no_error_box(answers):
+    return [c for c in answers.calls if c[0] == "showerror"] == []
+
+
+def test_saved_reports_list_with_mysql_stopped_shows_the_excel_list(copy):
+    g, answers, server, toasts = copy
+    control = fill(g, "SO-LISTED")
+    assert g["save_report"]() is True
+    server.down = True
+    answers.calls.clear()
+    toasts.clear()
+    before = set(g["window"].winfo_children())
+
+    g["open_saved_report_dialog"]()
+
+    opened = [w for w in set(g["window"].winfo_children()) - before
+              if w.winfo_class() == "Toplevel"]
+    try:
+        assert no_error_box(answers)
+        assert any("MySQL was not reached" in t and "Excel file" in t
+                   for t in toasts)
+        (dialog,) = opened                      # the list did open ...
+        trees = [w for w in widgets(dialog)
+                 if w.winfo_class() == "Treeview"]
+        assert control in trees[0].get_children()    # ... from Excel
+    finally:
+        for window in opened:
+            window.destroy()
+
+
+def test_opening_a_report_with_mysql_stopped_uses_the_excel_file(copy):
+    g, answers, server, toasts = copy
+    control = fill(g, "SO-OPENED-OFFLINE")
+    assert g["save_report"]() is True
+    g["new_report"](confirm=False)
+    server.down = True
+    answers.calls.clear()
+    toasts.clear()
+
+    g["load_report_into_form"](control, "mysql")
+
+    assert no_error_box(answers)
+    assert g["control_entry"].get() == control
+    assert g["SO_number_entry"].get() == "SO-OPENED-OFFLINE"
+    assert any("MySQL was not reached" in t for t in toasts)
+
+
+@pytest.mark.parametrize("action", ["sync_all_to_mysql",
+                                    "restore_excel_from_mysql",
+                                    "test_mysql_connection"])
+def test_mysql_actions_with_mysql_stopped_show_a_notice(copy, action):
+    g, answers, server, toasts = copy
+    fill(g, "SO-FOR-" + action)
+    assert g["save_report"]() is True
+    server.down = True
+    answers.calls.clear()
+    toasts.clear()
+
+    live(g)[action]()
+
+    assert no_error_box(answers)
+    assert any("MySQL was not reached" in t for t in toasts)
+    assert not any("2003" in str(c[2]) for c in answers.calls)
+
+
+def test_deciding_a_conflict_with_mysql_stopped_shows_a_notice(copy):
+    g, answers, server, toasts = copy
+    control = offline_collision(g, server)
+    dialog = live(g)["open_mysql_conflicts"]()
+    server.down = True
+    answers.calls.clear()
+    toasts.clear()
+
+    press(dialog, "Replace MySQL's with mine...")
+
+    assert no_error_box(answers)
+    assert [c for c in answers.calls if c[0] == "showwarning"] == []
+    assert any("MySQL was not reached" in t for t in toasts)
+    server.down = False
+    assert in_mysql(server, control) == "THE OTHER COPY'S REPORT"
+    assert len(waiting(g)) == 1                 # still waiting
+
+
+def test_other_mysql_errors_still_get_their_box(copy, monkeypatch):
+    g, answers, server, toasts = copy
+
+    def refused(config=None):
+        error = OSError("Access denied for user")
+        error.errno = 1045
+        raise error
+
+    monkeypatch.setattr(live(g)["db_mysql"], "connect", refused)
+    answers.calls.clear()
+    live(g)["restore_excel_from_mysql"]()
+    assert [c[1] for c in answers.calls if c[0] == "showerror"] == [
+        "Restore Error"]

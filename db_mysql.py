@@ -270,25 +270,31 @@ def is_unreachable(error):
     return getattr(error, "errno", None) in UNREACHABLE
 
 
-def test_connection(config=None):
-    """(ok, message) - used by the 'Test MySQL' button and test_mysql.py."""
+def check_connection(config=None):
+    """(ok, message, away). `away` is True when the server simply cannot
+    be reached (service stopped, PC offline) - not an error to shout about."""
     config = config or load_config()
     if config is None:
-        return False, "db_config.json is missing or has no user."
+        return False, "db_config.json is missing or has no user.", False
     try:
         conn = connect(config)
     except Exception as error:
-        return False, explain_error(error)
+        return False, explain_error(error), is_unreachable(error)
     try:
         cur = conn.cursor()
         cur.execute("SELECT COUNT(*) FROM reports")
         count = cur.fetchone()[0]
         cur.close()
     except Exception as error:
-        return False, explain_error(error)
+        return False, explain_error(error), is_unreachable(error)
     finally:
         conn.close()
-    return True, f"Connected. The database has {count} report(s)."
+    return True, f"Connected. The database has {count} report(s).", False
+
+
+def test_connection(config=None):
+    """(ok, message) - used by the 'Test MySQL' button and test_mysql.py."""
+    return check_connection(config)[:2]
 
 
 CONTROL_NO_LENGTH = 40

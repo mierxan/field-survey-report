@@ -1401,6 +1401,22 @@ def notify(message, bootstyle="success"):
         pass
 
 
+def mysql_away(error, what_now):
+    """A MySQL server that cannot be reached is normal (the service is
+    stopped, the PC is offline): no error box. Shows the orange notice
+    "MySQL was not reached - <what_now>" and returns True; returns False
+    for any other error, which the caller reports as before."""
+    if db_mysql is None or not getattr(
+            db_mysql, "is_unreachable", lambda e: False)(error):
+        return False
+    log.info("MySQL was not reached: %s", error)
+    if "set_mysql_dots" in globals():
+        set_mysql_dots("bad", "MySQL was not reached. Is the MySQL80 "
+                              "service running?")
+    notify(f"MySQL was not reached  -  {what_now}", bootstyle="warning")
+    return True
+
+
 # =====================================================
 # LAYOUT  (dashboard style)
 #   top bar | icon rail | sections menu | page | commands panel
@@ -1875,7 +1891,13 @@ if IS_OWNER_EDITION:    # the User edition never uses MySQL
                         False, "MySQL is turned off. Open the account menu "
                                "(top right) > MySQL Settings to set it up.")
                 else:
-                    result["value"] = db_mysql.test_connection()
+                    check = getattr(db_mysql, "check_connection", None)
+                    if check is not None:
+                        ok, message, away = check()
+                        result["value"] = (ok, message)
+                        result["away"] = away
+                    else:
+                        result["value"] = db_mysql.test_connection()
             except Exception as error:
                 result["value"] = (False, str(error))
 
@@ -1895,6 +1917,10 @@ if IS_OWNER_EDITION:    # the User edition never uses MySQL
             if show_error and not ok:
                 if db_mysql is None or not db_mysql.is_enabled():
                     open_mysql_settings()
+                elif result.get("away"):
+                    notify("MySQL was not reached  -  reports are saved on "
+                           "this PC and sent when it is back",
+                           bootstyle="warning")
                 else:
                     messagebox.showerror("MySQL", message, parent=window)
 
@@ -5962,7 +5988,23 @@ def load_report_into_form(control_no, source="excel"):
         if po_linked:
             data = fsr_withdrawal.read_report(withdrawal_book(), control_no)
         elif source == "mysql":
-            data = db_mysql.load_report(control_no)
+            try:
+                data = db_mysql.load_report(control_no)
+            except Exception as error:
+                if not mysql_away(error, f"{control_no} is opened from "
+                                         "this PC's Excel file"):
+                    raise
+                try:
+                    data = read_report(excel_state["path"], control_no)
+                except PermissionError:
+                    raise
+                except Exception:
+                    messagebox.showwarning(
+                        "Open Saved Report",
+                        f"MySQL was not reached, and {control_no} is not "
+                        "in this PC's Excel file.\n\nOpen it again when "
+                        "MySQL is running.", parent=window)
+                    return
         else:
             data = read_report(excel_state["path"], control_no)
     except PermissionError:
@@ -6070,6 +6112,11 @@ def open_saved_report_dialog(initial_search=""):
             problem = ("Cannot read the Excel file. Close it in Excel and "
                        "try again.")
         except Exception as error:
+            if source_var.get() == "mysql" and mysql_away(
+                    error, "the list shows the reports in this PC's Excel "
+                           "file"):
+                source_var.set("excel")
+                return fetch_reports(show_errors)
             log.exception("Reading saved reports failed")
             problem = (db_mysql.explain_error(error)
                        if source_var.get() == "mysql" else
@@ -6784,6 +6831,9 @@ def open_mysql_conflicts(select=None):
         error = outcome["failed"].get("mysql")
         if error is None:
             return False
+        if mysql_away(error, "nothing was changed; decide again when it "
+                             "is back"):
+            return True
         messagebox.showwarning(
             "MySQL Conflicts",
             "MySQL was NOT changed:\n" + (
@@ -6823,8 +6873,10 @@ def open_mysql_conflicts(select=None):
                            record["id"])
         except Exception as error:
             log.exception("Replacing %s in MySQL failed", record["control"])
-            messagebox.showerror("MySQL Conflicts", f"MySQL was NOT "
-                                 f"changed:\n{error}", parent=dialog)
+            if not mysql_away(error, "nothing was changed; decide again "
+                                     "when it is back"):
+                messagebox.showerror("MySQL Conflicts", f"MySQL was NOT "
+                                     f"changed:\n{error}", parent=dialog)
             reload(record["id"])
             return
         if not problem(outcome):
@@ -6842,10 +6894,12 @@ def open_mysql_conflicts(select=None):
             taken = list(db_mysql.control_numbers())
             new = fsr_renumber.next_free(path, old, taken)
         except Exception as error:
-            messagebox.showerror(
-                "MySQL Conflicts", "The next free number could not be "
-                f"worked out:\n{db_mysql.explain_error(error)}",
-                parent=dialog)
+            if not mysql_away(error, "nothing was changed; decide again "
+                                     "when it is back"):
+                messagebox.showerror(
+                    "MySQL Conflicts", "The next free number could not be "
+                    f"worked out:\n{db_mysql.explain_error(error)}",
+                    parent=dialog)
             return
         if not messagebox.askyesno(
                 "Save mine under the next free number?",
@@ -7156,10 +7210,12 @@ def sync_all_to_mysql():
         reports, linked, plan = busy(read_and_plan)
     except Exception as error:
         log.exception("MySQL sync preview failed")
-        messagebox.showerror(
-            "MySQL Error",
-            f"Nothing was sent:\n{db_mysql.explain_error(error)}",
-            parent=window)
+        if not mysql_away(error, "nothing was sent; use Sync to MySQL "
+                                 "again when it is back"):
+            messagebox.showerror(
+                "MySQL Error",
+                f"Nothing was sent:\n{db_mysql.explain_error(error)}",
+                parent=window)
         return
 
     def send(replace):
@@ -7170,10 +7226,12 @@ def sync_all_to_mysql():
             db_mysql.save_master_lists(master_data)
         except Exception as error:
             log.exception("MySQL sync failed")
-            messagebox.showerror(
-                "MySQL Error",
-                f"Sync stopped:\n{db_mysql.explain_error(error)}",
-                parent=window)
+            if not mysql_away(error, "the sync stopped; use Sync to MySQL "
+                                     "again when it is back"):
+                messagebox.showerror(
+                    "MySQL Error",
+                    f"Sync stopped:\n{db_mysql.explain_error(error)}",
+                    parent=window)
             return
         lines = [f"Sent to MySQL: {len(result['written'])}",
                  f"Already the same in MySQL: {len(result['identical'])}"]
@@ -7322,8 +7380,11 @@ def restore_excel_from_mysql():
         return
     except Exception as error:
         log.exception("Restore from MySQL failed")
-        messagebox.showerror(
-            "Restore Error", db_mysql.explain_error(error), parent=window)
+        if not mysql_away(error, "nothing was restored; the Excel file is "
+                                 "unchanged"):
+            messagebox.showerror(
+                "Restore Error", db_mysql.explain_error(error),
+                parent=window)
         return
 
     message = f"{added} report(s) restored from MySQL into the Excel file."
@@ -7336,7 +7397,17 @@ def restore_excel_from_mysql():
 
 
 def test_mysql_connection():
-    ok, message = busy(db_mysql.test_connection)
+    check = getattr(db_mysql, "check_connection", None)
+    if check is None:
+        ok, message, away = (*busy(db_mysql.test_connection), False)
+    else:
+        ok, message, away = busy(check)
+    if away:
+        if "set_mysql_dots" in globals():
+            set_mysql_dots("bad", message)
+        notify("MySQL was not reached  -  is the MySQL80 service running?",
+               bootstyle="warning")
+        return
     (messagebox.showinfo if ok else messagebox.showerror)(
         "MySQL connection", message, parent=window)
 
