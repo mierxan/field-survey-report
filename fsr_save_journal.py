@@ -320,6 +320,20 @@ def open_save(journal, stores, data, editing, linked, mysql):
                          steps_for(data, linked, mysql))
 
 
+def open_local_steps(journal, control_no):
+    """The steps on this PC (not the workbook itself, not MySQL) that an
+    earlier, unfinished save of this report still owes. A new save of the
+    report replaces that record and does these steps itself."""
+    key = storage.control_key(control_no)
+    try:
+        records = journal.pending()
+    except JournalError:
+        return []
+    return [step for step in LOCAL_STEPS[1:]
+            if any(storage.control_key(r.get("control")) == key
+                   and r["steps"].get(step) == PENDING for r in records)]
+
+
 def _settled(record, steps=STEPS):
     return all(record["steps"].get(step, DONE) in SETTLED for step in steps)
 

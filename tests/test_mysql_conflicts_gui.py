@@ -582,3 +582,37 @@ def test_other_mysql_errors_still_get_their_box(copy, monkeypatch):
     live(g)["restore_excel_from_mysql"]()
     assert [c[1] for c in answers.calls if c[0] == "showerror"] == [
         "Restore Error"]
+
+
+# ---------- Finding 3: a save that finishes an earlier save of the report ----
+
+def test_saving_the_same_report_again_says_what_was_completed(copy,
+                                                              monkeypatch):
+    import fsr_withdrawal
+    g, answers, server, _ = copy
+    real = fsr_withdrawal.sync_item_lists
+
+    def open_in_excel(path):
+        raise PermissionError("PO_Master.xlsx is open")
+
+    monkeypatch.setattr(fsr_withdrawal, "sync_item_lists", open_in_excel)
+    control = fill(g, "SO-PO-OPEN")
+    assert g["save_report"]() is True
+    (note,) = notes(answers)
+    assert "PO_Master or Withdrawn_Item could not be updated" in note
+    monkeypatch.setattr(fsr_withdrawal, "sync_item_lists", real)
+    minutes_pass(g)
+    # ... and MySQL's copy was changed meanwhile: both things are said
+    changed = server.get(control)
+    changed["general_information"]["so_number"] = "CHANGED"
+    server.put(changed)
+    answers.calls.clear()
+
+    edit_and_save(g, "SO-PO-CLOSED")            # Excel closed, save again
+
+    (note,) = notes(answers)
+    assert "Unfinished Save" in note
+    assert "It was completed now: PO_Master and Withdrawn_Item." in note
+    assert "MySQL was NOT updated" in note
+    journal = fsr_save_journal.Journal(book(g))
+    assert fsr_save_journal.open_local_steps(journal, control) == []

@@ -6417,6 +6417,7 @@ def save_report():
         path, mysql=db_mysql if mysql_on else None,
         required_root=DATA_DIR if DEMO_MODE else None, guard=guard)
     journal = record = None
+    earlier_open = []
     if mysql_on and not report_state["editing"]:
         free = free_number_for_new_report(data["control_no"])
         if free != data["control_no"]:
@@ -6446,6 +6447,11 @@ def save_report():
         # finished at the next save or the next start (fsr_save_journal).
         try:
             journal = fsr_save_journal.Journal(path)
+            # An earlier save of this same report that did not finish is
+            # replaced by this one; what it still owed is done by this save
+            # and said in the note below.
+            earlier_open = fsr_save_journal.open_local_steps(
+                journal, data["control_no"])
             record = fsr_save_journal.open_save(
                 journal, stores, data, report_state["editing"], linked,
                 mysql_on)
@@ -6529,6 +6535,14 @@ def save_report():
             incident_note = "\n\n".join(t for t in (incident_note, (
                 "PO_Master and Withdrawn_Item could not be updated:\n"
                 f"{failed['item_lists']}" + later)) if t)
+
+    completed_now = [step for step in earlier_open if step not in failed]
+    if completed_now:
+        incident_note = "\n\n".join(t for t in ((
+            "Unfinished Save: an earlier save of this report had not "
+            "finished. It was completed now: "
+            f"{fsr_save_journal.words(completed_now)}."), incident_note)
+            if t)
 
     # Also store the report in MySQL (when db_config.json is set up).
     db_note = None
