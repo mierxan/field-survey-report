@@ -419,8 +419,30 @@ set_control_initials(current_user.get("initials"))     # in every new Control #
 print_name = {"value": USER_FULL_NAME}                 # preparer of this printout
 IS_OWNER = app_auth.is_admin(current_user)   # Owner or site Administrator
 ROLE_LABEL = app_auth.role_text(current_user)
-window.title(f"Field Survey Report ({fsr_edition.LABEL} edition) - "
-             f"{USER_FULL_NAME}")
+# A copy that runs from the source folder is a TEST COPY: the title bar
+# always says so, and it does not connect to the real database unless
+# db_config.json explicitly allows it (db_mysql.refuses_real_database).
+TEST_COPY = not FROZEN
+
+
+def title_prefix():
+    if not TEST_COPY:
+        return ""
+    real = False
+    if db_mysql is not None and MYSQL_ALLOWED:
+        try:
+            config = db_mysql.load_config()
+            real = bool(config) and str(config.get(
+                "database", db_mysql.PRODUCTION_DATABASE)).strip().lower() \
+                == db_mysql.PRODUCTION_DATABASE and config.get(
+                    db_mysql.ALLOW_REAL) is True
+        except Exception:
+            real = False
+    return "TEST COPY (REAL DATABASE) - " if real else "TEST COPY - "
+
+
+window.title(f"{title_prefix()}Field Survey Report "
+             f"({fsr_edition.LABEL} edition) - {USER_FULL_NAME}")
 
 
 def center_window(win, width, height, top_margin=10):
@@ -3598,7 +3620,7 @@ def update_status():
     status_badge.configure(text=text, bootstyle=badge)
     file_label.configure(text=f"File: {Path(excel_state['path']).name}")
     window.title(
-        f"{'* ' if dirty else ''}Field Survey Report - "
+        f"{'* ' if dirty else ''}{title_prefix()}Field Survey Report - "
         f"{control_entry.get()} - {Path(excel_state['path']).name}"
     )
 

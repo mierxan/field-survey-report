@@ -169,7 +169,9 @@ def test_each_config_file_has_its_own_entry(config_file, monkeypatch,
 def test_connect_uses_the_stored_password(config_file, monkeypatch):
     import sys
     import types
-    db_mysql.write_config(dict(PLAIN))
+    # PLAIN names the real database; a copy run from source (as the tests
+    # are) connects to it only with this explicit permission.
+    db_mysql.write_config({**PLAIN, "allow_real_database": True})
     seen = {}
     connector = types.ModuleType("mysql.connector")
     connector.connect = lambda **kw: seen.update(kw) or "connection"

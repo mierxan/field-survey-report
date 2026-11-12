@@ -19,6 +19,7 @@ import hashlib
 import json
 import logging
 import os
+import sys
 from datetime import datetime
 
 from fsr_storage import control_sort_key, split_quantity_unit
@@ -175,10 +176,39 @@ def move_password_to_store():
     return "moved"
 
 
+# The real database. A copy of the program that is run from the source
+# folder (a TEST COPY) does not connect to it unless db_config.json says
+# "allow_real_database": true - so a test can never write into real data.
+# The installed program is not affected.
+PRODUCTION_DATABASE = "field_survey"
+ALLOW_REAL = "allow_real_database"
+
+
+class RealDatabaseRefused(RuntimeError):
+    """A test copy was about to connect to the real database."""
+
+
+def is_test_copy():
+    return not getattr(sys, "frozen", False)
+
+
+def refuses_real_database(config):
+    name = str((config or {}).get("database", PRODUCTION_DATABASE)).strip()
+    return (is_test_copy() and name.lower() == PRODUCTION_DATABASE
+            and (config or {}).get(ALLOW_REAL) is not True)
+
+
 def connect(config=None):
     config = config or load_config()
     if config is None:
         raise RuntimeError("MySQL is not set up (db_config.json).")
+    if refuses_real_database(config):
+        raise RealDatabaseRefused(
+            "TEST COPY: this copy of the program runs from the source "
+            f"folder and will not connect to the real database "
+            f"'{PRODUCTION_DATABASE}'.\nUse a test database (for example "
+            "field_survey_test) in MySQL Settings. See "
+            "docs/TWO_COPIES_ONE_DATABASE.md.")
     try:
         import mysql.connector
     except ImportError as error:
