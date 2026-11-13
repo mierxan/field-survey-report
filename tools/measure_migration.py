@@ -27,6 +27,10 @@ def main():
     parser.add_argument("--real", type=Path)
     args = parser.parse_args()
 
+    import os
+    # the databases of the measurement stay in the work folder, never in
+    # this PC's Local AppData (fsr_db_location)
+    os.environ["FSR_DATABASE_DIR"] = str(args.work.resolve() / "databases")
     import fsr_paths
     import fsr_sqlite_export as export
     import fsr_sqlite_migrate as migrate
