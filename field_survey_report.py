@@ -85,6 +85,7 @@ import fsr_mysql_guard             # never overwrite another copy's report
 import fsr_mysql_sender            # MySQL in the background
 import fsr_save_journal            # finishes a save that stopped halfway
 import fsr_store                   # the ONE storage interface
+import fsr_weekly
 import fsr_item_lists_ui
 from fsr_forms import (  # the official report forms (moved)
     convert_form_to_pdf,  # noqa: F401 - tests reach it as g["convert_form_to_pdf"]
@@ -108,10 +109,10 @@ from fsr_storage import (          # plain data layer
     CHOICE_VALUES, CONDITION_BAD, CONDITION_GOOD,
     DATE_FORMAT, DOCUMENT_FIELDS, empty_goods_types,
     GOODS_TYPES, INCIDENT_HEADER_FIELDS,
-    INCIDENT_MAX_LINES, incident_title, ITEM_HEADERS, ITEM_LINE_HEADERS,
+    INCIDENT_MAX_LINES, incident_title, ITEM_LINE_HEADERS,
     ITEM_FORM_CONTAINERIZED, ITEM_FORM_DEFAULT, ITEM_FORM_LOADING,
     item_form_name, ITEM_FORMS, ITEM_LINK_HEADERS, UNIT_NO_HEADER,
-    split_quantity_unit, normalize_field, parse_date, recent_date_options, safe_filename, SCHEDULE_FIELDS,
+    normalize_field, recent_date_options, safe_filename, SCHEDULE_FIELDS,
     set_control_initials,
     to_number, TRANSPORT_FIELDS, TYPEABLE_CHOICES,
     write_json_atomic, same_key,
@@ -1484,78 +1485,24 @@ def week_span(year, month, week):
     return first, (last if week >= 5 else min(week * 7, last))
 
 
-def report_to_weekly_rows(data):
-    """One report -> weekly summary rows (a row per item line)."""
-    info = data["general_information"]
-    docs = data["documents_used"]
-    transport = data["transport_details"]
-    head = [
-        info["so_number"], info["inspection_date"],
-        data["inspection_schedule"].get("activity", ""),
-        transport.get("shipment_type", ""), info["supplier"],
-        info["brokerage"], info["hauler"], info["destination"],
-        info["country_of_origin"], docs["invoice_number"], docs["po_number"],
-        docs["jo_number"], docs["gatepass_number"], docs["bl_awb_number"],
-        docs["dr_number"], transport["vehicle_type"],
-        transport["vehicle_plate_number"],
-    ]
-    items = [
-        row for section in data["item_lists"] for row in section["rows"]
-        if any(str(row.get(key) or "").strip() for key in ITEM_HEADERS)
-    ]
-    tail = [data["cargo_condition"]]
-    if not items:
-        return [head + [""] * len(WEEKLY_ITEM_KEYS) + tail]
-    lines = []
-    for row in items:
-        row = dict(row)
-        row["Quantity"], row["UOM"] = split_quantity_unit(
-            row.get("Quantity"), row.get("UOM"))
-        lines.append(
-            head + [str(row.get(key) or "") for key in WEEKLY_ITEM_KEYS]
-            + tail)
-    return lines
+def report_to_weekly_rows(*args, **kwargs):
+    """Moved to fsr_weekly.py."""
+    return fsr_weekly.report_to_weekly_rows(*args, **kwargs)
 
 
-def weekly_rows_from_excel(first_day, last_day):
-    path = excel_state["path"]
-    rows = []
-    for entry in data_store(path).list_reports():
-        day = parse_date(entry[2])
-        if not isinstance(day, datetime):
-            continue
-        if first_day <= day.date() <= last_day:
-            rows.append((day, entry[0], report_to_weekly_rows(
-                data_store(path).read_report(entry[0]))))
-    for report in data_store().read_all_withdrawal_reports():
-        day = parse_date(report["general_information"]["inspection_date"])
-        if isinstance(day, datetime) and first_day <= day.date() <= last_day:
-            rows.append((day, report["control_no"],
-                         report_to_weekly_rows(report)))
-    rows.sort(key=lambda item: (item[0], item[1]))
-    return [line for _, _, lines in rows for line in lines]
+def weekly_rows_from_excel(*args, **kwargs):
+    """Moved to fsr_weekly.py."""
+    return fsr_weekly.weekly_rows_from_excel(*args, **kwargs)
 
 
-def weekly_rows(year, month, week, source):
-    span = week_span(year, month, week)
-    if span is None:
-        return []
-    first_day, last_day = date(year, month, span[0]), date(year, month, span[1])
-    if source == "mysql":
-        return db_mysql.weekly_summary(first_day, last_day)
-    return weekly_rows_from_excel(first_day, last_day)
+def weekly_rows(*args, **kwargs):
+    """Moved to fsr_weekly.py."""
+    return fsr_weekly.weekly_rows(*args, **kwargs)
 
 
-def weekly_cells(line):
-    """28 weekly fields -> the 26 columns: (text, None) per column, or
-    (currency, amount text) for the two price columns."""
-    line = [str(value or "").strip() for value in line]
-    currency = line[WEEKLY_CURRENCY]
-    quantity = " ".join(filter(None, (line[WEEKLY_QTY], line[WEEKLY_UOM])))
-    return (line[:WEEKLY_QTY] + [quantity] + line[WEEKLY_UOM + 1:WEEKLY_CURRENCY]
-            + [(currency, line[WEEKLY_CURRENCY + 1]),
-               (currency, line[WEEKLY_CURRENCY + 2])]
-            + line[WEEKLY_CURRENCY + 3:])
+def weekly_cells(*args, **kwargs):
+    """Moved to fsr_weekly.py."""
+    return fsr_weekly.weekly_cells(*args, **kwargs)
 
 
 def price_text(currency, amount):
@@ -1566,102 +1513,19 @@ def price_text(currency, amount):
     return " ".join(filter(None, (currency, amount or "")))
 
 
-def weekly_display(line):
-    return [price_text(*cell) if isinstance(cell, tuple) else cell
-            for cell in weekly_cells(line)]
+def weekly_display(*args, **kwargs):
+    """Moved to fsr_weekly.py."""
+    return fsr_weekly.weekly_display(*args, **kwargs)
 
 
-def weekly_title(year, month, week):
-    span = week_span(year, month, week)
-    name = calendar.month_name[month]
-    if week == 0 or span is None:
-        return f"Weekly Summary Report - {name} {year} (whole month)"
-    return (f"Weekly Summary Report - {name} {year}, Week {week} "
-            f"({span[0]}-{span[1]} {name})")
+def weekly_title(*args, **kwargs):
+    """Moved to fsr_weekly.py."""
+    return fsr_weekly.weekly_title(*args, **kwargs)
 
 
-def write_weekly_workbook(path, title, rows):
-    """Save the rows as a formatted Excel sheet."""
-    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-    from openpyxl.utils import get_column_letter
-
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Weekly Summary"
-    last_col = len(WEEKLY_COLUMNS)
-    headings = [h for h, _ in WEEKLY_COLUMNS]
-
-    thin = Side(style="thin", color="999999")
-    border = Border(left=thin, right=thin, top=thin, bottom=thin)
-    blue = PatternFill("solid", fgColor="2E75B6")
-    header_row = 1
-    for index, (heading, width) in enumerate(WEEKLY_COLUMNS, start=1):
-        cell = ws.cell(row=header_row, column=index, value=heading)
-        cell.font = Font(bold=True, color="FFFFFF")
-        cell.fill = blue
-        cell.border = border
-        cell.alignment = Alignment(horizontal="center", vertical="center",
-                                   wrap_text=True)
-        ws.column_dimensions[get_column_letter(index)].width = max(width // 7, 9)
-
-    def money_format(currency):
-        # The currency shows in front of the amount; the cell stays a number.
-        currency = currency.replace('"', "")
-        return f'"{currency} "#,##0.00' if currency else "#,##0.00"
-
-    totals = {}                     # currency -> sum of Total Price
-    row_no = header_row
-    for line in rows:
-        row_no += 1
-        for index, (heading, value) in enumerate(
-                zip(headings, weekly_cells(line)), start=1):
-            number_format = None
-            if heading == "Date":
-                value = parse_date(value)
-                if isinstance(value, datetime):
-                    number_format = "dd-mmm-yyyy"
-                else:
-                    value = str(value or "")
-            elif heading in WEEKLY_NUMBER_COLUMNS:
-                currency, amount = value
-                value = to_number(amount)
-                if isinstance(value, (int, float)):
-                    number_format = money_format(currency)
-                    if heading == "Total Price":
-                        totals[currency] = totals.get(currency, 0) + value
-                else:
-                    value = price_text(currency, amount)
-            cell = ws.cell(row=row_no, column=index, value=value or None)
-            cell.border = border
-            cell.alignment = Alignment(vertical="top", wrap_text=True)
-            if number_format:
-                cell.number_format = number_format
-
-    if rows:
-        # One TOTAL per currency (amounts in different currencies are
-        # never added together).
-        total_col = headings.index("Total Price") + 1
-        for offset, currency in enumerate(sorted(totals), start=1):
-            total_row = row_no + offset
-            label = ws.cell(row=total_row, column=total_col - 1,
-                            value=f"TOTAL {currency.upper()}".strip())
-            label.font = Font(bold=True)
-            label.alignment = Alignment(horizontal="right")
-            total = ws.cell(row=total_row, column=total_col,
-                            value=totals[currency])
-            total.font = Font(bold=True)
-            total.number_format = money_format(currency)
-        ws.auto_filter.ref = (f"A{header_row}:"
-                              f"{get_column_letter(last_col)}{row_no}")
-
-    ws.oddHeader.center.text = title
-    ws.freeze_panes = ws.cell(row=header_row + 1, column=2)
-    ws.page_setup.orientation = "landscape"
-    ws.page_setup.fitToWidth = 1
-    ws.page_setup.fitToHeight = 0
-    ws.sheet_properties.pageSetUpPr.fitToPage = True
-    ws.print_title_rows = f"{header_row}:{header_row}"
-    wb.save(path)
+def write_weekly_workbook(*args, **kwargs):
+    """Moved to fsr_weekly.py."""
+    return fsr_weekly.write_weekly_workbook(*args, **kwargs)
 
 
 def weekly_selection():
@@ -4770,6 +4634,9 @@ def tell_owner_about_requests():
 # =====================================================
 
 fsr_item_lists_ui.bind(globals())
+
+
+fsr_weekly.bind(globals())
 
 
 def build_window():
