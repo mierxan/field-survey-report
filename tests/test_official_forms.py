@@ -2,9 +2,10 @@
 the real template files are used, so a later change of a template is
 caught here.
 
-* The official First Page has no Control # (owner's decision): nothing is
-  written for it, no "Entry for ..." words are left, and nothing is said
-  about it (no note, no log line).
+* First Page: the Control # goes into A5 as before (its "Entry for Control
+  number" placeholder), but the cell's number format ";;;" shows nothing -
+  on screen, on paper, in the PDF. The number stays in the file only
+  (formula bar, file name). Owner's decision, 13 November 2026.
 * The footer of the official forms - the names, the date and
   "OPSF-068 v4.0" - is on every printed sheet, inside its print area,
   extra Cargo Details pages and the remarks page included.
@@ -21,6 +22,7 @@ pytestmark = pytest.mark.gui
 ROOT = Path(__file__).resolve().parent.parent
 TEMPLATES = ROOT / "data" / "excel"
 FOOTER = ("Mierxan P. Rojo", "Jan Michael V. Siason", "OPSF-068 v4.0")
+HIDDEN = ";;;"                  # the number format that shows nothing
 
 
 @pytest.fixture(scope="module")
@@ -63,12 +65,17 @@ def texts(ws, area_only=True):
     return found
 
 
-def test_the_official_first_page_template_has_no_control_number():
+def test_the_official_first_page_has_a_hidden_control_number_cell():
     ws = load_workbook(TEMPLATES / "First_Page.xlsx").active
-    assert not [t for t in texts(ws, False) if "control" in t.lower()]
+    assert ws["A5"].value == "Entry for Control number"
+    assert ws["A5"].number_format == HIDDEN
+    others = [c.coordinate for row in ws.iter_rows() for c in row
+              if isinstance(c.value, str) and c.value.startswith("Entry for")
+              and "control" in c.value.lower() and c.coordinate != "A5"]
+    assert others == []
 
 
-def test_first_page_gets_no_control_number_and_nothing_is_said(app,
+def test_first_page_holds_the_control_number_but_shows_nothing(app,
                                                                caplog):
     g, answers = app
     data = report_data()
@@ -79,17 +86,39 @@ def test_first_page_gets_no_control_number_and_nothing_is_said(app,
     forms, notes, summary = g["create_report_forms"](path, data)
 
     first = load_workbook(forms[0])["First Page"]
+    assert first["A5"].value == data["control_no"]        # in the file
+    assert first["A5"].number_format == HIDDEN            # shown: nothing
     shown = texts(first, False)
-    assert not [t for t in shown if data["control_no"] in t]
     assert not [t for t in shown if t.startswith("Entry for")]
-    assert "SO-OFFICIAL-FORM" in shown          # the form is filled
-    assert notes == []                          # no note about it
-    assert answers.calls == []
+    assert "SO-OFFICIAL-FORM" in shown
+    assert notes == [] and answers.calls == []
     assert not [r for r in caplog.records
-                if "placeholder" in r.getMessage().lower()
-                or "control" in r.getMessage().lower()]
-    # the file of the printed report still carries the number
+                if "placeholder" in r.getMessage().lower()]
     assert Path(forms[0]).name == f"{data['control_no']}_Report.xlsx"
+
+
+def test_the_pdf_shows_no_control_number_and_the_whole_footer(app,
+                                                              tmp_path):
+    """Printed through Microsoft Excel (or LibreOffice), as the program
+    does: the hidden Control # is not in the PDF's text, the footer is on
+    every page."""
+    from pypdf import PdfReader
+    g, _ = app
+    data = report_data(lines=35)            # First Page + 2 cargo pages
+    forms, _, _ = g["create_report_forms"](g["excel_state"]["path"], data)
+    pdf = tmp_path / "report.pdf"
+    try:
+        g["convert_form_to_pdf"](forms[0], pdf)
+    except RuntimeError as error:
+        pytest.skip(f"no Excel or LibreOffice on this PC to print: {error}")
+    pages = PdfReader(str(pdf)).pages
+    assert len(pages) == 3
+    for page in pages:
+        text = page.extract_text() or ""
+        assert data["control_no"] not in text
+        assert "Entry for" not in text
+        for words in FOOTER:
+            assert words in text, words
 
 
 @pytest.mark.parametrize("lines,remarks,form", [
