@@ -1,8 +1,11 @@
-ttkbootstrap
-openpyxl
-pypdf
-mysql-connector-python
-pywin32; sys_platform == "win32"
+# The program's packages, pinned to the versions it is built and tested
+# with (Phase 4, 13 November 2026). The full list including everything
+# these bring along: requirements-lock.txt.
+ttkbootstrap==2.2.6
+openpyxl==3.1.5
+pypdf==6.21.2
+mysql-connector-python==26.10.0
+pywin32==312; sys_platform == "win32"
 # warehouse monitoring: charts and PDF reports
-matplotlib
-reportlab
+matplotlib==3.11.2
+reportlab==5.1.0

@@ -44,7 +44,7 @@ echo Building version %APPVER%
 echo.
 
 echo [1/4] Installing the packages and the build tool...
-"%PY%" -m pip install --disable-pip-version-check -q -r requirements.txt pyinstaller
+"%PY%" -m pip install --disable-pip-version-check -q -r requirements.txt pyinstaller==6.22.3 pyinstaller-hooks-contrib==2026.9
 if errorlevel 1 goto failed
 
 echo [2/4] Running the tests...
