@@ -1,4 +1,4 @@
-# Performance: figures before and after Phase 3
+# Performance: figures before and after Phase 3, and Phase 5
 
 Measured on the owner's PC. Invented workbooks of 300, 1,000 and 3,000
 reports (five item lines each, two thirds Receiving), and a copy of the real
@@ -137,6 +137,72 @@ What could still be done without changing the storage:
 3. Nothing short of a different store removes the workbook write itself:
    openpyxl cannot change one row in place. See
    [STORAGE_PROPOSAL.md](STORAGE_PROPOSAL.md).
+
+## Phase 5: the reports database (13-14 November 2026)
+
+`tools/measure_performance.py` (`--sqlite` for the database) and
+`tools/measure_migration.py`; invented reports with five item lines each,
+MySQL off, medians of three runs. "Save" is the time until the window is
+free again; "background done" adds the Excel export, PO_Master /
+Withdrawn_Item and the dashboards, which run behind it.
+
+**The PC was slower on 13 November than on 12 November, and its speed
+changed between runs** (the same Phase 4 program saved a 300-report
+workbook in 2.0 s on 12 November and in 4.2 s here). So the workbook was
+measured again in the same session, twice: with the Phase 4 program itself
+(a worktree of the Phase 4 tip) and with this program in workbook mode. The
+database figures were measured last, in the slower state, like the Phase 4
+column.
+
+### Save and open
+
+| Reports | | Phase 4 program (workbook) | Phase 5, workbook mode | **Phase 5, database** |
+|---|---|---|---|---|
+| 300 | save: edit / new | 4.19 / 5.12 s | 2.97 / 2.98 s | **1.49 / 1.51 s** |
+| 2,000 | save: edit / new | 16.3 / 22.3 s | 11.9 / 16.1 s | **0.88 / 1.07 s** |
+| 6,000 | save: edit / new | 38.6 / 35.9 s | 41.5 / 62.6 s (1) | **0.89 / 1.44 s** |
+| 300 / 2,000 / 6,000 | open a saved report | 1.25 / 6.69 / 18.7 s | 0.73 / 3.94 / 12.2 s | **0.49 / 0.39 / 0.39 s** |
+| 300 / 2,000 / 6,000 | background done (edit) | 6.9 / 36.0 / 110 s | 3.9 / 21.9 / 113 s | 3.6 / 17.4 / 49.9 s |
+
+(1) The first of the three runs took 5,359 s; the PC most likely went to
+sleep during it. The median of the three is shown.
+
+On the database a save no longer grows with the number of reports: what is
+left is the official forms and the save record. The export starts one
+second after a save (`EXPORT_SETTLE_SECONDS`), so the save finishes first;
+without that pause a save of 300 reports took 2.4 s, because the export
+shared the processor with it.
+
+### The move into the database (once per workbook)
+
+Backup, copying every row, the field-by-field comparison and the
+row-by-row check of the export, all included:
+
+| Workbook | Reports | Move | Database (workbook) | Export written | All reports read |
+|---|---|---|---|---|---|
+| copy of the real workbook | 11 | 1.1 s | 68 KB (17 KB) | 0.1 s | 0.01 s |
+| invented | 300 | 3.6 s | 1.0 MB (136 KB) | 0.7 s | 0.2 s |
+| invented | 3,000 | 30.5 s | 10.3 MB (1.2 MB) | 6.0 s | 0.7 s |
+| invented | 6,000 | 65.4 s | 20.9 MB (2.4 MB) | 11.8 s | 1.4 s |
+
+The first start of the program including the move and its progress window
+took 17.7 s, 52.1 s and 121 s at 300, 2,000 and 6,000 reports (in the slower
+state). The database is about eight times the size of the workbook: the
+workbook is a zip file, the database keeps its rows uncompressed.
+
+### Other reads (3,000 / 6,000 reports)
+
+| | Workbook | Database |
+|---|---|---|
+| PO lookup of the Withdrawal panel (also a quantity check, and a PO-linked save) | 11.5 / 36.1 s | 0.70 / 2.54 s |
+| Saved-reports list (Open Saved Report) | 5.3 / 10.7 s | 0.10 / 0.20 s |
+| Search index | 5.7 / 11.5 s | 0.27 / 0.56 s |
+
+Two fixes found by these measurements: the export asked the sheet for its
+last row for every row it wrote (3,000 reports took 52.5 s, now 6.0 s), and
+every read of all reports looked up the JSON folder of each report's
+incident file on disk (two Windows path lookups per report: 5.2 s of
+reading 6,000 reports, now 1.4 s - this also speeds up the workbook).
 
 ## Earlier figures (kept for reference)
 

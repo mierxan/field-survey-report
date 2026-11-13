@@ -10,9 +10,11 @@ Withdrawal_Reports.xlsx          the PO-linked Withdrawal reports - also an expo
 PO_Master.xlsx / Withdrawn_Item.xlsx   as before
 ```
 
-A save writes one row set in one transaction (well under a second at any
-size) instead of rewriting the whole workbook (8 s at 2,000 reports, 23 s
-at 6,000 - see [PERFORMANCE_BASELINE.md](PERFORMANCE_BASELINE.md)).
+A save writes one report in one transaction instead of rewriting the
+whole workbook: it now takes about 1 to 1.5 seconds whatever the number of
+reports (measured at 300, 2,000 and 6,000 reports), against 4 to 39 seconds
+with the workbook on the same PC (see
+[PERFORMANCE_BASELINE.md](PERFORMANCE_BASELINE.md), Phase 5).
 Nothing new is installed: SQLite is part of Python.
 
 What is NOT in the database (unchanged, as files beside it): the incident
@@ -56,9 +58,11 @@ try again until the workbook has changed.
 
 It also stays on the workbook, and says why, when the workbook holds
 something the export would not keep: a sheet the program did not make,
-cells to the right of the program's columns, a row of the Reports sheet
-without a Control #, or two reports with the same Control #. A workbook that
-is open in Excel is tried again at the next start.
+cells to the right of the program's columns, a formula typed into a cell
+(the export keeps values only), a row of the Reports sheet without a
+Control #, or two reports with the same Control #. A workbook that is open
+in Excel, or that is saved in Excel while the move runs, is tried again at
+the next start.
 
 A new PC (no workbook yet) starts with an empty database.
 
@@ -66,7 +70,7 @@ A new PC (no workbook yet) starts with an empty database.
 
 | Use | What happens |
 |---|---|
-| **Opening the Excel file in Excel** (to look, filter, print) | Works as before. The file is the export, in today's layout (same sheets, columns, number formats, tables). It is brought up to date in the background after every save, import, restore or renumbering, usually within seconds. |
+| **Opening the Excel file in Excel** (to look, filter, print) | Works as before. The file is the export, in today's layout (same sheets, columns, number formats, tables). It is brought up to date in the background after every save, import, restore or renumbering: within a few seconds (about 13 s at 6,000 reports). |
 | **Typing into the Excel file and saving it** (by mistake or on purpose) | The program never overwrites a file that was changed outside it (it notes size, time and SHA-256 of every export). At the next save or start it decides, and says what it did: **(a)** the database has not changed since that export → the file is the newer one and is taken as it is (the database is built again from it, with the full backup and comparison; the old database is kept as `.sqlite3.replaced_<time>`); **(b)** the database has newer reports too → the database stays, the changed file is kept as `Field_Survey_Reports (changed outside <time>).xlsx`, reports that are only in that file are added (nothing is overwritten), reports that differ are listed for a person to check. Nothing is lost either way. |
 | **The Excel file is open in Excel while saving** | The save is NOT stopped any more: it goes into the database. The export waits; a notice says once "*The Excel file is open in another program, so it could not be brought up to date yet ...*", and it is tried again every 30 seconds and at each save. |
 | **Sending the Excel file to someone** (e-mail, USB) | Works as before: the export holds every report. Close the program first (closing waits until the export is up to date) or wait a few seconds after the last save. |
