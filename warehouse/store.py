@@ -24,7 +24,6 @@ from pathlib import Path
 import fsr_storage
 from fsr_storage import ControlKeyed, control_key
 import fsr_paths
-import fsr_withdrawal
 
 from .inventory import (ACCEPTED, CONFIRMED, DEFAULT_AGING_THRESHOLDS,
                         EXCLUDED, OPEN, PROPOSED, REJECTED, LineDecision,
@@ -186,10 +185,10 @@ def load_reports(excel_path, source="excel"):
     if source == "mysql":
         import db_mysql
         return db_mysql.load_all_reports()     # holds both workbooks' reports
-    return merge_withdrawal_reports(
-        fsr_storage.read_all_reports(excel_path),
-        fsr_withdrawal.read_all_reports(
-            fsr_paths.withdrawal_workbook_path(excel_path)))
+    import fsr_store
+    store = fsr_store.ExcelStore(excel_path)
+    return merge_withdrawal_reports(store.read_all_reports(),
+                                    store.read_all_withdrawal_reports())
 
 
 def merge_withdrawal_reports(reports, withdrawal_reports):
