@@ -85,6 +85,7 @@ import fsr_mysql_guard             # never overwrite another copy's report
 import fsr_mysql_sender            # MySQL in the background
 import fsr_save_journal            # finishes a save that stopped halfway
 import fsr_store                   # the ONE storage interface
+import fsr_item_lists_ui
 from fsr_forms import (  # the official report forms (moved)
     convert_form_to_pdf,  # noqa: F401 - tests reach it as g["convert_form_to_pdf"]
     print_name,
@@ -101,8 +102,6 @@ from fsr_forms import (  # the official report forms (moved)
     make_report_pdf,
     send_to_printer,
 )
-import fsr_withdrawal              # PO-linked Withdrawal reports
-import fsr_withdrawal_ui
 from fsr_withdrawal_ui import WithdrawalPanel
 from fsr_storage import (          # plain data layer
     Workbook,
@@ -112,10 +111,7 @@ from fsr_storage import (          # plain data layer
     INCIDENT_MAX_LINES, incident_title, ITEM_HEADERS, ITEM_LINE_HEADERS,
     ITEM_FORM_CONTAINERIZED, ITEM_FORM_DEFAULT, ITEM_FORM_LOADING,
     item_form_name, ITEM_FORMS, ITEM_LINK_HEADERS, UNIT_NO_HEADER,
-    UNIT_NO_LABELS,
-    CURRENCIES, split_quantity_unit, UOM_CHOICES,
-    WEIGHT_UNIT_CHOICES,
-    normalize_field, parse_date, recent_date_options, safe_filename, SCHEDULE_FIELDS,
+    split_quantity_unit, normalize_field, parse_date, recent_date_options, safe_filename, SCHEDULE_FIELDS,
     set_control_initials,
     to_number, TRANSPORT_FIELDS, TYPEABLE_CHOICES,
     write_json_atomic, same_key,
@@ -1371,312 +1367,10 @@ def set_goods_types(types):
     )
 
 
-class ItemLine(list):
-    """The entry widgets of one line, plus its hidden saved values."""
-
-    def __init__(self):
-        super().__init__()
-        self.hidden = {}
-        self.po_link = {}       # Withdrawal fields of a PO-linked line
+ItemLine = fsr_item_lists_ui.ItemLine  # moved to fsr_item_lists_ui.py
 
 
-class ItemListSection:
-    """One 'Item List' card with its rows, buttons and subtotal. It shows
-    the columns of the Item List form chosen for the report."""
-
-    def __init__(self, parent, number):
-        self.form = item_form_var.get()
-        self.headers, self.widths = ITEM_FORM_COLUMNS[self.form]
-        self.hidden_headers = [h for h in ITEM_LINE_HEADERS
-                               if h not in self.headers]
-        self.priced = "Total Price" in self.headers
-
-        title = f"Item List {number}"
-        if self.form != ITEM_FORM_DEFAULT:
-            title += f" - {self.form}"
-        self.frame = tb.Labelframe(parent, text=title, padding=10)
-        self.frame.grid(row=number - 1, column=0, pady=6, sticky="we")
-        self.rows = []          # list of ItemLine (Entry widgets)
-
-        for col_index, header in enumerate(self.headers):
-            heading = tb.Label(self.frame, text=self.label(header),
-                               font=bold_font)
-            heading.grid(
-                row=0, column=col_index, padx=3, pady=(0, 4), sticky="w"
-            )
-            if header in ITEM_HEADER_TIPS:
-                add_tip(heading, ITEM_HEADER_TIPS[header])
-
-        toolbar = tb.Frame(self.frame)
-        toolbar.grid(row=MAX_ROWS + 1, column=0,
-                     columnspan=len(self.headers),
-                     pady=(10, 0), sticky="we")
-        toolbar.columnconfigure(3, weight=1)
-
-        self.add_btn = tb.Button(
-            toolbar, text="+ Add Line", width=20, command=self.add_line,
-            bootstyle="primary-outline"
-        )
-        self.add_btn.grid(row=0, column=0, padx=(0, 6))
-
-        self.remove_btn = tb.Button(
-            toolbar, text="- Remove Line", command=self.remove_line,
-            bootstyle="secondary-outline"
-        )
-        self.remove_btn.grid(row=0, column=1)
-
-        self.counter_label = tb.Label(toolbar, anchor="w")
-        self.counter_label.grid(row=0, column=2, padx=(15, 0), sticky="w")
-
-        # Containerized / Loading have no prices: no subtotal.
-        self.subtotal_label = tb.Label(toolbar, anchor="e", font=bold_font)
-        if self.priced:
-            self.subtotal_label.grid(row=0, column=3, sticky="e")
-
-        for _ in range(5):
-            self.create_row()
-        self.update_buttons()
-        self.update_subtotal()
-
-    def label(self, header):
-        """The heading shown for a column on this form."""
-        if self.form == ITEM_FORM_DEFAULT:
-            return header
-        if header == UNIT_NO_HEADER:
-            return UNIT_NO_LABELS[self.form]
-        return UNIT_FORM_LABELS.get(header, header)
-
-    def cell(self, widgets, header):
-        return widgets[self.headers.index(header)]
-
-    # ---- rows ----
-
-    def create_row(self):
-        row_no = len(self.rows) + 1
-        widgets = ItemLine()
-
-        for col_index, (header, width) in enumerate(
-                zip(self.headers, self.widths)):
-            if header == "UOM":
-                entry = tb.Combobox(self.frame, width=width,
-                                    values=UOM_CHOICES)
-                scroll_instead_of_change(entry)
-            elif header == "Weight Unit":
-                entry = tb.Combobox(self.frame, width=width,
-                                    values=WEIGHT_UNIT_CHOICES)
-                scroll_instead_of_change(entry)
-            elif header == "Currency":
-                entry = tb.Combobox(self.frame, width=width,
-                                    values=[""] + CURRENCIES)
-                entry.bind(
-                    "<<ComboboxSelected>>",
-                    lambda e, w=widgets: self.row_changed(w, "Currency"),
-                    add="+")
-                entry.bind(
-                    "<FocusOut>",
-                    lambda e, w=widgets: self.upper_currency(w), add="+")
-                scroll_instead_of_change(entry)
-            else:
-                entry = tb.Entry(self.frame, width=width)
-            entry.grid(row=row_no, column=col_index, padx=3, pady=2,
-                       sticky="w")
-            entry.manual_total = False
-            entry.bind(
-                "<KeyRelease>",
-                lambda e, w=widgets, h=header: self.row_changed(w, h),
-                add="+"
-            )
-            widgets.append(entry)
-
-        self.cell(widgets, "Quantity").bind(
-            "<FocusOut>", lambda e, w=widgets: self.split_quantity(w),
-            add="+")
-        self.cell(widgets, "Weights").bind(
-            "<FocusOut>", lambda e, w=widgets: self.split_weight(w),
-            add="+")
-        fsr_withdrawal_ui.bind_line(self, widgets, lambda: withdrawal_panel)
-        self.rows.append(widgets)
-        refresh_findings_counter()
-
-    def add_line(self):
-        if len(self.rows) < MAX_ROWS:
-            self.create_row()
-            self.update_buttons()
-            mark_dirty()
-
-    def remove_line(self):
-        if len(self.rows) > 1:
-            for widget in self.rows.pop():
-                widget.destroy()
-            self.update_buttons()
-            self.update_subtotal()
-            refresh_findings_counter()
-            mark_dirty()
-
-    def set_row_count(self, count):
-        """Used when a saved report is loaded or the form is cleared."""
-        count = max(1, min(count, MAX_ROWS))
-        while len(self.rows) < count:
-            self.add_line()
-        while len(self.rows) > count:
-            self.remove_line()
-
-    # ---- numbers ----
-
-    def split_quantity(self, widgets):
-        """'12 pcs' typed in Quantity -> Quantity 12, UOM PCS."""
-        if fsr_withdrawal_ui.is_linked(widgets):
-            return
-        quantity_box = self.cell(widgets, "Quantity")
-        uom_box = self.cell(widgets, "UOM")
-        typed = quantity_box.get().strip()
-        quantity, uom = split_quantity_unit(typed, uom_box.get())
-        if quantity != typed:
-            set_entry(quantity_box, quantity)
-            set_entry(uom_box, uom.upper())
-            self.row_changed(widgets, "Quantity")
-
-    def split_weight(self, widgets):
-        """'1,250 kg' typed in Weights -> Weights 1,250, Weight Unit KG."""
-        weight_box = self.cell(widgets, "Weights")
-        unit_box = self.cell(widgets, "Weight Unit")
-        typed = weight_box.get().strip()
-        weight, unit = split_quantity_unit(typed, unit_box.get())
-        if weight != typed:
-            set_entry(weight_box, weight)
-            set_entry(unit_box, unit.upper())
-
-    def upper_currency(self, widgets):
-        """A typed currency 'usd' -> 'USD' (one subtotal per code)."""
-        currency = self.cell(widgets, "Currency")
-        typed = currency.get()
-        if typed != typed.strip().upper():
-            set_entry(currency, typed.strip().upper())
-            self.update_subtotal()
-
-    def row_changed(self, widgets, header):
-        """Auto Total Price = Quantity x Unit Price (unless typed by hand)."""
-        if self.priced:
-            total = self.cell(widgets, "Total Price")
-
-            if header == "Total Price":
-                total.manual_total = bool(total.get().strip())
-            elif header in ("Quantity", "Unit Price") and not total.manual_total:
-                qty = to_number(self.cell(widgets, "Quantity").get())
-                unit = to_number(self.cell(widgets, "Unit Price").get())
-                numeric = (int, float)
-                if isinstance(qty, numeric) and isinstance(unit, numeric):
-                    set_entry(total, f"{qty * unit:,.2f}")
-                else:
-                    set_entry(total, "")
-            if header in ("Unit Price", "Total Price"):
-                self.default_currency(widgets)
-
-        self.update_subtotal()
-        self.update_buttons()
-        refresh_findings_counter()
-
-    def default_currency(self, widgets):
-        """A line given a price takes the currency of the line above."""
-        currency = self.cell(widgets, "Currency")
-        if currency.get() or not (
-                self.cell(widgets, "Unit Price").get().strip()
-                or self.cell(widgets, "Total Price").get().strip()):
-            return
-        above = [self.cell(w, "Currency").get()
-                 for w in self.rows[:self.rows.index(widgets)]
-                 if self.cell(w, "Currency").get()]
-        if above:
-            currency.set(above[-1])
-
-    def filled_count(self):
-        return sum(
-            1 for widgets in self.rows
-            if any(w.get().strip() for w in widgets)
-        )
-
-    def subtotals(self):
-        """{currency: amount}; '' for prices without a currency."""
-        amounts = {}
-        if not self.priced:
-            return amounts
-        for widgets in self.rows:
-            value = to_number(self.cell(widgets, "Total Price").get())
-            if isinstance(value, (int, float)):
-                code = self.cell(widgets, "Currency").get()
-                amounts[code] = amounts.get(code, 0.0) + value
-        return amounts
-
-    def update_subtotal(self):
-        amounts = self.subtotals() or {"": 0.0}
-        text = "  |  ".join(
-            f"{code} {amount:,.2f}".strip()
-            for code, amount in sorted(amounts.items()))
-        self.subtotal_label.configure(text=f"Subtotal: {text}")
-
-    def update_buttons(self):
-        used = len(self.rows)
-        self.add_btn.configure(
-            text=add_button_text(used, MAX_ROWS),
-            state="disabled" if used >= MAX_ROWS else "normal"
-        )
-        self.remove_btn.configure(state="disabled" if used <= 1 else "normal")
-        update_line_counter(self.counter_label, used, MAX_ROWS)
-
-    def line_values(self, widgets):
-        """One line as {header: text} (every saved column), or None when
-        it is empty."""
-        row = {header: widget.get().strip()
-               for header, widget in zip(self.headers, widgets)}
-        weight, unit = split_quantity_unit(row["Weights"],
-                                           row.pop("Weight Unit"))
-        row["Weights"] = " ".join(filter(None, (weight, unit)))
-        row.update({h: widgets.hidden.get(h, "")
-                    for h in self.hidden_headers})
-        row.update(widgets.po_link)
-        return row if any(row[h] for h in SAVED_LINE_HEADERS) else None
-
-    def values(self):
-        """The filled lines as {header: text} (every saved column)."""
-        return [row for row in map(self.line_values, self.rows) if row]
-
-    def set_values(self, lines):
-        """Fill rows from a list of {header: text} dictionaries."""
-        self.set_row_count(max(5, len(lines)))
-        for widgets, row in zip(self.rows, lines):
-            self.fill_line(widgets, row)
-        self.update_subtotal()
-        refresh_findings_counter()
-
-    def fill_line(self, widgets, row):
-        """Fill one line from a {header: text} dictionary."""
-        fsr_withdrawal_ui.unlock_line(self, widgets)
-        row = dict(row)
-        if not row.get(fsr_withdrawal.LINE_NO_HEADER):
-            row["Quantity"], row["UOM"] = split_quantity_unit(
-                row.get("Quantity"), row.get("UOM"))
-        row["Weights"], row["Weight Unit"] = split_quantity_unit(
-            row.get("Weights"))
-        for header, widget in zip(self.headers, widgets):
-            set_entry(widget, str(row.get(header) or ""))
-        widgets.hidden = {h: str(row.get(h) or "")
-                          for h in self.hidden_headers}
-        if self.priced:
-            total = self.cell(widgets, "Total Price")
-            total.manual_total = bool(total.get().strip())
-        fsr_withdrawal_ui.restore_link(self, widgets, row)
-
-    def clear(self):
-        for widgets in self.rows:
-            fsr_withdrawal_ui.unlock_line(self, widgets)
-            for widget in widgets:
-                set_entry(widget, "")
-                widget.manual_total = False
-            widgets.hidden = {}
-        self.update_subtotal()
-
-    def destroy(self):
-        self.frame.destroy()
+ItemListSection = fsr_item_lists_ui.ItemListSection  # moved to fsr_item_lists_ui.py
 
 
 def create_item_frame():
@@ -5074,6 +4768,9 @@ def tell_owner_about_requests():
 # =====================================================
 # BUILDING THE WINDOW (Phase 4: not when the module is imported)
 # =====================================================
+
+fsr_item_lists_ui.bind(globals())
+
 
 def build_window():
     """Everything the program sets up and shows: the data folders,
