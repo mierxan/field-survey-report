@@ -68,6 +68,10 @@ def start_app(home, extra_env=None):
     home = Path(home)
     home.mkdir(parents=True, exist_ok=True)
     os.environ["FSR_HOME"] = str(home)
+    # MySQL rounds run at once on the calling thread, so a test sees their
+    # result right after save_report(). The background itself is tested
+    # separately (tests/test_mysql_background_gui.py), with this off.
+    os.environ["FSR_MYSQL_INLINE"] = "1"
     os.environ.pop("FSR_DEMO", None)
     for key, value in (extra_env or {}).items():
         os.environ[key] = value
@@ -97,6 +101,7 @@ def stop_app(app, answers):
         pass
     answers.uninstall()
     os.environ.pop("FSR_HOME", None)
+    os.environ.pop("FSR_MYSQL_INLINE", None)
     # The program put the test user's initials into new Control #s; tests
     # that run after this one start without initials again.
     import fsr_storage

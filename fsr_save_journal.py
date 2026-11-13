@@ -59,6 +59,15 @@ How often the record is written (Phase 3)
   shown as open that were in fact done; repair() does them again, which
   changes nothing.
 
+MySQL in the background (Phase 3)
+  The program does the local steps itself and leaves the "mysql" step open
+  in the record; fsr_mysql_sender then sends every report waiting for
+  MySQL over one connection (send_waiting()). The step is ticked off only
+  after MySQL committed, and only on the record that was sent: a newer
+  save of the same report has a new record, which is never overwritten
+  with an older state (finish_mysql() / note_mysql() change a record only
+  while it is still on file).
+
 MySQL conflicts
   The MySQL step goes through fsr_mysql_guard: it never overwrites a report
   in MySQL that this copy of the program does not own. When MySQL holds a
@@ -67,9 +76,11 @@ MySQL conflicts
   conflicts; resolve_keep / resolve_replace / resolve_renumber carry out
   the user's decision. Nothing local is ever held up by a conflict.
 """
+import contextlib
 import copy
 import json
 import logging
+import threading
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -107,6 +118,11 @@ class JournalError(ValueError):
     """The record file cannot be read; it was left as it is."""
 
 
+# The window and the background sender both change the record file; each
+# change (read, change, write) is done under this lock.
+_LOCK = threading.RLock()
+
+
 def journal_path(excel_path):
     excel_path = Path(excel_path)
     return (fsr_paths.json_dir_for_workbook(excel_path)
@@ -129,6 +145,9 @@ def new_record(data, editing, linked, steps, stamp_before=None, now=None):
         "stamp_before": stamp_before,
         "stamp": None,
         "errors": {},
+        # a report that was not saved before this save (its number may be
+        # handed on to the next free one if MySQL turns out to hold it)
+        "new": not editing,
         "data": copy.deepcopy(data),
     }
 
@@ -191,28 +210,48 @@ class Journal:
         record = new_record(data, editing, linked, steps, stamp_before,
                             self._now())
         key = storage.control_key(record["control"])
-        records = [r for r in self.load()
-                   if storage.control_key(r.get("control")) != key]
-        records.append(record)
-        self._store(records)
+        with _LOCK:
+            records = [r for r in self.load()
+                       if storage.control_key(r.get("control")) != key]
+            records.append(record)
+            self._store(records)
         return record
 
     def save(self, record):
         """Write the current state of `record` (it must be on file)."""
-        records = self.load()
-        for index, existing in enumerate(records):
-            if existing.get("id") == record["id"]:
-                records[index] = record
-                self._store(records)
-                return
-        records.append(record)
-        self._store(records)
+        with _LOCK:
+            records = self.load()
+            for index, existing in enumerate(records):
+                if existing.get("id") == record["id"]:
+                    records[index] = record
+                    self._store(records)
+                    return
+            records.append(record)
+            self._store(records)
 
     def remove(self, record):
-        records = self.load()
-        left = [r for r in records if r.get("id") != record["id"]]
-        if len(left) != len(records):
-            self._store(left)
+        with _LOCK:
+            records = self.load()
+            left = [r for r in records if r.get("id") != record["id"]]
+            if len(left) != len(records):
+                self._store(left)
+
+    def change(self, record_id, how):
+        """how(record) on the record with this id, if it is still on file
+        (a newer save of the report replaces it). The record is removed
+        when nothing is left to do. Returns the record, or None."""
+        with _LOCK:
+            records = self.load()
+            for index, existing in enumerate(records):
+                if existing.get("id") == record_id:
+                    how(existing)
+                    if _settled(existing):
+                        del records[index]
+                    else:
+                        records[index] = existing
+                    self._store(records)
+                    return existing
+        return None
 
     def pending(self):
         return self.load()
@@ -234,6 +273,9 @@ class Stores:
         # fsr_mysql_guard.Guard: checks before every MySQL write. Without
         # one (older tests with a simple stand-in) the write is direct.
         self.guard = guard
+        # One open MySQL connection used for every report of a round
+        # (fsr_mysql_sender); None: each write opens its own.
+        self.connection = None
 
     def home(self, record):
         """The workbook that holds this report."""
@@ -251,18 +293,13 @@ class Stores:
             extra["saved_at"] = planned
         # The MySQL ledger must belong to the workbook as THIS write leaves
         # it, before the MySQL step of the same save looks at the ledger.
-        if self.guard is not None:
-            self.guard.before_local_write()
-        try:
+        with _local_write(self.guard):
             if record["linked"]:
                 return fsr_withdrawal.write_withdrawal_report(
                     self.home(record), data, record["editing"],
                     self.excel_path, **extra)
             return storage.write_report_to_excel(
                 self.excel_path, data, record["editing"], **extra)
-        finally:
-            if self.guard is not None:
-                self.guard.after_local_write()
 
     def incidents(self, record):
         data = record["data"]
@@ -284,8 +321,11 @@ class Stores:
 
     def mysql(self, record, data):
         if self.guard is None:
-            return self.mysql_module.save_report(data)
-        _, notes = self.guard.save(data, record.get("decision"))
+            if self.connection is None:
+                return self.mysql_module.save_report(data)
+            return self.mysql_module.save_report(data, self.connection)
+        _, notes = self.guard.save(data, record.get("decision"),
+                                   self.connection)
         return notes
 
     # -- reads --
@@ -322,6 +362,13 @@ class Stores:
             return fsr_withdrawal.read_report(
                 self.home(record), record["control"])
         return storage.read_report(self.excel_path, record["control"])
+
+
+def _local_write(guard):
+    """The guard's local_write() - or nothing, without a guard."""
+    if guard is None:
+        return contextlib.nullcontext()
+    return guard.local_write()
 
 
 # ---------------------------------------------------------------------
@@ -511,10 +558,12 @@ def _check_against_workbook(journal, record, stores):
         if steps.get(step) == PENDING:
             steps[step] = OUTDATED
     if steps.get("mysql") == PENDING:
+        # MySQL gets what the workbook holds, never the out-of-date record
+        # (also when the background sender does the step later).
+        record["mysql_from_workbook"] = True
         try:
             record["_mysql_data"] = stores.read_back(record)
         except Exception:
-            # Never send the out-of-date record to MySQL instead.
             log.exception("Could not read %s back", record["control"])
             record["_mysql_wait"] = True
     _note(journal, record)
@@ -613,6 +662,120 @@ def repair(journal, stores, mysql=True, skip=()):
 # MySQL conflicts: the waiting list and the three decisions
 # ---------------------------------------------------------------------
 
+def waiting_for_mysql(journal, with_conflicts=False):
+    """The records whose MySQL step is open and whose report is in the
+    workbook (MySQL does not wait for the other files - PO_Master open in
+    Excel does not hold it up), oldest first. Records that wait for a
+    decision are left out unless with_conflicts (at start: MySQL may have
+    become equal)."""
+    found = []
+    for record in journal.pending():
+        if record["steps"].get("mysql") != PENDING:
+            continue
+        if not (record.get("local_done")
+                or record["steps"].get("workbook", DONE) in SETTLED):
+            continue
+        if record.get("conflict") and not with_conflicts:
+            continue
+        found.append(record)
+    return found
+
+
+def finish_mysql(journal, record_id):
+    """MySQL committed this record's report: tick the step off (only if
+    the record is still the current one)."""
+    def done(record):
+        record["steps"]["mysql"] = DONE
+        record["errors"].pop("mysql", None)
+        for key in ("conflict", "decision", "mysql_from_workbook"):
+            record.pop(key, None)
+    return journal.change(record_id, done)
+
+
+def note_mysql(journal, record_id, error, conflict=None):
+    """The MySQL step of this record did not go through."""
+    def noted(record):
+        record["errors"]["mysql"] = str(error)
+        record.pop("decision", None)        # never a standing "replace"
+        if conflict is not None:
+            record["conflict"] = conflict
+    return journal.change(record_id, noted)
+
+
+def send_waiting(journal, stores, with_conflicts=False, unreachable=None):
+    """One background round: the MySQL step of every record waiting for it,
+    each through stores.mysql() (the guard; stores.connection is the one
+    connection of the round). A server that is lost in the middle ends the
+    round; the rest wait. Returns
+      {"sent": [Control #], "sent_ids": [record id], "notes": {id: [..]},
+       "conflicts": [(record, conflict, new?)],
+       "errors": [(record id, Control #, exception)],
+       "away": exception or None}."""
+    unreachable = unreachable or (lambda error: False)
+    result = {"sent": [], "sent_ids": [], "notes": {}, "conflicts": [],
+              "errors": [], "away": None}
+    reading = (stores.guard.reading() if stores.guard is not None
+               else contextlib.nullcontext())
+    for record in waiting_for_mysql(journal, with_conflicts):
+        control = record["control"]
+        data = record["data"]
+        if record.get("mysql_from_workbook"):
+            try:
+                with reading:
+                    data = stores.read_back(record)
+            except Exception as error:
+                log.exception("Could not read %s back", control)
+                result["errors"].append((record["id"], control, error))
+                continue
+        try:
+            notes = stores.mysql(record, data)
+        except fsr_mysql_guard.MySQLConflict as error:
+            log.info("MySQL conflict for %s: %s", control, error)
+            changed = note_mysql(journal, record["id"], error,
+                                 error.conflict)
+            if changed is not None:
+                result["conflicts"].append(
+                    (changed, error.conflict, not record.get("conflict")))
+            continue
+        except Exception as error:
+            if unreachable(error):
+                result["away"] = error
+                break
+            log.exception("MySQL step of %s failed", control)
+            note_mysql(journal, record["id"], error)
+            result["errors"].append((record["id"], control, error))
+            continue
+        if finish_mysql(journal, record["id"]) is not None:
+            result["sent"].append(control)
+            result["sent_ids"].append(record["id"])
+            result["notes"][record["id"]] = notes or []
+    return result
+
+
+def renumber_record(journal, stores, record_id, new_control, renumber):
+    """Give the report of this record another number on this PC
+    (`renumber(old, new)` does the files); the MySQL step stays open for
+    the new number. Returns the record."""
+    record = _find(journal, record_id)
+    old = record["control"]
+    renumber(old, new_control)
+    record["control"] = new_control
+    try:
+        record["data"] = stores.read_back(record)
+    except Exception:
+        log.exception("Could not read %s back after renumbering",
+                      new_control)
+        record["data"]["control_no"] = new_control
+    record["data"].setdefault("other_item_forms", {})
+    record["data"].pop("incident_error", None)
+    for key in ("conflict", "decision", "mysql_from_workbook"):
+        record.pop(key, None)
+    record["errors"].pop("mysql", None)
+    record["renumbered_from"] = old
+    journal.save(record)
+    return record
+
+
 def conflicts(journal):
     """The records that wait for a decision, oldest first."""
     return [r for r in journal.pending() if r.get("conflict")
@@ -671,22 +834,8 @@ def resolve_renumber(journal, stores, record_id, new_control, renumber):
     """Give this copy's report another number - in the workbook, its JSON
     files and the PO lists (`renumber(old, new)` does that) - and send it to
     MySQL under the new number. MySQL's report is untouched."""
-    record = _find(journal, record_id)
-    old = record["control"]
-    renumber(old, new_control)
-    record["control"] = new_control
-    try:
-        record["data"] = stores.read_back(record)
-    except Exception:
-        log.exception("Could not read %s back after renumbering",
-                      new_control)
-        record["data"]["control_no"] = new_control
-    record["data"].setdefault("other_item_forms", {})
-    record["data"].pop("incident_error", None)
-    record.pop("conflict", None)
-    record.pop("decision", None)
-    record["renumbered_from"] = old
-    journal.save(record)
+    record = renumber_record(journal, stores, record_id, new_control,
+                             renumber)
     return _send_only(journal, record, stores)
 
 

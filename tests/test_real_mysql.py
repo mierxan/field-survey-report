@@ -284,3 +284,103 @@ def test_a_conflict_leaves_no_half_written_report(copy):
     with pytest.raises(g.MySQLConflict):
         mine.guard.save(make(control, so="MINE", desc="Different goods"))
     assert db.load_report(control) == before
+
+
+# ---------- Phase 3: MySQL in the background ----------
+
+class Counted:
+    """The real test database, counting connections."""
+
+    def __init__(self, db):
+        self.db, self.connections = db, 0
+
+    def __getattr__(self, name):
+        return getattr(self.db, name)
+
+    def connect(self, config=None):
+        self.connections += 1
+        return self.db.connect(config)
+
+
+def save_here(mine, data, editing=False):
+    """Save as the program does now: this PC first, MySQL left open."""
+    record = j.open_save(mine.journal, mine.stores, data, editing, False,
+                         True)
+    j.run(mine.journal, record, mine.stores, mysql=False)
+    return record
+
+
+def send_round(mine, db, with_conflicts=False):
+    guard = g.Guard(db, mine.book, user="Tester")
+    stores = j.Stores(mine.book, mysql=db, guard=guard)
+    conn = db.connect()
+    try:
+        stores.connection = conn
+        return j.send_waiting(mine.journal, stores, with_conflicts,
+                              real_mysql.db_mysql.is_unreachable)
+    finally:
+        conn.close()
+
+
+def test_round_sends_several_reports_over_one_connection(copy):
+    mine, db, control = copy
+    counted = Counted(db)
+    controls = [control] + [f"{control}-{n}" for n in (2, 3)]
+    for number in controls:
+        save_here(mine, make(number, so=f"SO {number}"))
+    assert so_in_mysql(db, control) is None         # Save sent nothing
+    result = send_round(mine, counted)
+    assert counted.connections == 1
+    assert sorted(result["sent"]) == sorted(controls)
+    assert all(so_in_mysql(db, c) == f"SO {c}" for c in controls)
+    assert mine.journal.pending() == []
+
+
+def test_power_cut_after_commit_resends_without_a_conflict(copy):
+    """Committed in MySQL, the PC died before the ledger and the record
+    were written: the next start finds MySQL equal and adopts it."""
+    mine, db, control = copy
+    save_here(mine, make(control, so="COMMITTED, THEN THE POWER WENT"))
+
+    class Crash(BaseException):
+        pass
+
+    with pytest.MonkeyPatch.context() as cut:
+        def die(self, control_no, report_in_mysql, adopted=False):
+            raise Crash()
+        cut.setattr(g.Guard, "_remember", die)
+        with pytest.raises(Crash):
+            send_round(mine, db)
+    assert so_in_mysql(db, control) == "COMMITTED, THEN THE POWER WENT"
+    assert len(j.waiting_for_mysql(mine.journal)) == 1
+
+    result = send_round(mine, db, with_conflicts=True)   # next start
+    assert result["conflicts"] == [] and result["sent"] == [control]
+    assert mine.guard.owns(control)
+    save_here(mine, make(control, so="EDITED AFTERWARDS"), editing=True)
+    assert send_round(mine, db)["sent"] == [control]
+    assert so_in_mysql(db, control) == "EDITED AFTERWARDS"
+
+
+def test_power_cut_before_commit_leaves_mysql_unchanged(copy):
+    mine, db, control = copy
+    save_here(mine, make(control, so="FIRST"))
+    send_round(mine, db)
+    save_here(mine, make(control, so="NEVER COMMITTED"), editing=True)
+
+    class Crash(BaseException):
+        pass
+
+    with pytest.MonkeyPatch.context() as cut:
+        real_write = real_mysql.db_mysql.write_report
+
+        def die(conn, data):
+            real_write(conn, data)
+            raise Crash()               # before COMMIT: the server rolls back
+        cut.setattr(db, "write_report", die)
+        with pytest.raises(Crash):
+            send_round(mine, db)
+    assert so_in_mysql(db, control) == "FIRST"
+    send_round(mine, db, with_conflicts=True)
+    assert so_in_mysql(db, control) == "NEVER COMMITTED"
+    assert mine.journal.pending() == []

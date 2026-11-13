@@ -105,6 +105,17 @@ def test_new_report_save_counts(env, monkeypatch):
     assert counts.records == 3
 
 
+def test_save_with_mysql_leaves_one_open_step_and_no_extra_writes(
+        env, monkeypatch):
+    book = env
+    counts = Counts(monkeypatch, book)
+    save(book, receiving("FSR-MPR-202611-0002", so="EDITED"), True,
+         mysql=True)
+    assert counts.records == 2          # on record, end state (MySQL open)
+    (waiting,) = j.waiting_for_mysql(j.Journal(book))
+    assert waiting["steps"]["mysql"] == j.PENDING
+
+
 def test_rebuild_reads_each_workbook_once(env, monkeypatch):
     book = env
     counts = Counts(monkeypatch, book)

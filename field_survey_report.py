@@ -16,6 +16,7 @@ import html
 import json
 import logging
 import math
+import copy
 import os
 import posixpath
 import re
@@ -86,6 +87,7 @@ import fsr_backup                  # daily backup copy of the workbook
 import fsr_import                  # Master Data files from the sites/phones
 import fsr_master_export           # one Master Data file for the owner
 import fsr_mysql_guard             # never overwrite another copy's report
+import fsr_mysql_sender            # MySQL in the background
 import fsr_renumber                # give a saved report another number
 import fsr_save_journal            # finishes a save that stopped halfway
 import fsr_withdrawal              # PO-linked Withdrawal reports
@@ -1860,6 +1862,8 @@ if IS_OWNER_EDITION:    # the User edition never uses MySQL
         background=style.colors.bg, cursor="hand2"
     )
     dots_canvas.pack(side="right")
+    mysql_waiting_label = tb.Label(mysql_box, text="", bootstyle="warning")
+    mysql_waiting_label.pack(side="right", padx=(0, 8))
     dot_items = [
         dots_canvas.create_oval(4 + i * 34, 4, 4 + i * 34 + 26, 30,
                                 fill=DOT_WAIT[i], outline="")
@@ -1911,9 +1915,10 @@ if IS_OWNER_EDITION:    # the User edition never uses MySQL
             ok, message = result.get("value", (False, "No answer"))
             set_mysql_dots("ok" if ok else "bad", message)
             if ok and "finish_unfinished_saves" in globals():
-                refresh_mysql_numbers()
-                adopt_existing_reports()
-                finish_unfinished_saves(mysql_ok=True)   # MySQL catches up
+                # MySQL catches up, MySQL's numbers are read and (first
+                # run) equal reports are adopted - all in the background.
+                finish_unfinished_saves(mysql_ok=True, numbers=True,
+                                        adopt=True)
             if show_error and not ok:
                 if db_mysql is None or not db_mysql.is_enabled():
                     open_mysql_settings()
@@ -5948,20 +5953,318 @@ def refresh_mysql_numbers():
 
 
 def free_number_for_new_report(control):
-    """At save time: a NEW report whose number MySQL already holds (from
-    another copy) gets the next number free in both places, before anything
-    is written. MySQL not reachable: the number stays; a clash is then
-    found when MySQL is back."""
+    """At save time: a NEW report whose number MySQL holds (from another
+    copy, as far as MySQL was last seen) gets the next number free in both
+    places, before anything is written. No connection is opened for this -
+    the save never waits for MySQL. If another copy took the number since
+    MySQL was last seen, the background sender finds out and hands the
+    report on to the next free number (hand_on_number)."""
     try:
-        guard = mysql_guard()
-        if not guard.taken(control):
+        taken = mysql_numbers["values"]
+        if not any(same_key(number, control) for number in taken):
             return control
-        taken = list(db_mysql.control_numbers())
-        mysql_numbers["values"] = taken
+        if mysql_guard().owns(control):
+            return control
         return fsr_storage_next_number(
             [*fsr_renumber.local_numbers(excel_state["path"]), *taken])
     except Exception:
         return control
+
+
+# =====================================================
+# MYSQL IN THE BACKGROUND (fsr_mysql_sender)
+# A save is finished on this PC; its MySQL step waits in the save record
+# and is done by a background round over one connection.
+# =====================================================
+
+def adopt_reports(path, guard, connection=None, root=None):
+    """Reports that MySQL holds with the same value become this copy's own
+    (no question, nothing written to MySQL) - only while the ledger is
+    still empty. One read of each workbook. Safe in the background."""
+    with guard.reading():
+        if guard.ledger()["reports"]:
+            return []
+        reports = fsr_storage_read_all(path)
+        reports += fsr_withdrawal.read_all_reports(
+            fsr_paths.withdrawal_workbook_path(path, root))
+    if not reports:
+        return []
+    return guard.adopt_identical(reports, connection=connection)
+
+
+def fsr_storage_read_all(path):
+    import fsr_storage
+    if not Path(path).exists():
+        return []
+    return fsr_storage.read_all_reports(path)
+
+
+def mysql_round(path, master=None, user="", root=None, with_conflicts=False,
+                catch_up=False, compose=False, numbers=False, adopt=False,
+                save_id=None):
+    """ONE background round (runs in the sender's thread - no window
+    calls here): every report waiting for MySQL is sent through the guard
+    over one connection; then the master lists and, when asked, MySQL's
+    Control #s and the first-run adoption."""
+    result = {"sent": [], "sent_ids": [], "notes": {}, "conflicts": [],
+              "errors": [], "away": None, "numbers": None, "attempted": 0,
+              "adopted": []}
+    journal = fsr_save_journal.Journal(path)
+    waiting = fsr_save_journal.waiting_for_mysql(journal, with_conflicts)
+    result["attempted"] = len(waiting)
+    if not waiting and not numbers and not adopt:
+        return result
+    unreachable = getattr(db_mysql, "is_unreachable", lambda error: False)
+    guard = fsr_mysql_guard.Guard(db_mysql, path, user=user)
+    stores = fsr_save_journal.Stores(path, mysql=db_mysql,
+                                     required_root=root, guard=guard)
+    supported = fsr_mysql_guard.supports(db_mysql)
+    conn = db_mysql.connect() if supported else None
+    try:
+        stores.connection = conn
+        if adopt and supported:
+            try:
+                result["adopted"] = adopt_reports(path, guard, conn, root)
+            except Exception:
+                log.exception("Could not compare the reports with MySQL")
+        if waiting:
+            result.update(fsr_save_journal.send_waiting(
+                journal, stores, with_conflicts, unreachable))
+            if result["away"] is None:
+                try:
+                    if conn is not None:
+                        db_mysql.save_master_lists(master or {}, conn)
+                    else:
+                        db_mysql.save_master_lists(master or {})
+                except Exception as error:
+                    if unreachable(error):
+                        result["away"] = error
+                    else:
+                        log.exception("MySQL master lists failed")
+        if result["away"] is None and supported and hasattr(
+                db_mysql, "control_numbers"):
+            try:
+                result["numbers"] = list(db_mysql.control_numbers(conn))
+            except Exception:
+                log.exception("Could not read MySQL's Control #s")
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    return result
+
+
+# record id -> (what happened, detail), for a save that asked to be told
+# at once (only when the sender runs inline, as in the automated tests)
+mysql_feedback = {}
+mysql_wait_state = {"busy": False}
+
+
+def request_mysql_round(**flags):
+    """Ask the sender for a round with this PC's settings."""
+    if not mysql_in_use():
+        return
+    mysql_sender.request(
+        path=excel_state["path"], master=copy.deepcopy(master_data),
+        user=USER_FULL_NAME, root=DATA_DIR if DEMO_MODE else None, **flags)
+    refresh_mysql_waiting()
+
+
+def use_mysql_numbers(numbers):
+    """MySQL's Control #s, as just read: a new, untouched report on the form
+    takes a number free in both places."""
+    mysql_numbers["values"] = list(numbers)
+    if not report_state["editing"] and not report_state["dirty"]:
+        wanted = next_new_control_number()
+        if wanted != control_entry.get().strip():
+            set_control_number(wanted)
+            report_state["dirty"] = False
+            update_status()
+
+
+def hand_on_number(record, numbers):
+    """A NEW report's number turned out to be used in MySQL by another copy
+    (taken after MySQL was last seen): it gets the next number free on this
+    PC and in MySQL - everywhere on this PC - and is sent under that. This
+    is what Save did before it wrote anything, now done right after. True
+    when it was done."""
+    path = excel_state["path"]
+    old = record["control"]
+    root = DATA_DIR if DEMO_MODE else None
+    guard = mysql_guard()
+    stores = fsr_save_journal.Stores(path, mysql=db_mysql,
+                                     required_root=root, guard=guard)
+    journal = fsr_save_journal.Journal(path)
+    try:
+        new = fsr_renumber.next_free(path, old, list(numbers or []))
+
+        def change(old_number, new_number):
+            with guard.local_write():
+                fsr_renumber.renumber_report(path, old_number, new_number,
+                                             root)
+
+        moved = fsr_save_journal.renumber_record(journal, stores,
+                                                 record["id"], new, change)
+    except Exception:
+        log.exception("Could not give %s the next free number", old)
+        return False
+    log.warning("%s was already used in MySQL by another copy of the "
+                "program; the report saved here is now %s.", old, new)
+    if same_key(control_entry.get().strip(), old):
+        dirty = report_state["dirty"]
+        set_control_number(new)
+        report_state["dirty"] = dirty
+        update_status()
+    try:
+        busy(create_report_forms, path, moved["data"])
+    except Exception:
+        log.exception("Report form of %s not made again", new)
+    notify(f"{old} was already used in MySQL by another copy of the "
+           f"program. Your report is now {new}, here and in MySQL.",
+           bootstyle="warning")
+    return True
+
+
+def mysql_round_done(item):
+    """On the window's thread: tell the user what a round did."""
+    request = item["request"]
+    result = item["result"] or {}
+    error = item["error"] or result.get("away")
+    compose = request.get("save_id") if request.get("compose") else None
+    unreachable = getattr(db_mysql, "is_unreachable", lambda e: False)
+    dots = "set_mysql_dots" in globals()
+
+    if result.get("numbers") is not None:
+        use_mysql_numbers(result["numbers"])
+    for control in result.get("sent", []):
+        if control not in mysql_numbers["values"]:
+            mysql_numbers["values"].append(control)
+
+    others = [control for record_id, control in zip(
+        result.get("sent_ids", []), result.get("sent", []))
+        if record_id != compose]
+    if compose in result.get("sent_ids", []):
+        mysql_feedback[compose] = ("sent", result["notes"].get(compose))
+    if others:
+        if request.get("catch_up") or compose:
+            notify(f"MySQL caught up: {len(others)} report(s) saved earlier "
+                   "on this PC are now in MySQL")
+        elif len(others) == 1:
+            notify(f"Report {others[0]} is now in MySQL")
+        else:
+            notify(f"{len(others)} reports are now in MySQL")
+
+    if error is not None:
+        away = unreachable(error)
+        if dots:
+            set_mysql_dots("bad", "MySQL was not reached. Is the MySQL80 "
+                           "service running?" if away
+                           else db_mysql.explain_error(error))
+        try:
+            left = len(fsr_save_journal.waiting_for_mysql(
+                fsr_save_journal.Journal(excel_state["path"])))
+        except Exception:
+            left = 0
+        if compose:
+            mysql_feedback.setdefault(compose, ("away" if away else "error",
+                                                error))
+        elif left:
+            if away:
+                notify(f"MySQL was not reached  -  {left} report(s) saved on "
+                       "this PC wait; they are sent at the next save or "
+                       "start", bootstyle="warning")
+            else:
+                messagebox.showwarning(
+                    "MySQL - Not Updated",
+                    f"{left} report(s) are saved on this PC but NOT in "
+                    f"MySQL:\n{db_mysql.explain_error(error)}\n\nThey are "
+                    "tried again at the next save or start, or use 'Sync to "
+                    "MySQL'.", parent=window)
+    elif dots and (result.get("attempted") or result.get("numbers")
+                   is not None):
+        set_mysql_dots("ok")
+
+    handed_on, new_conflicts = False, []
+    for record, conflict, new in result.get("conflicts", []):
+        # Handed on to the next free number only on the save's own first
+        # send (what Save used to check before writing). A clash found
+        # later - saved while MySQL was away - is the user's decision.
+        if (record["id"] == request.get("save_id") and record.get("new")
+                and conflict.get("kind") == fsr_mysql_guard.NOT_OWNED
+                and not record.get("renumbered_from")
+                and hand_on_number(record, result.get("numbers"))):
+            handed_on = True
+        elif record["id"] == compose:
+            mysql_feedback[compose] = ("conflict", conflict)
+        elif new:
+            new_conflicts.append((record, conflict))
+    for record_id, control, failure in result.get("errors", []):
+        if record_id == compose:
+            mysql_feedback[compose] = ("error", failure)
+    if handed_on:
+        request_mysql_round(compose=request.get("compose", False),
+                            save_id=request.get("save_id"))
+    if new_conflicts:
+        listing = "\n\n".join(conflict["text"]
+                              for _, conflict in new_conflicts[:5])
+        messagebox.showwarning(
+            "MySQL - Not Updated",
+            f"{len(new_conflicts)} report(s) saved on this PC were NOT sent "
+            f"to MySQL:\n\n{listing}\n\nNothing in MySQL was changed. Decide "
+            "in the MySQL Conflicts window what to do; until then MySQL "
+            "keeps its report.", parent=window)
+        open_mysql_conflicts(select=new_conflicts[0][0]["id"])
+    if result.get("adopted"):
+        log.info("%d report(s) are the same in the Excel file and in MySQL "
+                 "and are now this copy's own.", len(result["adopted"]))
+    refresh_conflict_count()
+    refresh_mysql_waiting()
+    if result.get("sent") and globals().get("app_shell") is not None:
+        app_shell.service.invalidate()
+
+
+mysql_sender = fsr_mysql_sender.Sender(
+    mysql_round, mysql_round_done,
+    inline=os.environ.get("FSR_MYSQL_INLINE", "").strip() == "1")
+
+
+def refresh_mysql_waiting():
+    """The note beside the MySQL circles: reports not in MySQL yet."""
+    label = globals().get("mysql_waiting_label")
+    if label is None:
+        return
+    try:
+        count = len(fsr_save_journal.waiting_for_mysql(
+            fsr_save_journal.Journal(excel_state["path"])))
+    except Exception:
+        count = 0
+    if not mysql_in_use() or not count:
+        text = ""
+    elif not mysql_sender.idle():
+        text = f"Sending {count} to MySQL..."
+    else:
+        text = f"{count} waiting for MySQL"
+    try:
+        label.configure(text=text)
+    except tkinter.TclError:
+        pass
+
+
+def poll_mysql_sender():
+    """Hand finished rounds to mysql_round_done(); runs every 1/4 s."""
+    try:
+        mysql_sender.poll()
+        busy_now = not mysql_sender.idle()
+        if busy_now != mysql_wait_state["busy"]:
+            mysql_wait_state["busy"] = busy_now
+            refresh_mysql_waiting()
+    finally:
+        try:
+            window.after(250, poll_mysql_sender)
+        except tkinter.TclError:
+            pass
 
 
 def new_report(confirm=True):
@@ -6423,8 +6726,6 @@ def save_report():
         if free != data["control_no"]:
             data["control_no"] = free
             set_control_number(free)
-    if guard is not None:
-        guard.before_local_write()
 
     try:
         if linked:
@@ -6462,10 +6763,12 @@ def save_report():
                 data, report_state["editing"], linked,
                 fsr_save_journal.steps_for(data, linked, mysql_on))
 
-        # Excel first, then the incident file, the other Item List forms,
-        # PO_Master / Withdrawn_Item and MySQL. Only a failure of the Excel
-        # write stops the save.
-        outcome = busy(fsr_save_journal.run, journal, record, stores)
+        # Excel first, then the incident file, the other Item List forms
+        # and PO_Master / Withdrawn_Item. Only a failure of the Excel write
+        # stops the save. MySQL follows in the background (its step stays
+        # open in the record) - unless there is no record to hold it.
+        outcome = busy(fsr_save_journal.run, journal, record, stores,
+                       journal is None)
         result = outcome["result"]
 
     except PermissionError:
@@ -6490,8 +6793,6 @@ def save_report():
 
     failed = outcome["failed"]
     data = record["data"]       # as written: Control #, Receiving Refs ...
-    if guard is not None:
-        guard.after_local_write()
     later = ("\n\nIt will also be finished automatically at the next save "
              "or the next start." if journal is not None else "")
 
@@ -6544,11 +6845,39 @@ def save_report():
             f"{fsr_save_journal.words(completed_now)}."), incident_note)
             if t)
 
-    # Also store the report in MySQL (when db_config.json is set up).
+    # Also store the report in MySQL (when db_config.json is set up): in
+    # the background, so the window does not wait for the server.
     db_note = None
     mysql_waits = False
     mysql_conflict = None
-    if mysql_on:
+    sending = False
+    if mysql_on and journal is not None:
+        mysql_feedback.pop(record["id"], None)
+        request_mysql_round(save_id=record["id"],
+                            compose=mysql_sender.inline)
+        told = mysql_feedback.pop(record["id"], None)
+        sending = not mysql_sender.inline
+        kind, detail = told or (None, None)
+        if kind == "sent":
+            db_note = "\n".join(detail or []) or None
+        elif kind == "conflict":
+            mysql_waits = True
+            mysql_conflict = detail
+            db_note = (
+                "The report is saved in the Excel file, but MySQL was NOT "
+                f"updated:\n{detail['text']}\n\nNothing in MySQL was "
+                "changed. Decide in the MySQL Conflicts window what to do; "
+                "until then MySQL keeps its report.")
+        elif kind == "away":
+            mysql_waits = True
+        elif kind == "error":
+            mysql_waits = True
+            db_note = (
+                "The report was saved to Excel, but NOT to MySQL:\n"
+                f"{db_mysql.explain_error(detail)}\n\nClick Save again "
+                "to retry, or use 'Sync to MySQL'." + later)
+    elif mysql_on:
+        # No save record (it could not be written): MySQL was done at once.
         error = failed.get("mysql")
         if error is None:
             try:
@@ -6608,6 +6937,11 @@ def save_report():
             f"Report {result['control']} {action} on this PC  -  NOT sent "
             "to MySQL (it holds a different report under this number)",
             bootstyle="warning")
+    elif sending:
+        notify(
+            f"Report {result['control']} {action} on this PC  -  "
+            f"{result['goods']} goods, {result['items']} item lines, "
+            f"{result['remarks']} remarks. Sending it to MySQL...")
     elif mysql_waits:
         notify(
             f"Report {result['control']} {action} on this PC  -  MySQL was "
@@ -6629,41 +6963,46 @@ def save_report():
     show_saved_links(data)
     if globals().get("app_shell") is not None:
         app_shell.service.invalidate()      # dashboards use the new data
-    # Earlier saves that did not finish are completed now (MySQL only when
-    # it answered just now).
-    finish_unfinished_saves(
-        mysql_ok=mysql_on and ("mysql" not in failed
-                               or mysql_conflict is not None),
-        skip={record["id"]})
+    # Earlier saves that did not finish are completed now (this PC's
+    # files; MySQL is in the round above).
+    finish_unfinished_saves(skip={record["id"]})
     if mysql_conflict:
         open_mysql_conflicts(select=record["id"])
     refresh_conflict_count()
+    refresh_mysql_waiting()
     return True
 
 
 unfinished_state = {"unreadable_shown": False}
 
 
-def finish_unfinished_saves(mysql_ok=False, skip=()):
+def finish_unfinished_saves(mysql_ok=False, skip=(), numbers=False,
+                            adopt=False):
     """Complete every save on record that stopped halfway and tell the user
     in plain words what was done. Runs at start, after a save, and when
-    MySQL becomes reachable. Safe to run any number of times."""
+    MySQL becomes reachable. Safe to run any number of times. This PC's
+    files are done here; with mysql_ok the reports waiting for MySQL are
+    handed to the background sender."""
     path = excel_state["path"]
+    if mysql_ok:
+        def ask_mysql():
+            request_mysql_round(catch_up=True, with_conflicts=True,
+                                numbers=numbers, adopt=adopt)
+    else:
+        def ask_mysql():
+            pass
     try:
         journal = fsr_save_journal.Journal(path)
         if not [r for r in journal.pending() if r.get("id") not in skip]:
+            ask_mysql()
             return []
-        use_mysql = bool(mysql_ok and mysql_in_use())
-        guard = mysql_guard() if use_mysql else None
+        use_guard = mysql_in_use()
+        guard = mysql_guard() if use_guard else None
         stores = fsr_save_journal.Stores(
-            path, mysql=db_mysql if use_mysql else None,
+            path, mysql=db_mysql if use_guard else None,
             required_root=DATA_DIR if DEMO_MODE else None, guard=guard)
-        if guard is not None:
-            guard.before_local_write()
-        report = busy(fsr_save_journal.repair, journal, stores, use_mysql,
+        report = busy(fsr_save_journal.repair, journal, stores, False,
                       skip)
-        if guard is not None:
-            guard.after_local_write()
     except fsr_save_journal.JournalError as error:
         log.exception("The record of unfinished saves cannot be read")
         if not unfinished_state["unreadable_shown"]:
@@ -6687,13 +7026,9 @@ def finish_unfinished_saves(mysql_ok=False, skip=()):
             step != "mysql" for entry in report for step in entry["failed"])
         (messagebox.showwarning if still_open else messagebox.showinfo)(
             "Unfinished Save", "\n\n".join(lines), parent=window)
-    else:
-        caught_up = sum("mysql" in entry["did"] for entry in report)
-        if caught_up:
-            notify(f"MySQL caught up: {caught_up} report(s) saved earlier "
-                   "on this PC are now in MySQL")
     if report and globals().get("app_shell") is not None:
         app_shell.service.invalidate()
+    ask_mysql()
     refresh_conflict_count()
     return report
 
@@ -6729,19 +7064,10 @@ def adopt_existing_reports():
     if not mysql_in_use() or not fsr_mysql_guard.supports(db_mysql):
         return []
     try:
-        guard = mysql_guard()
-        if guard.ledger()["reports"]:
-            return []
-        path = excel_state["path"]
-        reports = []
-        for entry in list_saved_reports(path):
-            reports.append(read_report(path, entry[0]))
-        reports += fsr_withdrawal.read_all_reports(withdrawal_book())
-        if not reports:
-            return []
         # adopt_identical() stores the ledger itself; nothing was written to
         # the workbook, so the ledger must NOT be marked current here.
-        adopted = busy(guard.adopt_identical, reports)
+        adopted = busy(adopt_reports, excel_state["path"], mysql_guard(),
+                       None, DATA_DIR if DEMO_MODE else None)
     except Exception:
         log.exception("Could not compare the reports with MySQL")
         return []
@@ -6929,11 +7255,10 @@ def open_mysql_conflicts(select=None):
         journal, stores, guard = stores_and_journal()
 
         def change(old_number, new_number):
-            guard.before_local_write()
-            fsr_renumber.renumber_report(
-                path, old_number, new_number,
-                DATA_DIR if DEMO_MODE else None)
-            guard.after_local_write()
+            with guard.local_write():
+                fsr_renumber.renumber_report(
+                    path, old_number, new_number,
+                    DATA_DIR if DEMO_MODE else None)
 
         try:
             outcome = busy(fsr_save_journal.resolve_renumber, journal,
@@ -7376,15 +7701,13 @@ def restore_excel_from_mysql():
     restored = []
     try:
         restore_guard = mysql_guard()
-        restore_guard.before_local_write()
-        added, errors = busy(work)
-        restore_guard.after_local_write()
+        with restore_guard.local_write():
+            added, errors = busy(work)
         # What was just brought in is the same here and in MySQL: it is
         # this copy's own from now on, so editing it needs no question.
         try:
             busy(restore_guard.adopt_identical,
                  [read_report(path, control) for control in restored])
-            restore_guard.after_local_write()
         except Exception:
             log.exception("Could not adopt the restored reports")
     except PermissionError:
@@ -7439,6 +7762,16 @@ def on_close():
         if answer and not save_report():
             return
 
+    # Reports still being sent: a few seconds to finish. Whatever is not
+    # sent stays in the save record and goes at the next start.
+    if not mysql_sender.idle():
+        window.configure(cursor="watch")
+        status_var.set("Finishing the MySQL send...")
+        window.update_idletasks()
+        if not mysql_sender.wait(8):
+            log.warning("Closed while reports were still being sent to "
+                        "MySQL; they are sent at the next start.")
+
     save_settings()
     window.destroy()
 
@@ -7483,6 +7816,7 @@ window.after(300, finish_unfinished_saves)
 
 if "check_mysql_status" in globals():
     window.after(600, check_mysql_status)
+window.after(250, poll_mysql_sender)
 
 def report_callback_exception(exc_type, exc_value, exc_traceback):
     """Any unexpected error: write it to the log and tell the user where."""
