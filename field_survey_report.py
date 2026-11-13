@@ -2965,13 +2965,18 @@ def export_round_done(item):
     result = item["result"] or {}
     error = item["error"]
     if result.get("changed"):
-        settle_changed_export(request.get("path"))
+        if not export_state.get("settling"):   # one decision at a time
+            settle_changed_export(request.get("path"))
         return
     if error is None:
         export_state["warned"] = False
         return
-    if isinstance(error, PermissionError):
-        window.after(EXPORT_RETRY_MS, request_export_round)
+    if isinstance(error, PermissionError) and not export_state.get("retry"):
+        def retry():
+            export_state["retry"] = False
+            request_export_round()
+        export_state["retry"] = True            # one retry waiting at most
+        window.after(EXPORT_RETRY_MS, retry)
     if export_state["warned"]:
         return                      # said once until it works again
     export_state["warned"] = True
@@ -2991,10 +2996,12 @@ def settle_changed_export(path=None):
     """An exported workbook was changed outside the program: decide, and
     say plainly what was done (fsr_sqlite_migrate.reconcile)."""
     path = Path(path or excel_state["path"])
+    export_state["settling"] = True
     try:
         result = busy(fsr_sqlite_migrate.reconcile, path,
                       DATA_DIR if DEMO_MODE else None)
     except Exception as error:
+        export_state["settling"] = False
         log.exception("A changed Excel file could not be settled")
         messagebox.showwarning(
             "Excel File Changed",
@@ -3003,6 +3010,7 @@ def settle_changed_export(path=None):
             "overwritten. The reports are safe in the database.",
             parent=window)
         return
+    export_state["settling"] = False
     if result.status in ("taken", "merged"):
         messagebox.showwarning("Excel File Changed Outside the Program",
                                result.message, parent=window)
@@ -5508,7 +5516,8 @@ def build_window():
 
     lists_sender = fsr_mysql_sender.Sender(
         lists_round, lists_round_done,
-        inline=os.environ.get("FSR_MYSQL_INLINE", "").strip() == "1")
+        inline=os.environ.get("FSR_MYSQL_INLINE", "").strip() == "1",
+        name="PO_Master / Withdrawn_Item")
 
 
     # ---------- the Excel export of the reports database ----------
@@ -5517,7 +5526,8 @@ def build_window():
     db_move_state = {"running": False}
     export_sender = fsr_mysql_sender.Sender(
         export_round, export_round_done,
-        inline=os.environ.get("FSR_MYSQL_INLINE", "").strip() == "1")
+        inline=os.environ.get("FSR_MYSQL_INLINE", "").strip() == "1",
+        name="Excel export")
     # Every committed write of the database asks for a new export.
     fsr_sqlite_store.listeners[:] = [request_export_round]
 

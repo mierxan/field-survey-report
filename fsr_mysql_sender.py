@@ -34,7 +34,8 @@ log = logging.getLogger("fsr")
 
 
 class Sender:
-    def __init__(self, work, on_result, inline=False):
+    def __init__(self, work, on_result, inline=False, name="MySQL send"):
+        self.name = name                    # in the log: what failed
         self._work = work                   # work(request) -> result
         self._on_result = on_result         # on_result(result), GUI thread
         self.inline = inline
@@ -105,11 +106,11 @@ class Sender:
             return {"request": request, "result": self._work(**request),
                     "error": None}
         except Exception as error:          # reported, never lost silently
-            log.exception("MySQL send round failed")
+            log.exception("%s round failed", self.name)
             return {"request": request, "result": None, "error": error}
 
     def _deliver(self, item):
         try:
             self._on_result(item)
         except Exception:
-            log.exception("Reporting a MySQL send round failed")
+            log.exception("Reporting a %s round failed", self.name)

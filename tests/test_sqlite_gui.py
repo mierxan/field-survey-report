@@ -231,10 +231,12 @@ def test_an_export_open_in_excel_is_said_once_and_tried_again(program,
                                      date(2026, 11, 5)), True)
     warned = [m for style, m in toasts if "open in another program" in m]
     assert len(warned) == 1 and "safe in the database" in warned[0]
-    assert len(retries) >= 2
+    assert retries == [live(g)["EXPORT_RETRY_MS"]]   # one waiting, not one
+                                                   # per failed round
     assert store(g).read_report(control)["general_information"][
         "so_number"] == "SO-SQL-LOCKED"
-    live(g)["request_export_round"]()               # closed: the retry
+    live(g)["export_state"]["retry"] = False        # the recorded retry ...
+    live(g)["request_export_round"]()               # ... runs: file closed
     assert in_workbook(g, control) == [control]
     assert live(g)["export_state"]["warned"] is False
 
