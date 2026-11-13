@@ -3722,11 +3722,13 @@ def import_master_data_file():
         return
 
     who = data.get("inspector") or "an unnamed inspector"
+    copied = ("the reports database" if data_store(path).kind == "sqlite"
+              else "the Excel file")
     if not messagebox.askyesno(
         "Import Master Data",
         f"{len(data['reports'])} report(s) from {who}.\n\n"
         f"Bring them into:\n{path}\n\n"
-        "A copy of the Excel file is made first. Your existing reports are "
+        f"A copy of {copied} is made first. Your existing reports are "
         "not overwritten.",
         parent=window
     ):
@@ -3817,7 +3819,9 @@ def import_finished(path, data, summary, mysql_now):
                      "report MySQL holds differently is not overwritten (see "
                      "Account > MySQL Conflicts).")
     if summary["backup"]:
-        lines.append(f"\nCopy of the Excel file before the import:\n"
+        copied = ("the reports database" if str(summary["backup"]).endswith(
+            fsr_sqlite_store.DB_SUFFIX) else "the Excel file")
+        lines.append(f"\nCopy of {copied} before the import:\n"
                      f"{summary['backup']}")
     open_control = control_entry.get().strip()
     if report_state["editing"] and any(

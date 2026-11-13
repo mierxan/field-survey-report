@@ -289,3 +289,33 @@ def test_another_workbook_moves_in_when_it_is_chosen(program, monkeypatch,
     finally:
         live(g)["excel_state"]["path"] = before
         live(g)["settings"]["excel_path"] = str(before)
+
+
+# ---------- Import Master Data ----------
+
+def test_import_master_data_into_the_database(program, monkeypatch,
+                                              tmp_path):
+    g, answers = program
+    import fsr_master_export
+    site = tmp_path / "site" / "data.xlsx"
+    site.parent.mkdir()
+    fsr_store.ExcelStore(site).write_report(          # a previous-version PC
+        report("FSR-IMP-202611-0001", "Receiving", date(2026, 11, 5),
+               so="SO-IMPORTED"), False)
+    master = tmp_path / "FSR_Master_Data_site.json"
+    fsr_master_export.write_export(site, master, "site-pc", "Site Inspector")
+    monkeypatch.setattr(live(g)["filedialog"], "askopenfilename",
+                        lambda **kw: str(master))
+    live(g)["import_master_data_file"]()
+    assert pump(g, lambda: not live(g)["import_state"]["running"])
+    asked = [m for k, t, m in answers.calls
+             if k == "askyesno" and t == "Import Master Data"]
+    assert asked and "A copy of the reports database is made first" in \
+        asked[0]
+    told = "\n".join(str(m) for k, t, m in answers.calls
+                     if t == "Import Master Data" and k != "askyesno")
+    assert "Copy of the reports database before the import" in told
+    assert ".sqlite3" in told
+    assert store(g).read_report("FSR-IMP-202611-0001")[
+        "general_information"]["so_number"] == "SO-IMPORTED"
+    assert in_workbook(g, "FSR-IMP-202611-0001") == ["FSR-IMP-202611-0001"]
