@@ -292,29 +292,40 @@ guard.
 
 ### What a SQLite implementation must provide (checklist)
 
-- [ ] Every method above, with the same arguments and the same results
+Status after Phase 5 (built; see [SQLITE.md](SQLITE.md)):
+
+- [x] Every method above, with the same arguments and the same results
       (the same report dictionaries, the same Control # rules - unique
       across both kinds of report, case-insensitive).
-- [ ] `write_report` / `write_reports` in one transaction each: all or
+- [x] `write_report` / `write_reports` in one transaction each: all or
       nothing, as the workbook replace is today.
-- [ ] The "Last Saved" time a save chose in advance is stored exactly (to
+- [x] The "Last Saved" time a save chose in advance is stored exactly (to
       the millisecond): the save record recognises a save by it.
-- [ ] Incident texts, other Item List forms, the import record, the MySQL
-      ledger and the save record as tables in the same database - then a
-      save of a report and its side data is one transaction, and the save
-      record is only needed for MySQL and the exports.
-- [ ] The MySQL ledger's "is it current?" answered by a change counter in
-      the database instead of file times.
-- [ ] PO_Master and Withdrawn_Item still written as Excel files (people
-      open them), from the database, in the background.
-- [ ] An Excel export of all reports in today's workbook layout (the way
-      back and the file people read), written in the background.
-- [ ] `renumber` as one transaction.
-- [ ] Backups: SQLite's backup function into the Backups folder.
-- [ ] The migration of section 5: copy, read every report once, write,
-      compare every report field by field, keep the original.
-- [ ] Every existing test run against both implementations (the tests
-      take the store as a parameter).
+- [ ] **Not done, on purpose:** incident texts, the other Item List forms,
+      the import record, the MySQL ledger and the save record stay the JSON
+      files they were. Moving them changes more files at once for no gain
+      in speed (they are small); the save record already makes a save of a
+      report and its side files complete. A later step if wanted.
+- [ ] **Done differently:** the MySQL ledger's "is it current?" still
+      compares file size and time - of the database file now (rollback
+      journal, so the file changes with every committed write), not of the
+      export. Writing the export does not touch the database file.
+- [x] PO_Master and Withdrawn_Item still written as Excel files, from the
+      database, in the background.
+- [x] An Excel export of all reports in today's workbook layout, written
+      in the background; never written over a file changed outside the
+      program.
+- [x] `renumber`: the database part in one transaction (the JSON files and
+      PO lists as before).
+- [x] Backups: SQLite's backup function into the Backups folder.
+- [x] The migration of section 5: backup, copy, compare every report field
+      by field and the export row by row, keep the original.
+- [ ] **Partly:** the store contract tests run against both stores, and a
+      "twin" test does the same steps on both and compares every read and
+      every exported row. The older GUI test modules still run on the
+      workbook (they test the workbook's own behaviour, such as a save
+      stopped by a file open in Excel); a new GUI module runs the program
+      on the database.
 
 ### What the SQLite phase will then involve
 

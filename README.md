@@ -78,6 +78,13 @@ is written in one go, with a progress window. Measured times:
 larger data: [docs/STORAGE_PROPOSAL.md](docs/STORAGE_PROPOSAL.md); open
 decisions for the owner: [docs/OPEN_DECISIONS.md](docs/OPEN_DECISIONS.md).
 
+The reports are kept in a database file beside the Excel file
+(`Field_Survey_Reports.sqlite3`, Phase 5); the Excel file is an export kept
+up to date in the background, in the same layout as before. The move
+happens once at the first start, with a backup and a full comparison - see
+[docs/SQLITE.md](docs/SQLITE.md), which also lists every way the Excel file
+is used, what happens to an Excel file edited by hand, and the way back.
+
 ## 3. The modules (left navigation bar)
 
 | Module | What it does |
