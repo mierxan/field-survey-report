@@ -29,6 +29,16 @@ import fsr_storage
 import fsr_withdrawal
 
 
+# Demo Mode data: a folder marked with this file, reports numbered TEST-...
+# (warehouse/sample_data.py). Nothing else may ever be deleted.
+DEMO_MARKER = ".fsr_test_data"
+DEMO_PREFIX = "TEST-"
+
+
+class StoreRefused(ValueError):
+    """The store does not do this to real data."""
+
+
 class ExcelStore:
     """The workbook `excel_path` (and the Withdrawal workbook beside it)
     with its JSON files. `required_root`: Demo Mode keeps the Withdrawal
@@ -68,7 +78,19 @@ class ExcelStore:
         return fsr_storage.write_reports_to_excel(self.excel_path, items)
 
     def delete_reports(self, control_numbers):
-        """Demo Mode reset only (the sample reports)."""
+        """Demo Mode reset only: refused (StoreRefused) unless the workbook
+        is in a folder marked as test data AND every report to delete is a
+        TEST-... sample report - enforced here, whoever calls it."""
+        marker = self.excel_path.resolve().parent / DEMO_MARKER
+        if not marker.exists():
+            raise StoreRefused(
+                f"{self.excel_path} is not Demo Mode data: reports are "
+                "never deleted from it.")
+        real = [c for c in control_numbers
+                if not str(c).strip().upper().startswith(DEMO_PREFIX)]
+        if real:
+            raise StoreRefused(
+                f"Only TEST-... sample reports can be deleted (not {real[0]}).")
         return fsr_storage.delete_reports_from_excel(self.excel_path,
                                                      control_numbers)
 
