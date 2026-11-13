@@ -491,3 +491,14 @@ def test_the_read_once_copy_is_never_handed_to_a_write(book):
         assert fsr_storage.load_workbook(book, data_only=True) is first
         assert fsr_storage.load_workbook(book) is not first
     assert fsr_storage.load_workbook(book, data_only=True) is not first
+
+
+def test_a_formula_typed_into_the_workbook_keeps_the_workbook(book):
+    wb = load_workbook(book)
+    ws = wb["Item List"]
+    ws.cell(row=ws.max_row + 1, column=7, value="=SUM(G2:G3)")
+    wb.save(book)
+    result = migrate.migrate(book)
+    assert result.status == "kept"
+    assert "formula" in result.message and "Item List!G" in result.message
+    assert fsr_store.open_store(book).kind == "excel"

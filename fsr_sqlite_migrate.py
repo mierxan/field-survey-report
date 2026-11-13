@@ -25,6 +25,7 @@ use_excel_again(): the way back.
 import contextlib
 import json
 import logging
+import re
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -151,10 +152,62 @@ def _header_rows(ws, label):
     return rows
 
 
+_FORMULA = re.compile(rb"<(?:\w+:)?f[\s>/]")
+_CELL = re.compile(rb'<(?:\w+:)?c\s[^>]*?\br="([A-Z]+[0-9]+)"')
+
+
+def _sheet_files(archive):
+    """{sheet XML file in the archive: sheet name}."""
+    import xml.etree.ElementTree as ET
+    main = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+    rel = ("{http://schemas.openxmlformats.org/officeDocument/2006/"
+           "relationships}id")
+    targets = {}
+    rels = ET.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
+    for item in rels:
+        target = item.get("Target", "").lstrip("/")
+        targets[item.get("Id")] = (target if target.startswith("xl/")
+                                   else "xl/" + target)
+    names = {}
+    for sheet in ET.fromstring(archive.read("xl/workbook.xml")).iter(
+            main + "sheet"):
+        names[targets.get(sheet.get(rel), "")] = sheet.get("name")
+    return names
+
+
+def _formula_cell(path):
+    """The first cell holding a formula ("Sheet!B7"), or None. The program
+    never writes formulas, so one was typed in Excel; the export keeps
+    values only, so it would become a fixed number. (A formula is an <f>
+    element of its cell in the sheet's XML: found there directly, which is
+    far quicker than loading the workbook once more.)"""
+    import zipfile
+    with zipfile.ZipFile(path) as archive:
+        for name, title in _sheet_files(archive).items():
+            if name not in archive.namelist():
+                continue
+            data = archive.read(name)
+            found = _FORMULA.search(data)
+            if found:
+                cells = list(_CELL.finditer(data, 0, found.start()))
+                where = cells[-1].group(1).decode() if cells else "?"
+                return f"{title}!{where}"
+    return None
+
+
 def read_rows(excel_path, required_root=None):
     """{book: (header rows, {sheet: rows})} of both workbooks, read once.
     Raises MigrationRefused for what the database would not keep."""
     main, book = _books(excel_path, required_root)
+    for path in (main, book):
+        if path.exists():
+            found_at = _formula_cell(path)
+            if found_at:
+                raise MigrationRefused(
+                    f"{path.name} has a formula typed into it (cell "
+                    f"{found_at}). The export keeps values only, so the "
+                    "formula would be lost. Move it to another file to "
+                    "switch to the database.")
     found = {sq.MAIN: ([], {s: [] for s in sq.MAIN_SHEETS}),
              sq.BOOK: ([], {s: [] for s in sq.BOOK_SHEETS})}
     if main.exists():
