@@ -37,7 +37,7 @@ def build_export(excel_path, device_id, inspector="", master_lists=None):
     """The export as a dictionary. Raises MasterExportError rather than leaving
     anything out without saying so."""
     import fsr_store
-    store = fsr_store.ExcelStore(excel_path)
+    store = fsr_store.open_store(excel_path)
     reports = merge_withdrawal_reports(store.read_all_reports(),
                                        store.read_all_withdrawal_reports())
     saved = {**store.last_saved_times(),

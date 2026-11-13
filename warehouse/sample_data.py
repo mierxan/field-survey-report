@@ -74,7 +74,7 @@ def workbook_controls(path):
     import fsr_store
     try:
         return [r["control_no"]
-                for r in fsr_store.ExcelStore(path).read_all_reports()]
+                for r in fsr_store.open_store(path).read_all_reports()]
     except FileNotFoundError:
         return []
 
@@ -417,7 +417,7 @@ def generate(folder=DEMO_FOLDER, anchor=None, workbook_name=DEMO_WORKBOOK):
     path = check_target(folder / workbook_name)
     sample = build_sample_set(anchor)
     import fsr_store
-    store = fsr_store.ExcelStore(path)
+    store = fsr_store.open_store(path)
     for spec in sample.reports:
         data = report_data(spec)
         store.write_report(data, True)
@@ -451,7 +451,7 @@ def reset(folder=DEMO_FOLDER, workbook_name=DEMO_WORKBOOK):
     import fsr_store
     # The store itself refuses anything but TEST-... reports in a marked
     # folder (fsr_store.ExcelStore.delete_reports).
-    removed = (fsr_store.ExcelStore(path).delete_reports(tests)
+    removed = (fsr_store.open_store(path).delete_reports(tests)
                if tests else 0)
     files = 0
     json_folder = fsr_paths.json_dir_for_workbook(path)

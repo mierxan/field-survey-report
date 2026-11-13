@@ -207,7 +207,7 @@ class WithdrawalPanel:
                 if po else "Please enter a PO Number.", parent=window)
             return
         try:
-            found = fsr_store.ExcelStore(self.host.main_path()).find_po(po)
+            found = fsr_store.open_store(self.host.main_path()).find_po(po)
         except wd.PoSourceMissing as error:
             messagebox.showinfo(
                 "No Receiving Data",
@@ -349,7 +349,7 @@ class WithdrawalPanel:
         try:
             number = wd.validate_quantity(
                 quantity.get(), row["UOM"], row[wd.RECEIVED_HEADER],
-                fsr_store.ExcelStore(self.host.main_path())
+                fsr_store.open_store(self.host.main_path())
                 .remaining_quantity(row, self.host.control_no()))
         except wd.WithdrawalError as error:
             quantity.delete(0, "end")

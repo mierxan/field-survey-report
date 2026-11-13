@@ -96,7 +96,7 @@ from pathlib import Path
 import fsr_mysql_guard
 import fsr_paths
 import fsr_storage as storage
-import fsr_withdrawal
+import fsr_withdrawal  # noqa: F401 - PO lists, via the store; tests reach it here
 
 log = logging.getLogger("fsr")
 
@@ -334,6 +334,12 @@ class Stores:
         # every report of the import)
         self._lists_rebuilt = set()
 
+    @property
+    def store(self):
+        """The store of the workbook (the SQLite store once migrated)."""
+        import fsr_store
+        return fsr_store.open_store(self.excel_path, self.required_root)
+
     def home(self, record):
         """The workbook that holds this report."""
         if record["linked"]:
@@ -352,11 +358,9 @@ class Stores:
         # it, before the MySQL step of the same save looks at the ledger.
         with _local_write(self.guard):
             if record["linked"]:
-                return fsr_withdrawal.write_withdrawal_report(
-                    self.home(record), data, record["editing"],
-                    self.excel_path, **extra)
-            return storage.write_report_to_excel(
-                self.excel_path, data, record["editing"], **extra)
+                return self.store.write_withdrawal_report(
+                    data, record["editing"], **extra)
+            return self.store.write_report(data, record["editing"], **extra)
 
     def incidents(self, record):
         data = record["data"]
@@ -377,7 +381,7 @@ class Stores:
         batch = record.get("batch")
         if batch and batch in self._lists_rebuilt:
             return
-        fsr_withdrawal.sync_item_lists(self.excel_path)
+        self.store.rebuild_item_lists()
         if batch:
             self._lists_rebuilt.add(batch)
 
@@ -404,36 +408,13 @@ class Stores:
     def stamp(self, record):
         """The Last Saved time of this report in its workbook (ISO text),
         or None when the workbook or the report is not there."""
-        book = self.home(record)
-        sheet = (fsr_withdrawal.HEADER_SHEET if record["linked"]
-                 else "Reports")
-        if not Path(book).exists():
-            return None
-        wb = storage.load_workbook(book, read_only=True, data_only=True)
-        try:
-            if sheet not in wb.sheetnames:
-                return None
-            rows = wb[sheet].iter_rows(values_only=True)
-            header = next(rows, None) or ()
-            if "Last Saved" not in header:
-                return None
-            column = header.index("Last Saved")
-            for row in rows:
-                if row and storage.same_key(row[0], record["control"]):
-                    value = row[column] if len(row) > column else None
-                    if isinstance(value, datetime):
-                        return value.isoformat(timespec="milliseconds")
-                    return str(value) if value is not None else ""
-            return None
-        finally:
-            wb.close()
+        return self.store.saved_stamp(record["control"], record["linked"])
 
     def read_back(self, record):
         """The report as the workbook (and its JSON files) hold it now."""
         if record["linked"]:
-            return fsr_withdrawal.read_report(
-                self.home(record), record["control"])
-        return storage.read_report(self.excel_path, record["control"])
+            return self.store.read_withdrawal_report(record["control"])
+        return self.store.read_report(record["control"])
 
 
 def _local_write(guard):

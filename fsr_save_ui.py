@@ -116,8 +116,8 @@ def save_report():
         # is now, into the Backups folder beside it. A backup that cannot
         # be made never stops the save; the user is told below.
         try:
-            fsr_backup.backup_before_save(
-                target, fsr_backup.keep_setting(host.settings))
+            host.data_store(path).backup_before_save(
+                fsr_backup.keep_setting(host.settings), linked)
         except OSError as error:
             host.log.exception("Daily backup failed")
             backup_note = (

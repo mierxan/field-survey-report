@@ -39,6 +39,32 @@ class StoreRefused(ValueError):
     """The store does not do this to real data."""
 
 
+def check_demo_delete(excel_path, control_numbers):
+    """Raises StoreRefused unless the workbook is in a folder marked as test
+    data AND every report to delete is a TEST-... sample report (both
+    stores call this)."""
+    excel_path = Path(excel_path)
+    marker = excel_path.resolve().parent / DEMO_MARKER
+    if not marker.exists():
+        raise StoreRefused(
+            f"{excel_path} is not Demo Mode data: reports are "
+            "never deleted from it.")
+    real = [c for c in control_numbers
+            if not str(c).strip().upper().startswith(DEMO_PREFIX)]
+    if real:
+        raise StoreRefused(
+            f"Only TEST-... sample reports can be deleted (not {real[0]}).")
+
+
+def open_store(excel_path, required_root=None):
+    """The store of this workbook: the SQLite store once the workbook has
+    moved to its database (fsr_sqlite_migrate), else the workbook itself."""
+    import fsr_sqlite_store
+    if fsr_sqlite_store.is_active(excel_path):
+        return fsr_sqlite_store.SqliteStore(excel_path, required_root)
+    return ExcelStore(excel_path, required_root)
+
+
 def _last_saved(path, sheet):
     """(Moved here from fsr_master_export, unchanged.)"""
     if not Path(path).exists():
@@ -58,6 +84,8 @@ class ExcelStore:
     with its JSON files. `required_root`: Demo Mode keeps the Withdrawal
     workbook inside the demo folder."""
 
+    kind = "excel"
+
     def __init__(self, excel_path, required_root=None):
         self.excel_path = Path(excel_path)
         self.required_root = required_root
@@ -68,6 +96,11 @@ class ExcelStore:
         """The workbook of the PO-linked Withdrawal reports."""
         return fsr_paths.withdrawal_workbook_path(self.excel_path,
                                                   self.required_root)
+
+    def ledger_files(self):
+        """The files the MySQL ledger's note is about: both workbooks."""
+        return [self.excel_path,
+                self.excel_path.with_name(fsr_paths.WITHDRAWAL_WORKBOOK_NAME)]
 
     # ---- reports of the main workbook ----
     def list_reports(self):
@@ -95,22 +128,41 @@ class ExcelStore:
         """Demo Mode reset only: refused (StoreRefused) unless the workbook
         is in a folder marked as test data AND every report to delete is a
         TEST-... sample report - enforced here, whoever calls it."""
-        marker = self.excel_path.resolve().parent / DEMO_MARKER
-        if not marker.exists():
-            raise StoreRefused(
-                f"{self.excel_path} is not Demo Mode data: reports are "
-                "never deleted from it.")
-        real = [c for c in control_numbers
-                if not str(c).strip().upper().startswith(DEMO_PREFIX)]
-        if real:
-            raise StoreRefused(
-                f"Only TEST-... sample reports can be deleted (not {real[0]}).")
+        check_demo_delete(self.excel_path, control_numbers)
         return fsr_storage.delete_reports_from_excel(self.excel_path,
                                                      control_numbers)
 
     def last_saved_times(self):
         """{Control # in lower case: its Last Saved cell as text}."""
         return _last_saved(self.excel_path, "Reports")
+
+    def saved_stamp(self, control_no, linked):
+        """The Last Saved time of a report in its workbook (ISO text), or
+        None when the workbook or the report is not there. (Moved here
+        from fsr_save_journal.Stores.stamp, unchanged.)"""
+        from datetime import datetime
+        book = self.withdrawal_path if linked else self.excel_path
+        sheet = fsr_withdrawal.HEADER_SHEET if linked else "Reports"
+        if not Path(book).exists():
+            return None
+        wb = fsr_storage.load_workbook(book, read_only=True, data_only=True)
+        try:
+            if sheet not in wb.sheetnames:
+                return None
+            rows = wb[sheet].iter_rows(values_only=True)
+            header = next(rows, None) or ()
+            if "Last Saved" not in header:
+                return None
+            column = header.index("Last Saved")
+            for row in rows:
+                if row and fsr_storage.same_key(row[0], control_no):
+                    value = row[column] if len(row) > column else None
+                    if isinstance(value, datetime):
+                        return value.isoformat(timespec="milliseconds")
+                    return str(value) if value is not None else ""
+            return None
+        finally:
+            wb.close()
 
     # ---- PO lines (the Receiving lines a Withdrawal can take from) ----
     def find_po(self, po_number):

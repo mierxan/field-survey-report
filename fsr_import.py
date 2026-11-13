@@ -138,6 +138,15 @@ def imported_inspector(excel_path, control_no):
 def _last_saved_by_control(excel_path):
     """{Control #: its Last Saved cell}; empty when there is no file yet.
     Control #s are found without regard to letter case."""
+    import fsr_store
+    store = fsr_store.open_store(excel_path)
+    if store.kind == "sqlite":
+        import fsr_sqlite_store
+        return storage.ControlKeyed({
+            str(row["Control #"]).strip(): str(row.get("Last Saved"))
+            for row in store._headers(fsr_sqlite_store.MAIN)
+            if row.get("Control #")
+        })
     if not Path(excel_path).exists():
         return storage.ControlKeyed()
     wb = storage.open_workbook_for_read(excel_path)
@@ -215,9 +224,11 @@ def import_master_data(excel_path, data, on_saved=None, journal=None,
     on_saved(report) runs after the import for every saved report.
     Returns a summary dictionary."""
     import fsr_save_journal as journal_module
+    import fsr_store
 
     progress = progress or _quiet
     excel_path = Path(excel_path)
+    store = fsr_store.open_store(excel_path)
     device = str(data["device_id"]).strip()
     inspector = str(data.get("inspector") or "").strip()
     ledger = load_ledger(excel_path)
@@ -226,6 +237,13 @@ def import_master_data(excel_path, data, on_saved=None, journal=None,
                "saved_reports": []}
 
     def backup_once():
+        if summary["backup"] is None and store.kind == "sqlite":
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            db = store.db_path
+            target = db.with_name(
+                f"{db.stem}_before_import_{stamp}{db.suffix}")
+            store.copy_to(target)
+            summary["backup"] = str(target)
         if summary["backup"] is None and excel_path.exists():
             stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             target = excel_path.with_name(
@@ -238,7 +256,7 @@ def import_master_data(excel_path, data, on_saved=None, journal=None,
              total)
     saved = _last_saved_by_control(excel_path)
     # Numbers of the PO-linked Withdrawal workbook: never reused by an import.
-    elsewhere = storage.withdrawal_control_numbers(excel_path)
+    elsewhere = store.withdrawal_numbers()
     taken_elsewhere = {storage.control_key(n) for n in elsewhere}
     # numbers given to new reports of this file
     assigned = storage.ControlKeyed()
@@ -324,9 +342,8 @@ def import_master_data(excel_path, data, on_saved=None, journal=None,
 
     progress(f"Writing {len(plan)} report(s) into the Excel file ...", 0,
              len(plan))
-    write = (lambda: storage.write_reports_to_excel(
-        excel_path, [(report, editing, stamp)
-                     for report, editing, *_ in plan]))
+    write = (lambda: store.write_reports(
+        [(report, editing, stamp) for report, editing, *_ in plan]))
     try:
         if stores is not None and stores.guard is not None:
             with stores.guard.local_write():

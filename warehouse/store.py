@@ -186,7 +186,7 @@ def load_reports(excel_path, source="excel"):
         import db_mysql
         return db_mysql.load_all_reports()     # holds both workbooks' reports
     import fsr_store
-    store = fsr_store.ExcelStore(excel_path)
+    store = fsr_store.open_store(excel_path)
     return merge_withdrawal_reports(store.read_all_reports(),
                                     store.read_all_withdrawal_reports())
 

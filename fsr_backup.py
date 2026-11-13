@@ -19,6 +19,7 @@ import logging
 import os
 import re
 import shutil
+import sqlite3
 from datetime import date, datetime
 from pathlib import Path
 
@@ -84,13 +85,15 @@ def list_backups(workbook):
     return sorted(found, reverse=True)
 
 
-def backup_before_save(workbook, keep=DEFAULT_KEEP, today=None):
+def backup_before_save(workbook, keep=DEFAULT_KEEP, today=None, copy=None):
     """Call before a save. Makes today's backup when there is none yet, then
     removes this workbook's backups beyond the newest `keep`.
 
     Returns {"created": path or None, "removed": [paths], "kept": number}.
     Raises BackupError when the copy could not be made (nothing else has
-    happened then); a backup that could not be REMOVED is only logged."""
+    happened then); a backup that could not be REMOVED is only logged.
+    `copy(target)`: how to copy (the SQLite store uses SQLite's own
+    backup); default a plain file copy."""
     workbook = Path(workbook)
     today = today or date.today()
     result = {"created": None, "removed": [], "kept": 0}
@@ -102,9 +105,12 @@ def backup_before_save(workbook, keep=DEFAULT_KEEP, today=None):
         temp = target.with_name(target.name + ".saving.tmp")
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(workbook, temp)
+            if copy is None:
+                shutil.copy2(workbook, temp)
+            else:
+                copy(temp)
             os.replace(temp, target)
-        except OSError as error:
+        except (OSError, sqlite3.Error) as error:
             raise BackupError(
                 f"The backup copy {target} could not be made: {error}"
             ) from error

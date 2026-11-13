@@ -533,10 +533,11 @@ def list_reports(path):
     return reports
 
 
-def search_index(path):
-    """Same shape as fsr_storage.search_index_excel()."""
+def search_index(path, reports=None):
+    """Same shape as fsr_storage.search_index_excel(). `reports`: the
+    reports when they were read already."""
     index = {}
-    for report in read_all_reports(path):
+    for report in (read_all_reports(path) if reports is None else reports):
         documents = report["documents_used"]
         rows = [row for section in report["item_lists"]
                 for row in section["rows"]]

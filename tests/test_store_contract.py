@@ -11,6 +11,7 @@ from datetime import date, datetime
 import pytest
 
 import fsr_paths
+import fsr_sqlite_store
 import fsr_store
 import fsr_withdrawal
 from factories import report
@@ -24,7 +25,9 @@ def excel_store(folder, demo=False):
     return fsr_store.ExcelStore(folder / "excel" / "Field_Survey_Reports.xlsx")
 
 
-STORES = {"excel": excel_store}       # the SQLite store: one more line
+STORES = {"excel": excel_store,
+          "sqlite": lambda folder, demo=False: fsr_sqlite_store.new_store(
+              excel_store(folder, demo).excel_path)}
 
 
 @pytest.fixture(params=sorted(STORES))

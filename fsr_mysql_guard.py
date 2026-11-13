@@ -231,8 +231,10 @@ class Guard:
 
     # ---- the ledger ----
     def _workbooks(self):
-        book = self.excel_path
-        return [book, book.with_name(fsr_paths.WITHDRAWAL_WORKBOOK_NAME)]
+        """The files holding the reports: both workbooks, or the SQLite
+        database once the reports moved there."""
+        import fsr_store
+        return fsr_store.open_store(self.excel_path).ledger_files()
 
     def _read(self):
         """(ledger dictionary, trusted?). Anything wrong -> an empty one."""

@@ -133,13 +133,15 @@ def _rewrite_json(path, old, new):
     return False
 
 
-def renumber_report(excel_path, old, new, required_root=None):
-    """Renumber one report on this PC. Returns what was touched."""
+def renumber_report(excel_path, old, new, required_root=None, store=None):
+    """Renumber one report on this PC. Returns what was touched. `store`:
+    the SQLite store, when the reports are in its database."""
     excel_path = Path(excel_path)
     old, new = str(old).strip(), str(new).strip()
     if not new or storage.same_key(old, new):
         raise RenumberError("The new Control # must differ from the old one.")
-    present = local_numbers(excel_path)
+    present = (local_numbers(excel_path) if store is None
+               else store.control_numbers())
     if not any(storage.same_key(n, old) for n in present):
         raise RenumberError(f"Report {old} is not in this PC's workbooks.")
     if any(storage.same_key(n, new) for n in present):
@@ -152,7 +154,13 @@ def renumber_report(excel_path, old, new, required_root=None):
     # rebuilt below.
     lists = [excel_path.with_name(fsr_paths.PO_MASTER_NAME),
              excel_path.with_name(fsr_paths.WITHDRAWN_ITEM_NAME)]
-    for path in (excel_path, book, *lists):
+    if store is not None:
+        cells = store.renumber_rows(old, new)
+        if cells:
+            touched["cells"] += cells
+            touched["files"].append(store.db_path.name)
+    for path in ((*lists,) if store is not None
+                 else (excel_path, book, *lists)):
         cells = _renumber_workbook(path, old, new)
         if cells:
             touched["cells"] += cells
@@ -174,7 +182,10 @@ def renumber_report(excel_path, old, new, required_root=None):
 
     import fsr_withdrawal
     try:
-        fsr_withdrawal.sync_item_lists(excel_path)
+        if store is not None:
+            store.rebuild_item_lists()
+        else:
+            fsr_withdrawal.sync_item_lists(excel_path)
         touched["files"].append("PO_Master / Withdrawn_Item")
     except Exception as error:          # rebuilt again at the next save
         touched["lists_error"] = str(error)
