@@ -1,8 +1,9 @@
 # Proposal: SQLite as the store of record, Excel as an export
 
 **Status: proposal only. Nothing here is built.** Written in Phase 3
-(13 November 2026) for a decision by the owner. Figures:
-[PERFORMANCE_BASELINE.md](PERFORMANCE_BASELINE.md).
+(13 November 2026) for a decision by the owner, and revisited the same day
+for the expected volume of **about 2,000 reports a year** (section 9).
+Figures: [PERFORMANCE_BASELINE.md](PERFORMANCE_BASELINE.md).
 
 ## 1. Why the question comes up
 
@@ -11,15 +12,18 @@ workbook, changes one report and writes the whole workbook back. openpyxl
 has no way to change one row of a file in place. So the time of every save
 grows with the number of reports in the file, whatever is saved:
 
-| Reports in the workbook | One save before Phase 3 | After Phase 3 |
+| Reports in the workbook | One save before Phase 3 | After Phase 3 (lists in the background) |
 |---|---|---|
-| 300 | 3.4 s | 2.2 s |
-| 1,000 | 10.8 s | 6.1 s |
-| 3,000 | 31.5 s | 17.3 s |
+| 300 | 3.4 s | 2.0 s |
+| 1,000 | 10.8 s | 4.2 s |
+| 2,000 | - | 8.1 s |
+| 3,000 | 31.5 s | 12.1 s |
+| 4,000 | - | 15.7 s |
+| 6,000 | - | 23.4 s |
 
 (Edit of a saved report, MySQL off, invented reports with five item lines
-each, this PC. With MySQL on, before: 7.8 / 14.6 / 35.4 s; after: the same
-as off, MySQL follows in the background.)
+each, this PC. A new report takes about 30% longer. With MySQL on the
+window waits the same - MySQL follows in the background.)
 
 Phase 3 removes the waste around the workbook write: the extra reads, the
 save-record writes, the waiting for MySQL. What it cannot remove is the
@@ -171,9 +175,10 @@ Roughly as much as Phases 1 and 2 together:
 The installers change too. SQLite is part of Python, so nothing new is
 installed on the PCs.
 
-## 8. Recommendation
+## 8. Recommendation (first version, before the volume was known)
 
-**Not now. Plan it as its own phase when it is needed. Measure once a year.**
+*Replaced by section 9.* Not now; plan it as its own phase when it is
+needed.
 
 * Today there are 10 reports. After Phase 3 a save takes about 2 s at 300
   reports and 6 s at 1,000, and MySQL no longer adds to it
@@ -193,3 +198,57 @@ installed on the PCs.
 
 When the switch is made, keep the export in today's layout. That one rule
 keeps both the way back and the people who read the workbook in Excel.
+
+## 9. At about 2,000 reports a year
+
+### What a save costs
+
+Measured (section 1): every 1,000 reports in the workbook add about
+4 seconds to every save - the workbook write itself.
+
+| Reports in the one workbook | When, at 2,000 a year | Save (edit / new report) | Open a report |
+|---|---|---|---|
+| 2,000 | end of year 1 | 8 s / 11 s | 3 s |
+| 4,000 | end of year 2 | 16 s / 21 s | 6 s |
+| 6,000 | end of year 3 | 23 s / 31 s | 9 s |
+
+At 2,000 a year (about 8 reports per working day) that is about one and a
+half minutes of waiting a day at the end of year 1 and about four by
+year 3 - more when reports are edited and saved again - and every wait is
+long enough to break the flow of work.
+
+### Three options
+
+| | 1. Keep one workbook | 2. A new workbook each year | 3. SQLite, Excel as an export |
+|---|---|---|---|
+| Save, year 1 / 3 | 8 / 23 s (end of the year) | at most 8 s, starting at about 0 every January | under 0.1 s, every year |
+| Open a report | 3 to 9 s | up to 3 s | under 0.1 s |
+| Old years searchable and printable | yes (one file) | **not today**: the program sees one workbook at a time. Needs a search across the year workbooks and opening/printing from a closed year (medium work) | yes (one database) |
+| PO_Master: stock received in one year, withdrawn in the next | works | **breaks**: a withdrawal finds only Receiving reports of its own workbook, so stock carried over from last year disappears from PO_Master and from PO-linked withdrawals. Needs the receipts of earlier years to be carried over, or read across years (medium to large work, easy to get wrong) | works |
+| The Excel file people open | the real file | the real file of the year | an export, read-only, in today's layout |
+| Work | none | medium to large (the two bold points) | large (section 7) |
+| Risk | none new; it only gets slower | splitting stock across files - the most error-prone part of the data | the migration (section 5), done once, with a full comparison and a way back |
+
+### Recommendation
+
+**Option 3, SQLite with Excel as an export - decided within the first
+three months of real use, built before the workbook reaches about 1,000
+reports (about six months at 2,000 a year).**
+
+* Option 1 is fine for the first months and then gets steadily worse;
+  by the end of year 2 it is no longer acceptable for daily work.
+* Option 2 looks cheap, but making old years searchable and keeping the
+  PO stock right across years is about half the work of option 3, and it
+  only slows the problem down: each year starts fast and ends at 8 to 11
+  seconds again.
+* Option 3 removes the cause. It is the larger piece of work, but it is
+  done once, and it also makes the questions of several PCs sharing data
+  (section 6) easier later.
+* **When to decide:** the counter starts when the program goes into daily
+  use (today there are 10 reports). Decide by the time the workbook holds
+  about 500 reports; then there is time to build, test and migrate it as a
+  phase of its own while saves are still 3 to 4 seconds.
+* Until then nothing else is needed: Phase 3 keeps a save around 2 to
+  4 seconds up to 1,000 reports.
+
+Nothing of this is built. It needs your decision first.

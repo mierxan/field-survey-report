@@ -96,7 +96,28 @@ Workbook loads and writes per save:
   the Phase 2 branch (the program's own background reading held the file
   open).
 
-## What limits a save at 3,000 reports now
+## After the background rebuild of PO_Master / Withdrawn_Item
+
+Measured on 13 November 2026 (commit `11b09d6`), MySQL off, quiet PC,
+invented workbooks of five item lines per report. "Lists up to date" =
+until the background rebuild of PO_Master and Withdrawn_Item has finished.
+
+| Reports (file size) | Open | Save, edit | Save, new report | Lists up to date (edit) |
+|---|---|---|---|---|
+| 300 (136 KB) | 0.5 s | 2.0 s | 2.4 s | 2.6 s |
+| 1,000 (424 KB) | 1.5 s | 4.2 s | 5.6 s | 7.5 s |
+| 2,000 (834 KB) | 2.8 s | 8.1 s | 10.7 s | 14.7 s |
+| 3,000 (1.2 MB) | 4.2 s | 12.1 s | 16.0 s | 22.0 s |
+| 4,000 (1.6 MB) | 5.6 s | 15.7 s | 21.3 s | 29.5 s |
+| 6,000 (2.4 MB) | 8.6 s | 23.4 s | 30.7 s | 44.4 s |
+
+At 3,000 reports an edit save went from 17.3 s to 12.1 s - less than
+half, because the rest of the save (the report forms, the dashboards) runs
+while the rebuild does, and Python lets only one of them compute at a
+time. A save now grows by about 4 seconds per 1,000 reports in the
+workbook: that is the workbook write itself.
+
+## What limited a save at 3,000 reports (before the background rebuild)
 
 Profiled for one save (in tenths):
 
@@ -110,9 +131,7 @@ Profiled for one save (in tenths):
 What could still be done without changing the storage:
 
 1. **Rebuild PO_Master / Withdrawn_Item in the background**, as MySQL now
-   is. They are derived files, so the save record can keep their step open.
-   The window would then be handed back after the workbook write: about
-   half of today's time. Not built in this phase.
+   is - built since (see above).
 2. Writing the lists in openpyxl's write-only mode was tried and was
    **slower** (10.0 s against 5.6 s for 10,000 lines), so it was not kept.
 3. Nothing short of a different store removes the workbook write itself:
