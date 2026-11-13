@@ -30,6 +30,12 @@ MySQL Replaced/
 *_pending_saves.json
 *_imported_reports.json
 *_backup_*.xlsx
+# The reports database (Phase 5) and its notes - business data
+*.sqlite3
+*.sqlite3.*
+*.sqlite3-journal
+*_export.json
+*_sqlite_migration.json
 users.lastgood.json
 secrets.json
 
