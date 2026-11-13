@@ -13,11 +13,13 @@ grows with the number of reports in the file, whatever is saved:
 
 | Reports in the workbook | One save before Phase 3 | After Phase 3 |
 |---|---|---|
-| 300 | 3.5 s | see PERFORMANCE_BASELINE.md |
-| 1,000 | 12.6 s | see PERFORMANCE_BASELINE.md |
-| 3,000 | 33 to 47 s | see PERFORMANCE_BASELINE.md |
+| 300 | 3.4 s | 2.2 s |
+| 1,000 | 10.8 s | 6.1 s |
+| 3,000 | 31.5 s | 17.3 s |
 
-(MySQL off, invented reports with five item lines each, this PC.)
+(Edit of a saved report, MySQL off, invented reports with five item lines
+each, this PC. With MySQL on, before: 7.8 / 14.6 / 35.4 s; after: the same
+as off, MySQL follows in the background.)
 
 Phase 3 removes the waste around the workbook write: the extra reads, the
 save-record writes, the waiting for MySQL. What it cannot remove is the
@@ -47,7 +49,7 @@ Python, with no server and nothing extra to install.
 
 | | 3,000 reports | 30,000 reports |
 |---|---|---|
-| One save, today's design after Phase 3 | the workbook load and write (PERFORMANCE_BASELINE.md) | about 10 times that: minutes per save (estimate) |
+| One save, today's design after Phase 3 | 17 s (measured) | about 10 times that: minutes per save (estimate) |
 | One save, SQLite | under 0.1 s | under 0.1 s |
 | Open one report | under 0.1 s (index on Control #) | under 0.1 s |
 | Saved reports list, search | under 0.5 s | about 1 s |
@@ -173,10 +175,12 @@ installed on the PCs.
 
 **Not now. Plan it as its own phase when it is needed. Measure once a year.**
 
-* Today there are 10 reports. After Phase 3, see the after column of
-  [PERFORMANCE_BASELINE.md](PERFORMANCE_BASELINE.md), a save of a workbook
-  with a few hundred reports is short enough for daily use, and MySQL no
-  longer adds to it.
+* Today there are 10 reports. After Phase 3 a save takes about 2 s at 300
+  reports and 6 s at 1,000, and MySQL no longer adds to it
+  ([PERFORMANCE_BASELINE.md](PERFORMANCE_BASELINE.md)).
+* Rebuilding PO_Master / Withdrawn_Item in the background would halve the
+  wait again before any storage change is needed (PERFORMANCE_BASELINE.md,
+  "What limits a save").
 * The point to start is when a save at the real number of reports takes
   long enough to bother the inspectors: in the measurements, somewhere past
   1,000 reports. Or when several PCs must share and edit the same reports.
