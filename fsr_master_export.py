@@ -17,27 +17,12 @@ from datetime import datetime
 from pathlib import Path
 
 import fsr_import
-import fsr_paths
 import fsr_storage as storage
-import fsr_withdrawal
 from warehouse.store import SideStore, merge_withdrawal_reports
 
 
 class MasterExportError(ValueError):
     """Something a complete export needs could not be read; no file is written."""
-
-
-def _last_saved(path, sheet):
-    if not Path(path).exists():
-        return {}
-    wb = storage.load_workbook(path, data_only=True)
-    if sheet not in wb.sheetnames:
-        return {}
-    return {
-        storage.cell_text(row["Control #"]).casefold():
-            str(row.get("Last Saved") or "")
-        for row in storage.report_dicts(wb[sheet]) if row.get("Control #")
-    }
 
 
 def _clean_lists(master_lists):
@@ -51,12 +36,12 @@ def _clean_lists(master_lists):
 def build_export(excel_path, device_id, inspector="", master_lists=None):
     """The export as a dictionary. Raises MasterExportError rather than leaving
     anything out without saying so."""
-    book = fsr_paths.withdrawal_workbook_path(excel_path)
-    reports = merge_withdrawal_reports(
-        storage.read_all_reports(excel_path),
-        fsr_withdrawal.read_all_reports(book))
-    saved = {**_last_saved(excel_path, "Reports"),
-             **_last_saved(book, fsr_withdrawal.HEADER_SHEET)}
+    import fsr_store
+    store = fsr_store.ExcelStore(excel_path)
+    reports = merge_withdrawal_reports(store.read_all_reports(),
+                                       store.read_all_withdrawal_reports())
+    saved = {**store.last_saved_times(),
+             **store.withdrawal_last_saved_times()}
 
     damaged = [r["incident_error"] for r in reports if r.get("incident_error")]
     if damaged:

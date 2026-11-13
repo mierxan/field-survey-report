@@ -39,6 +39,20 @@ class StoreRefused(ValueError):
     """The store does not do this to real data."""
 
 
+def _last_saved(path, sheet):
+    """(Moved here from fsr_master_export, unchanged.)"""
+    if not Path(path).exists():
+        return {}
+    wb = fsr_storage.load_workbook(path, data_only=True)
+    if sheet not in wb.sheetnames:
+        return {}
+    return {
+        fsr_storage.cell_text(row["Control #"]).casefold():
+            str(row.get("Last Saved") or "")
+        for row in fsr_storage.report_dicts(wb[sheet]) if row.get("Control #")
+    }
+
+
 class ExcelStore:
     """The workbook `excel_path` (and the Withdrawal workbook beside it)
     with its JSON files. `required_root`: Demo Mode keeps the Withdrawal
@@ -94,6 +108,10 @@ class ExcelStore:
         return fsr_storage.delete_reports_from_excel(self.excel_path,
                                                      control_numbers)
 
+    def last_saved_times(self):
+        """{Control # in lower case: its Last Saved cell as text}."""
+        return _last_saved(self.excel_path, "Reports")
+
     # ---- PO lines (the Receiving lines a Withdrawal can take from) ----
     def find_po(self, po_number):
         return fsr_withdrawal.find_po(self.excel_path, po_number)
@@ -121,6 +139,9 @@ class ExcelStore:
 
     def withdrawal_search_index(self):
         return fsr_withdrawal.search_index(self.withdrawal_path)
+
+    def withdrawal_last_saved_times(self):
+        return _last_saved(self.withdrawal_path, fsr_withdrawal.HEADER_SHEET)
 
     def write_withdrawal_report(self, data, editing, saved_at=None):
         extra = {} if saved_at is None else {"saved_at": saved_at}
