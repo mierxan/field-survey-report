@@ -5557,11 +5557,13 @@ def center_over_window(dialog, y_offset=100):
     dialog.geometry(f"+{x}+{y}")
 
 
-def run_with_progress(parent, message, work, on_done):
+def run_with_progress(parent, message, work, on_done, with_progress=False):
     """
     Run work() in a background thread while a small progress window
     keeps the program responsive. on_done(result, error) runs on the
-    GUI thread when the job finishes.
+    GUI thread when the job finishes. with_progress: work(progress) gets
+    a function progress(text, done=None, total=None) to call from its
+    thread; the window shows the text and a bar.
     """
     dialog = tb.Toplevel(parent)
     dialog.title("Please wait")
@@ -5570,6 +5572,10 @@ def run_with_progress(parent, message, work, on_done):
     dialog.protocol("WM_DELETE_WINDOW", lambda: None)
 
     tb.Label(dialog, text=message, padding=(24, 20, 24, 8)).pack()
+    step_label = tb.Label(dialog, text="", padding=(24, 0, 24, 8),
+                          bootstyle="secondary")
+    if with_progress:
+        step_label.pack()
     bar = tb.Progressbar(dialog, mode="indeterminate", length=320,
                          bootstyle="striped")
     bar.pack(padx=24, pady=(0, 20))
@@ -5580,10 +5586,16 @@ def run_with_progress(parent, message, work, on_done):
     dialog.grab_set()
 
     outcome = {}
+    shown = {"text": None, "done": None, "total": None}
+    latest = dict(shown)
+
+    def progress(text, done=None, total=None):
+        # from the working thread: only remembered here, shown by poll()
+        latest.update(text=text, done=done, total=total)
 
     def target():
         try:
-            outcome["value"] = work()
+            outcome["value"] = work(progress) if with_progress else work()
         except Exception as error:
             log.exception("Background job failed")
             outcome["error"] = error
@@ -5591,8 +5603,22 @@ def run_with_progress(parent, message, work, on_done):
     thread = threading.Thread(target=target, daemon=True)
     thread.start()
 
+    def show_progress():
+        now = dict(latest)
+        if now == shown:
+            return
+        shown.update(now)
+        step_label.configure(text=now["text"] or "")
+        if now["total"]:
+            if str(bar.cget("mode")) != "determinate":
+                bar.stop()
+                bar.configure(mode="determinate")
+            bar.configure(maximum=now["total"], value=now["done"] or 0)
+
     def poll():
         if thread.is_alive():
+            if with_progress:
+                show_progress()
             window.after(100, poll)
             return
         bar.stop()
@@ -7416,51 +7442,57 @@ def import_master_data_file():
     ):
         return
 
-    mysql_failures = []
-    mysql_conflicts = []
-    import_guard = mysql_guard() if mysql_in_use() else None
+    # One workbook write for the whole file, on record first (all or
+    # nothing); a progress window while it runs. MySQL follows in the
+    # background, every report through the overwrite guard.
+    mysql_now = mysql_in_use()
+    guard = mysql_guard() if mysql_now else None
+    stores = fsr_save_journal.Stores(
+        path, mysql=db_mysql if mysql_now else None,
+        required_root=DATA_DIR if DEMO_MODE else None, guard=guard)
+    journal = fsr_save_journal.Journal(path)
+    import_state["running"] = True
 
-    try:
-        if import_guard is not None:
-            import_guard.before_local_write()
-        summary = busy(fsr_import.import_master_data, path, data)
-        if import_guard is not None:
-            import_guard.after_local_write()
-    except PermissionError:
+    def work(progress):
+        return fsr_import.import_master_data(
+            path, data, journal=journal, stores=stores, mysql=mysql_now,
+            progress=progress)
+
+    def done(summary, error):
+        import_state["running"] = False
+        if error is not None:
+            import_stopped(path, error)
+            return
+        import_finished(path, data, summary, mysql_now)
+
+    run_with_progress(window, "Importing the Master Data file...", work,
+                      done, with_progress=True)
+
+
+import_state = {"running": False}
+
+
+def import_stopped(path, error):
+    """The import raised. The workbook is written in one go, so it holds
+    either all of the file's reports or none; the save record finishes or
+    drops the rest (and says which)."""
+    if isinstance(error, fsr_import.MasterDataError):
+        messagebox.showerror("Import Master Data", str(error), parent=window)
+    elif isinstance(error, PermissionError):
         messagebox.showerror(
             "File In Use",
-            f"Cannot write to:\n{path}\n\n"
-            "Close the file in Excel and import again. Reports already "
-            "brought in will not be duplicated.",
-            parent=window
-        )
-        return
-    except Exception as error:
-        log.exception("Import failed")
+            f"Cannot write to:\n{path}\n\nNothing was imported. Close the "
+            "file in Excel and import again.", parent=window)
+    else:
         messagebox.showerror(
             "Import Master Data",
-            f"The import stopped:\n{error}\n\nReports already brought in "
-            "are saved. It is safe to import the file again.",
-            parent=window
-        )
-        return
+            f"The import stopped:\n{error}\n\nIt is safe to import the "
+            "file again: reports already brought in are not duplicated.",
+            parent=window)
+    finish_unfinished_saves()
 
-    # The MySQL copy: every imported report goes through the guard, so a
-    # report MySQL holds from another copy under the same number is never
-    # overwritten - it is put on the MySQL Conflicts list instead.
-    if import_guard is not None and summary["saved_reports"]:
-        try:
-            sent = busy(fsr_save_journal.send_to_mysql,
-                        fsr_save_journal.Journal(path), import_guard,
-                        summary["saved_reports"])
-            mysql_failures = [f"{control}: {text}"
-                              for control, text in sent["errors"]]
-            mysql_conflicts = [conflict["control"]
-                               for _, conflict in sent["conflicts"]]
-        except Exception as error:
-            log.exception("MySQL save failed during import")
-            mysql_failures.append(db_mysql.explain_error(error))
 
+def import_finished(path, data, summary, mysql_now):
     new_names = fsr_import.new_master_names(data, master_data)
     total_names = sum(len(names) for names in new_names.values())
     if total_names:
@@ -7490,14 +7522,14 @@ def import_master_data_file():
     if summary["deleted_here"]:
         lines.append("\nNOT brought back, because they were deleted on this "
                      "PC: " + ", ".join(summary["deleted_here"]))
-    if mysql_conflicts:
-        lines.append(
-            "\nSaved to Excel, but NOT sent to MySQL, because MySQL holds a "
-            "different report under the same number (see Account > MySQL "
-            "Conflicts):\n" + ", ".join(mysql_conflicts))
-    if mysql_failures:
-        lines.append("\nSaved to Excel, but NOT to MySQL:\n"
-                     f"{mysql_failures[0]}\nUse 'Sync to MySQL' to retry.")
+    if summary.get("item_lists_failed") is not None:
+        lines.append("\nPO_Master and Withdrawn_Item could not be updated "
+                     "(is one of them open in Excel?). They are updated at "
+                     "the next save or start.")
+    if mysql_now and summary["saved_reports"]:
+        lines.append("\nThey are being sent to MySQL in the background; a "
+                     "report MySQL holds differently is not overwritten (see "
+                     "Account > MySQL Conflicts).")
     if summary["backup"]:
         lines.append(f"\nCopy of the Excel file before the import:\n"
                      f"{summary['backup']}")
@@ -7509,6 +7541,8 @@ def import_master_data_file():
                      "old values. Open it again before saving.")
     messagebox.showinfo("Import Master Data", "\n".join(lines), parent=window)
     refresh_conflict_count()
+    if mysql_now and summary["saved_reports"]:
+        request_mysql_round()
 
     if globals().get("app_shell") is not None:
         app_shell.service.invalidate()      # dashboards use the new data

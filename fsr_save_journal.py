@@ -93,7 +93,8 @@ import fsr_withdrawal
 log = logging.getLogger("fsr")
 
 VERSION = 1
-STEPS = ("workbook", "incidents", "item_forms", "item_lists", "mysql")
+STEPS = ("workbook", "incidents", "item_forms", "import_ledger",
+         "item_lists", "mysql")
 LOCAL_STEPS = STEPS[:-1]
 PENDING, DONE = "pending", "done"
 OUTDATED = "outdated"        # dropped: the report was saved again since
@@ -109,6 +110,7 @@ STEP_WORDS = {
     "workbook": "the Excel file",
     "incidents": "the incident report file",
     "item_forms": "the lines of the other Item List forms",
+    "import_ledger": "the record of imported reports",
     "item_lists": "PO_Master and Withdrawn_Item",
     "mysql": "MySQL",
 }
@@ -239,6 +241,47 @@ class Journal:
             if len(left) != len(records):
                 self._store(left)
 
+    def begin_batch(self, entries, now=None):
+        """Put several saves on record at once (Import Master Data): one
+        write. `entries`: [(data, editing, steps, extra)] - `extra` is put
+        into the record as it is. They share one planned Last Saved time and
+        a batch id. Older records of the same reports are replaced. Returns
+        the records."""
+        now = now or self._now()
+        batch = uuid.uuid4().hex
+        made = []
+        for data, editing, steps, extra in entries:
+            record = new_record(data, editing, False, steps, None, now)
+            record.update(extra or {})
+            record["batch"] = batch
+            made.append(record)
+        keys = {storage.control_key(r["control"]) for r in made}
+        with _LOCK:
+            records = [r for r in self.load()
+                       if storage.control_key(r.get("control")) not in keys]
+            self._store(records + made)
+        return made
+
+    def save_many(self, changed):
+        """Write the state of several records in one go; records with
+        nothing left to do are removed."""
+        by_id = {r["id"]: r for r in changed}
+        with _LOCK:
+            records = []
+            for existing in self.load():
+                record = by_id.pop(existing.get("id"), existing)
+                if record is existing or not _settled(record):
+                    records.append(record)
+            records += [r for r in by_id.values() if not _settled(r)]
+            self._store(records)
+
+    def discard_batch(self, records):
+        """An import that failed before its workbook write: its records
+        go (nothing was changed)."""
+        ids = {r["id"] for r in records}
+        with _LOCK:
+            self._store([r for r in self.load() if r.get("id") not in ids])
+
     def change(self, record_id, how):
         """how(record) on the record with this id, if it is still on file
         (a newer save of the report replaces it). The record is removed
@@ -279,6 +322,9 @@ class Stores:
         # One open MySQL connection used for every report of a round
         # (fsr_mysql_sender); None: each write opens its own.
         self.connection = None
+        # imports whose PO lists were rebuilt already (one rebuild covers
+        # every report of the import)
+        self._lists_rebuilt = set()
 
     def home(self, record):
         """The workbook that holds this report."""
@@ -320,7 +366,22 @@ class Stores:
             record["data"].get("other_item_forms") or {})
 
     def item_lists(self, record):
+        batch = record.get("batch")
+        if batch and batch in self._lists_rebuilt:
+            return
         fsr_withdrawal.sync_item_lists(self.excel_path)
+        if batch:
+            self._lists_rebuilt.add(batch)
+
+    def import_ledger(self, record):
+        """The import record's entry of an imported report (repair only;
+        the import itself writes all entries at once)."""
+        import fsr_import
+        info = record.get("import") or {}
+        if not info.get("key"):
+            return
+        entry = dict(info.get("entry") or {}, control=record["control"])
+        fsr_import.record_imports(self.excel_path, {info["key"]: entry})
 
     def mysql(self, record, data):
         if self.guard is None:
@@ -439,7 +500,8 @@ def run(journal, record, stores, mysql=True):
 
     data = record["data"]
     changed = outcome["result"] is not None
-    for step in ("incidents", "item_forms", "item_lists", "mysql"):
+    for step in ("incidents", "item_forms", "import_ledger", "item_lists",
+                 "mysql"):
         if steps.get(step) != PENDING or (step == "mysql" and (
                 not mysql or record.get("_mysql_wait"))):
             continue
@@ -614,7 +676,7 @@ def repair(journal, stores, mysql=True, skip=()):
       control, started, finished (nothing left), local (this PC complete),
       did [steps finished now], waiting [steps still open],
       failed {step: text}, state ("", "outdated" or "deleted")."""
-    report = []
+    report = _drop_unwritten_batches(journal, stores, skip)
     for record in journal.pending():
         if record.get("id") in skip:
             continue
@@ -655,6 +717,8 @@ def repair(journal, stores, mysql=True, skip=()):
                             if record["steps"].get(s) == PENDING]
         entry["finished"] = not entry["waiting"]
         entry["local"] = local_complete(record)
+        if record.get("batch"):
+            entry["batch"] = record["batch"]
         if entry["did"] or entry["failed"] or entry["state"] \
                 or entry["finished"]:
             report.append(entry)
@@ -779,6 +843,42 @@ def renumber_record(journal, stores, record_id, new_control, renumber):
     return record
 
 
+def _drop_unwritten_batches(journal, stores, skip=()):
+    """An import cut off before its one workbook write changed nothing:
+    its records are removed and it is reported as not imported. (The write
+    replaces the file as a whole, so one report tells for all.)"""
+    batches = {}
+    for record in journal.pending():
+        if record.get("batch") and record.get("id") not in skip and \
+                record["steps"].get("workbook") == PENDING:
+            batches.setdefault(record["batch"], []).append(record)
+    report = []
+    for batch, records in batches.items():
+        first = records[0]
+        planned = _time(first.get("stamp_planned"))
+        try:
+            now_stamp = _time(stores.stamp(first))
+        except Exception:
+            log.exception("Could not read the workbook for an import")
+            continue
+        if now_stamp is not None and planned is not None and \
+                abs(now_stamp - planned) <= SAME_TIME:
+            continue                    # written: finished below
+        with _LOCK:
+            ids = {r["id"] for r in records}
+            journal._store([r for r in journal.load()
+                            if r.get("id") not in ids])
+        log.warning("An import of %d report(s) was cut off before the "
+                    "Excel file was written; nothing was imported.",
+                    len(records))
+        report.append({"control": f"{len(records)} report(s)",
+                       "started": first.get("started"), "failed": {},
+                       "state": "not_imported", "did": [], "waiting": [],
+                       "finished": True, "local": True, "conflict": False,
+                       "batch": batch, "count": len(records)})
+    return report
+
+
 def conflicts(journal):
     """The records that wait for a decision, oldest first."""
     return [r for r in journal.pending() if r.get("conflict")
@@ -891,7 +991,21 @@ def describe(report):
     """(lines for the user, anything needs attention?). MySQL catching up
     or still waiting is normal and is not 'attention'."""
     lines, attention = [], False
+    imports = {}
     for entry in report:
+        batch = entry.get("batch")
+        if batch and entry["state"] == "not_imported":
+            when = (_time(entry.get("started")) or datetime.now()).strftime(
+                "%d-%b-%Y %H:%M")
+            lines.append(
+                f"The import of {entry['count']} report(s) started on {when} "
+                "was cut off before the Excel file was changed. NOTHING was "
+                "imported; import the file again.")
+            attention = True
+            continue
+        if batch and [s for s in entry["did"] if s != "mysql"]:
+            imports.setdefault(batch, []).append(entry)
+            continue
         control = entry["control"]
         when = (_time(entry.get("started")) or datetime.now()).strftime(
             "%d-%b-%Y %H:%M")
@@ -929,4 +1043,14 @@ def describe(report):
                          "your decision (MySQL Conflicts).")
         elif "mysql" in entry["failed"]:
             lines.append(f"{control}: still waiting for MySQL.")
+    for entries in imports.values():
+        when = (_time(entries[0].get("started")) or datetime.now()).strftime(
+            "%d-%b-%Y %H:%M")
+        done = sorted({s for e in entries for s in e["did"] if s != "mysql"},
+                      key=STEPS.index)
+        lines.append(
+            f"The import of {len(entries)} report(s) started on {when} had "
+            "not finished. The Excel file already held all of them; it was "
+            f"completed now: {words(done)}. Everything was imported.")
+        attention = True
     return lines, attention

@@ -11,6 +11,22 @@ device + phone Control #, recorded in a small ledger beside the workbook:
   * changed on the phone -> the PC copy is updated, unless the PC copy was
                         also edited or was deleted here: then it is left alone
                         and reported
+
+How it is written (Phase 3)
+  1. The whole file is checked (read_master_file) and every report's fate
+     and number are worked out from ONE read of the workbook - nothing is
+     changed yet.
+  2. One backup copy of the workbook.
+  3. With a save record (fsr_save_journal): the reports go on record
+     together, as one batch, before the first write.
+  4. ONE write of the workbook for all of them. The file is replaced as a
+     whole, so either every report is in it or none.
+  5. Their incident files, other Item List forms, the import record (the
+     ledger below), PO_Master / Withdrawn_Item - and MySQL, which the
+     program then sends in the background.
+  Cut off before 4: nothing was imported, and the next start says so (the
+  batch is dropped from the record). Cut off after 4: the next start
+  finishes 5 and says that the import was completed.
 """
 import copy
 import json
@@ -158,9 +174,8 @@ def _renumbered(report, old, new):
     report["control_no"] = new
 
 
-def _write(excel_path, report, editing):
-    result = storage.write_report_to_excel(excel_path, report, editing)
-    control = result["control"]
+def write_side_files(excel_path, control, report):
+    """The incident file and the other Item List forms of one report."""
     if report.get("cargo_condition") == storage.CONDITION_BAD:
         storage.save_incident_data(
             excel_path, control, report["general_information"]["so_number"],
@@ -169,17 +184,36 @@ def _write(excel_path, report, editing):
         storage.delete_incident_data(excel_path, control)
     storage.save_other_item_forms(
         excel_path, control, report.get("other_item_forms") or {})
-    return control
 
 
-def import_master_data(excel_path, data, on_saved=None):
-    """Bring the reports of a read_master_file() result into the workbook.
+def record_imports(excel_path, entries):
+    """Add {ledger key: entry} to the import record - one write."""
+    if not entries:
+        return
+    ledger = load_ledger(excel_path)
+    ledger.update(entries)
+    storage.write_json_atomic(ledger_path(excel_path), ledger)
 
-    The workbook is copied once before its first change. The ledger is written
-    after every report, so if a save fails (say the workbook is open in Excel)
-    the import can simply be repeated. on_saved(report) runs after each saved
-    report (the MySQL copy). Returns a summary dictionary.
-    """
+
+def _quiet(*args, **kwargs):
+    pass
+
+
+def import_master_data(excel_path, data, on_saved=None, journal=None,
+                       stores=None, mysql=False, progress=None):
+    """Bring the reports of a read_master_file() result into the workbook
+    (see the module text for the order of the writes).
+
+    `journal` / `stores` (fsr_save_journal): the import is put on record
+    first and every step is ticked off there; with mysql=True the records
+    keep their MySQL step open for the background sender. Without a
+    journal the same writes happen, only not on record (tests, tools).
+    progress(text, done, total) is called from the working thread.
+    on_saved(report) runs after the import for every saved report.
+    Returns a summary dictionary."""
+    import fsr_save_journal as journal_module
+
+    progress = progress or _quiet
     excel_path = Path(excel_path)
     device = str(data["device_id"]).strip()
     inspector = str(data.get("inspector") or "").strip()
@@ -196,10 +230,17 @@ def import_master_data(excel_path, data, on_saved=None):
             shutil.copy2(excel_path, target)
             summary["backup"] = str(target)
 
+    total = len(data["reports"])
+    progress(f"Checking {total} report(s) against the Excel file ...", 0,
+             total)
     saved = _last_saved_by_control(excel_path)
     # Numbers of the PO-linked Withdrawal workbook: never reused by an import.
     elsewhere = storage.withdrawal_control_numbers(excel_path)
     taken_elsewhere = {storage.control_key(n) for n in elsewhere}
+    # numbers given to new reports of this file
+    assigned = storage.ControlKeyed()
+    plan = []          # (report, editing, ledger key, phone #, phone saved)
+    planned_keys = {}  # ledger key -> its place in plan
 
     for original in data["reports"]:
         # A copy: renumbering must never change the caller's data, so the same
@@ -208,6 +249,23 @@ def import_master_data(excel_path, data, on_saved=None):
         phone_no = str(report["control_no"]).strip()
         key = _ledger_key(ledger, device, phone_no)
         phone_saved = str(report.get("last_saved") or "")
+        if key not in planned_keys:
+            # the same phone number in another letter case, earlier in
+            # this file, is the same report
+            for planned in planned_keys:
+                owner, _, number = planned.rpartition("|")
+                if owner == device and storage.control_key(
+                        number) == storage.control_key(phone_no):
+                    key = planned
+                    break
+        if key in planned_keys:
+            # The same phone report twice in one file: as before, the later
+            # one is what the PC keeps - one report, not two.
+            index = planned_keys[key]
+            earlier, editing = plan[index][0], plan[index][1]
+            _renumbered(report, phone_no, earlier["control_no"])
+            plan[index] = (report, editing, key, phone_no, phone_saved)
+            continue
         entry = ledger.get(key)
 
         if entry is not None:
@@ -227,32 +285,107 @@ def import_master_data(excel_path, data, on_saved=None):
         else:
             local = phone_no
             editing = False
-            if local in saved or \
+            if local in saved or local in assigned or \
                     storage.control_key(local) in taken_elsewhere:
                 # The report keeps the initials of the inspector who made it.
                 local = storage.next_control_number(
-                    [*saved, *elsewhere],
+                    [*saved, *elsewhere, *assigned],
                     storage.control_initials_of(phone_no))
                 _renumbered(report, phone_no, local)
                 summary["renumbered"].append((phone_no, local))
+        assigned[local] = True
+        planned_keys[key] = len(plan)
+        plan.append((report, editing, key, phone_no, phone_saved))
 
-        backup_once()
-        control = _write(excel_path, report, editing)
-        saved = _last_saved_by_control(excel_path)
-        ledger[key] = {
-            "control": control,
-            "phone_control": phone_no,
-            "inspector": inspector,
-            "phone_saved": phone_saved,
-            "pc_saved": saved.get(control),
-            "imported": datetime.now().isoformat(timespec="seconds"),
-        }
-        storage.write_json_atomic(ledger_path(excel_path), ledger)
+    if not plan:
+        return summary
+
+    backup_once()
+    # One Last Saved time for the whole import, chosen before the write:
+    # it is how the record recognises the write afterwards.
+    now = datetime.now()
+    stamp = now.replace(microsecond=now.microsecond // 1000 * 1000)
+    imported = now.isoformat(timespec="seconds")
+    records = None
+    if journal is not None:
+        records = journal.begin_batch(
+            [(report, editing,
+              journal_module.steps_for(report, False, mysql)
+              + ["import_ledger"],
+              {"import": {"key": key, "entry": {
+                  "phone_control": phone_no, "inspector": inspector,
+                  "phone_saved": phone_saved, "pc_saved": str(stamp),
+                  "imported": imported}}})
+             for report, editing, key, phone_no, phone_saved in plan],
+            now=stamp)
+
+    progress(f"Writing {len(plan)} report(s) into the Excel file ...", 0,
+             len(plan))
+    write = (lambda: storage.write_reports_to_excel(
+        excel_path, [(report, editing, stamp)
+                     for report, editing, *_ in plan]))
+    try:
+        if stores is not None and stores.guard is not None:
+            with stores.guard.local_write():
+                results = write()
+        else:
+            results = write()
+    except BaseException:
+        # The workbook is replaced in one go: when the write fails, nothing
+        # of this import is in it, so its records go too.
+        if records is not None:
+            try:
+                journal.discard_batch(records)
+            except Exception:
+                pass
+        raise
+
+    entries = {}
+    for number, ((report, editing, key, phone_no, phone_saved), result) in \
+            enumerate(zip(plan, results), start=1):
+        control = result["control"]
+        report["control_no"] = control
+        progress(f"Writing the files of {control} ...", number, len(plan))
+        write_side_files(excel_path, control, report)
+        entries[key] = {
+            "control": control, "phone_control": phone_no,
+            "inspector": inspector, "phone_saved": phone_saved,
+            "pc_saved": str(stamp), "imported": imported}
         summary["updated" if editing else "added"].append(control)
         summary["saved_reports"].append(report)
-        if on_saved is not None:
-            on_saved(report)
+    progress("Updating the record of imported reports ...", len(plan),
+             len(plan))
+    record_imports(excel_path, entries)
 
+    lists_failed = None
+    if records is not None and any(
+            "item_lists" in record["steps"] for record in records):
+        progress("Updating PO_Master and Withdrawn_Item ...", len(plan),
+                 len(plan))
+        try:
+            stores.item_lists(records[0])
+        except Exception as error:      # finished at the next save / start
+            lists_failed = error
+    if records is not None:
+        for record, result in zip(records, results):
+            record["control"] = record["data"]["control_no"] = \
+                result["control"]
+            record["data"] = copy.deepcopy(record["data"])
+            record["editing"] = True
+            record["stamp"] = record["stamp_planned"]
+            for step in ("workbook", "incidents", "item_forms",
+                         "import_ledger"):
+                record["steps"][step] = journal_module.DONE
+            if "item_lists" in record["steps"] and lists_failed is None:
+                record["steps"]["item_lists"] = journal_module.DONE
+            if lists_failed is not None:
+                record["errors"]["item_lists"] = str(lists_failed)
+        journal.save_many(records)
+    summary["item_lists_failed"] = lists_failed
+
+    if on_saved is not None:
+        for report in summary["saved_reports"]:
+            on_saved(report)
     return summary
 
 

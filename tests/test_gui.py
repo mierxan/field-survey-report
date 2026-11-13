@@ -534,6 +534,15 @@ def test_import_master_data_button(app, tmp_path):
     answers.calls.clear()
     try:
         g["import_master_button"].invoke()
+        # The import runs in the background with a progress window (Phase
+        # 3); the window keeps working until it is done.
+        import time
+        state = g["save_report"].__globals__["import_state"]
+        deadline = time.monotonic() + 60
+        while state["running"] and time.monotonic() < deadline:
+            g["window"].update()
+            time.sleep(0.02)
+        assert not state["running"]
     finally:
         dialog.askopenfilename = original
 

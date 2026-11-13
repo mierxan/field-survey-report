@@ -229,3 +229,59 @@ def test_number_used_meanwhile_is_handed_on(copy):
         "general_information"]["so_number"] == "SO-RACE"
     assert said(toasts, f"{shown} was already used in MySQL")
     assert fsr_save_journal.Journal(book(g)).pending() == []
+
+
+def test_import_writes_once_shows_progress_and_sends_in_the_background(
+        copy, tmp_path):
+    import json
+    from datetime import date
+
+    from openpyxl.workbook import workbook
+
+    import fsr_import
+    from factories import report
+    g, answers, server, gate, toasts = copy
+    reports = []
+    for number in range(1, 31):
+        data = report(f"FSR-JDC-209912-{number:04d}", "Withdrawal",
+                      date(2026, 10, 5), "WH",
+                      [{"qty": 1, "unit": "Box", "desc": "Item"}],
+                      so=f"SO-IMPORT-{number}")
+        data["last_saved"] = "01-Nov-2026 10:00"
+        data["other_item_forms"] = {}
+        reports.append(data)
+    source = tmp_path / "FSR_Master_Data_import.json"
+    source.write_text(json.dumps({
+        "format": fsr_import.FORMAT, "version": 1, "device_id": "bg-phone",
+        "inspector": "Phone Inspector", "reports": reports}),
+        encoding="utf-8")
+    writes = []
+    real_save = workbook.Workbook.save
+
+    def counted(wb, filename, *args, **kwargs):
+        if "Field_Survey_Reports" in str(filename):
+            writes.append(filename)
+        return real_save(wb, filename, *args, **kwargs)
+
+    dialog = g["filedialog"]
+    original = dialog.askopenfilename
+    dialog.askopenfilename = lambda **_: str(source)
+    workbook.Workbook.save = counted
+    answers.calls.clear()
+    try:
+        g["import_master_button"].invoke()
+        state = live(g)["import_state"]
+        assert state["running"]             # the window is not held up
+        assert pump(g, lambda: not state["running"], 60)
+    finally:
+        dialog.askopenfilename = original
+        workbook.Workbook.save = real_save
+
+    assert len(writes) == 1                 # one write for 30 reports
+    (summary,) = [c[2] for c in answers.calls
+                  if c[1] == "Import Master Data" and c[0] == "showinfo"]
+    assert "Added: 30" in summary and "in the background" in summary
+    assert quiet(g)
+    assert all(in_mysql(server, f"FSR-JDC-209912-{n:04d}")
+               == f"SO-IMPORT-{n}" for n in range(1, 31))
+    assert fsr_save_journal.Journal(book(g)).pending() == []

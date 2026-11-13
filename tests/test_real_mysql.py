@@ -384,3 +384,24 @@ def test_power_cut_before_commit_leaves_mysql_unchanged(copy):
     send_round(mine, db, with_conflicts=True)
     assert so_in_mysql(db, control) == "NEVER COMMITTED"
     assert mine.journal.pending() == []
+
+
+def test_imported_reports_reach_the_real_database_in_one_round(copy):
+    import fsr_import
+    mine, db, control = copy
+    reports = []
+    for number in range(1, 6):
+        data = make(f"{control}-I{number}", so=f"IMPORTED {number}")
+        data["last_saved"] = "01-Nov-2026 10:00"
+        reports.append(data)
+    summary = fsr_import.import_master_data(
+        mine.book, {"format": fsr_import.FORMAT, "version": 1,
+                    "device_id": "real-db-phone", "inspector": "Tester",
+                    "reports": reports},
+        journal=mine.journal, stores=mine.stores, mysql=True)
+    assert len(summary["added"]) == 5
+    counted = Counted(db)
+    result = send_round(mine, counted)
+    assert counted.connections == 1 and len(result["sent"]) == 5
+    for number in range(1, 6):
+        assert so_in_mysql(db, f"{control}-I{number}") == f"IMPORTED {number}"
