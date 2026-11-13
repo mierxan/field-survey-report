@@ -287,9 +287,10 @@ def wait_until_quiet(g, limit=600):
     while time.perf_counter() - started < limit:
         g["window"].update()
         busy = False
-        sender = live.get("mysql_sender")
-        if sender is not None and not sender.idle():
-            busy = True
+        for name in ("mysql_sender", "lists_sender"):
+            sender = live.get(name)
+            if sender is not None and not sender.idle():
+                busy = True
         if (live.get("import_state") or {}).get("running"):
             busy = True
         shell = live.get("app_shell")
@@ -345,8 +346,9 @@ def run_size(code, work, name, source_book, mysql, real_mysql, runs,
 
     g, answers = h.start_app(home)
     live = g["save_report"].__globals__
-    if "mysql_sender" in live:          # the real program sends in the
-        live["mysql_sender"].inline = False     # background
+    for name in ("mysql_sender", "lists_sender"):   # the real program
+        if name in live:                            # works in the
+            live[name].inline = False               # background
     storage.set_control_initials("ZZP")
     live["set_control_initials"]("ZZP")
     database = None
