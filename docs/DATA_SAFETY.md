@@ -130,7 +130,10 @@ the workbook.
   a report is on its way leaves the step open; at the next start the report
   is sent again, and the overwrite guard finds MySQL either without it
   (written then) or equal to it (nothing written, it counts as this copy's
-  own). Closing the program waits up to 8 seconds for a send in progress.
+  own). Closing the program while a report is on its way shows a small
+  window, "Sending N report(s) to MySQL...", which closes by itself when the
+  send is done (at most 8 seconds) and has a button "Close now; it will be
+  sent at the next start". The program keeps responding meanwhile.
 * An import is written into the workbook in ONE write for the whole file
   (Phase 3). The file is replaced as a whole, so it holds either every
   report of the import or none, and the note says which.

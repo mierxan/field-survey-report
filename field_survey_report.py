@@ -26,6 +26,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import tkinter
 import zipfile
 from datetime import date, datetime, timedelta
@@ -7796,18 +7797,88 @@ def on_close():
         if answer and not save_report():
             return
 
-    # Reports still being sent: a few seconds to finish. Whatever is not
-    # sent stays in the save record and goes at the next start.
-    if not mysql_sender.idle():
-        window.configure(cursor="watch")
-        status_var.set("Finishing the MySQL send...")
-        window.update_idletasks()
-        if not mysql_sender.wait(8):
-            log.warning("Closed while reports were still being sent to "
-                        "MySQL; they are sent at the next start.")
+    close_when_sent(close_program)
 
+
+def close_program():
     save_settings()
     window.destroy()
+
+
+CLOSE_WAIT_SECONDS = 8
+
+
+def close_when_sent(close, limit=CLOSE_WAIT_SECONDS):
+    """Close at once - or, while reports are still being sent to MySQL,
+    show a small window that waits up to `limit` seconds for the send and
+    offers "Close now". The program keeps running its main loop meanwhile
+    (no "Not Responding"). Whatever is not sent stays in the save record
+    and goes at the next start. Returns the waiting window, or None."""
+    if mysql_sender.idle():
+        close()
+        return None
+
+    started = time.monotonic()
+    state = {"done": False}
+    dialog = tb.Toplevel(window)
+    dialog.title("Closing")
+    dialog.transient(window)
+    dialog.resizable(False, False)
+    message = tb.Label(dialog, padding=(24, 20, 24, 6), justify="left")
+    message.pack(anchor="w")
+    tb.Label(dialog, text="The program closes as soon as this is done.",
+             padding=(24, 0, 24, 10), bootstyle="secondary").pack(anchor="w")
+    bar = tb.Progressbar(dialog, mode="indeterminate", length=340,
+                         bootstyle="striped")
+    bar.pack(padx=24, pady=(0, 12))
+    bar.start(12)
+
+    def finish(by_user=False):
+        if state["done"]:
+            return
+        state["done"] = True
+        waiting = not mysql_sender.idle()
+        if waiting:
+            log.warning("Closed while reports were still being sent to "
+                        "MySQL (%s); they are sent at the next start.",
+                        "Close now" if by_user else "after waiting")
+        try:
+            bar.stop()
+            dialog.destroy()
+        except tkinter.TclError:
+            pass
+        close()
+
+    tb.Button(dialog, text="Close now; it will be sent at the next start",
+              bootstyle="secondary-outline",
+              command=lambda: finish(by_user=True)).pack(
+        padx=24, pady=(0, 20), fill="x")
+    dialog.protocol("WM_DELETE_WINDOW", lambda: finish(by_user=True))
+
+    def show():
+        try:
+            count = len(fsr_save_journal.waiting_for_mysql(
+                fsr_save_journal.Journal(excel_state["path"])))
+        except Exception:
+            count = 0
+        message.configure(text=(
+            f"Sending {count} report(s) to MySQL..." if count
+            else "Finishing the MySQL send..."))
+
+    def poll():
+        if state["done"]:
+            return
+        mysql_sender.poll()
+        if mysql_sender.idle() or time.monotonic() - started >= limit:
+            finish()
+            return
+        show()
+        window.after(150, poll)
+
+    show()
+    center_over_window(dialog, 160)
+    window.after(150, poll)
+    return dialog
 
 
 # =====================================================

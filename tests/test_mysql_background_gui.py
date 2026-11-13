@@ -285,3 +285,75 @@ def test_import_writes_once_shows_progress_and_sends_in_the_background(
     assert all(in_mysql(server, f"FSR-JDC-209912-{n:04d}")
                == f"SO-IMPORT-{n}" for n in range(1, 31))
     assert fsr_save_journal.Journal(book(g)).pending() == []
+
+
+# ---------- closing while a report is on its way ----------
+
+def closing_dialog_button(dialog):
+    for widget in dialog.winfo_children():
+        if widget.winfo_class() == "TButton":
+            return widget
+    raise AssertionError("no button")
+
+
+def start_slow_send(g, gate, so):
+    fill(g, so)
+    gate.open.clear()                       # MySQL takes its time
+    assert g["save_report"]() is True
+    assert not live(g)["mysql_sender"].idle()
+
+
+def test_closing_with_nothing_to_send_closes_at_once(copy):
+    g, answers, server, gate, toasts = copy
+    closed = []
+    assert live(g)["close_when_sent"](lambda: closed.append(True)) is None
+    assert closed == [True]
+
+
+def test_closing_waits_in_a_small_window_and_close_now_closes(copy):
+    g, answers, server, gate, toasts = copy
+    start_slow_send(g, gate, "SO-CLOSING")
+    closed = []
+
+    started = time.monotonic()
+    dialog = live(g)["close_when_sent"](lambda: closed.append(True))
+    assert time.monotonic() - started < 1          # the window is not held
+    assert dialog is not None and dialog.winfo_exists()
+    button = closing_dialog_button(dialog)
+    assert str(button.cget("text")) == \
+        "Close now; it will be sent at the next start"
+    # the main loop keeps running (no "Not Responding"), nothing closes yet
+    assert not pump(g, lambda: closed, 1.0)
+    texts = [str(w.cget("text")) for w in dialog.winfo_children()
+             if w.winfo_class() == "TLabel"]
+    assert any("Sending 1 report(s) to MySQL" in t for t in texts)
+
+    button.invoke()
+    assert closed == [True] and not dialog.winfo_exists()
+    # the report is still on record and goes at the next start
+    gate.open.set()
+    quiet(g)
+
+
+def test_closing_window_closes_by_itself_when_the_send_is_done(copy):
+    g, answers, server, gate, toasts = copy
+    start_slow_send(g, gate, "SO-CLOSING-2")
+    closed = []
+    dialog = live(g)["close_when_sent"](lambda: closed.append(True))
+    gate.open.set()                         # MySQL answers
+    assert pump(g, lambda: closed, 15)
+    assert not dialog.winfo_exists()
+    assert fsr_save_journal.Journal(book(g)).pending() == []
+
+
+def test_closing_window_gives_up_after_the_time_limit(copy):
+    g, answers, server, gate, toasts = copy
+    start_slow_send(g, gate, "SO-CLOSING-3")
+    closed = []
+    live(g)["close_when_sent"](lambda: closed.append(True), limit=0.5)
+    assert pump(g, lambda: closed, 5)
+    waiting = fsr_save_journal.waiting_for_mysql(
+        fsr_save_journal.Journal(book(g)))
+    assert len(waiting) == 1                # sent at the next start
+    gate.open.set()
+    quiet(g)
