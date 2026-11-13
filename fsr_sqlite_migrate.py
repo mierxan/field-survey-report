@@ -704,6 +704,73 @@ def use_excel_again(excel_path, required_root=None, now=None):
                              f"kept as {aside.name}.", aside=str(aside))
 
 
+# ---------- GO_BACK_TO_WORKBOOK.bat ----------------------------------------
+
+STATUS, GO_BACK = "status", "go-back"
+DONE, NOT_DONE, NOTHING_TO_DO = 0, 1, 3
+
+
+def _status(excel_path, required_root):
+    if not sq.is_active(excel_path):
+        return ["The reports are kept in the Excel file:",
+                f"    {excel_path}",
+                "No database is in use, so there is nothing to do."
+                ], NOTHING_TO_DO
+    store = sq.SqliteStore(excel_path, required_root)
+    lines = ["The reports are kept in the database:",
+             f"    {store.db_path}",
+             f"    {len(store.list_reports())} report(s), "
+             f"{len(store.withdrawal_numbers())} PO-linked Withdrawal "
+             "report(s).",
+             "The Excel file:",
+             f"    {excel_path}"]
+    if export.changed_outside(store):
+        lines += ["was CHANGED outside the program since the program last "
+                  "wrote it.",
+                  "Start the program once and close it again, so it can "
+                  "decide about that file. Then run this again."]
+        return lines, NOT_DONE
+    lines.append("is up to date." if export.is_current(store) else
+                 "is not up to date yet; it is brought up to date when you "
+                 "go back.")
+    return lines, DONE
+
+
+def _go_back(excel_path, required_root):
+    result = use_excel_again(excel_path, required_root)
+    if result.status == "retired":
+        return [result.message, "",
+                "The previous version of the program can be used now: it "
+                "opens this Excel file with every report.",
+                "(This version would move the Excel file into a database "
+                "again at its next start.)"], DONE
+    if result.status == "unchanged":
+        return [result.message], NOTHING_TO_DO
+    return ["Nothing was changed:", result.message], NOT_DONE
+
+
+def command(action, excel_path, required_root=None, report=None):
+    """GO_BACK_TO_WORKBOOK.bat, through the program (FieldSurveyReport.exe
+    --database-status / --go-back-to-workbook) or its Python: what it
+    found or did, in plain words, written to `report` (a text file - the
+    installed program has no console) or printed. Returns 0 (ready or
+    done), 1 (not done) or 3 (nothing to do)."""
+    excel_path = Path(excel_path)
+    try:
+        lines, code = (_go_back if action == GO_BACK else _status)(
+            excel_path, required_root)
+    except Exception as error:                 # said, never a traceback
+        log.exception("The way back failed")
+        lines, code = ["Nothing was changed. The way back stopped with "
+                       "this problem:", f"    {error}"], NOT_DONE
+    text = "\n".join(lines) + "\n"
+    if report:
+        Path(report).write_text(text, encoding="utf-8")
+    else:
+        print(text, end="")
+    return code
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(

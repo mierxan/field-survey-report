@@ -49,6 +49,8 @@ Type: filesandordirs; Name: "{app}\_internal"
 
 [Files]
 Source: "dist\{#Edition}\FieldSurveyReport\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion createallsubdirs
+; the way back from the reports database to the Excel file (docs\SQLITE.md)
+Source: "GO_BACK_TO_WORKBOOK.bat"; DestDir: "{app}"; Flags: ignoreversion
 #if Edition == "Owner"
 ; database scripts for MySQL Workbench (not used by the program itself)
 Source: "data\schema\field_survey_schema.sql"; DestDir: "{app}\sql"; Flags: ignoreversion

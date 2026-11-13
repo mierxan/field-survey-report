@@ -48,6 +48,7 @@ LibreOffice (unchanged).
 | `START_FSR.bat` (or `main.py` in PyCharm) | The program with the **real data** |
 | `START_DEMO.bat` | **Demo Mode** with fictional TEST data (see §5) |
 | `RUN_TESTS.bat` | All automated tests |
+| `GO_BACK_TO_WORKBOOK.bat` | Stops using the reports database: the Excel file holds every report again (before going back to the previous version) - [docs/SQLITE.md](docs/SQLITE.md), section 4 |
 | `BACKUP_CODE.bat` | Backs up the code: every branch in one checked git bundle, newest 10 kept - [docs/BACKUP_CODE.md](docs/BACKUP_CODE.md) (also how to restore) |
 
 Sign-in uses local accounts (`app_auth.py`, `data/json/private/users.json`). New accounts and

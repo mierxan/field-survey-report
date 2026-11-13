@@ -85,32 +85,87 @@ A new PC (no workbook yet) starts with an empty database.
 
 ## 4. The way back
 
-* **Going back to the previous version** (uninstall this one, install the
-  previous one): the previous version opens `Field_Survey_Reports.xlsx` - the
-  export - as its workbook and has every report, including those saved
-  since the move. Close this version normally first, so its export is up to
-  date (the closing window "*Bringing the Excel file up to date...*" waits
-  for it).
-* **Coming back to this version later:** it finds the export changed by the
-  previous version and the database unchanged since its last export, so it
-  takes the Excel file as it is (case (a) above): nothing saved in the
-  previous version is lost.
-* **Stopping the database by hand** (for support, with the program
-  closed): `python fsr_sqlite_migrate.py <workbook> --use-excel-again`
-  brings the export up to date and puts the database aside
-  (`.sqlite3.retired_<time>`); the workbook is then used as before (this
-  version moves it in again at its next start).
+Use this when you want to stop using the database and go back to the
+previous version of the program. Nothing is lost: the Excel file then holds
+every report, also the ones saved since the move.
 
-## 5. Restoring a backup
+### Step by step
 
-Close the program. Copy `Backups\Field_Survey_Reports_backup_<date>.sqlite3`
-over `Field_Survey_Reports.sqlite3`. At the next start the export is
-written from the restored database, and the MySQL ledger notices the change
-(every report counts as not owned, as after restoring a workbook).
+1. **Close the Field Survey Report program.** Wait until its window is gone.
+   (If it is still open, the next step says so and changes nothing.)
+2. **Open the program's folder** - for the installed program
+   `C:\Program Files\Field Survey Report` (on the owner's test copy: the
+   project folder) - and **double-click `GO_BACK_TO_WORKBOOK.bat`**.
+   A black window opens.
+3. **Read what it found.** It says where the reports are kept now and
+   whether the Excel file is up to date, for example:
 
-The copy taken before the move (`Backups\before_sqlite_...`) holds the
-workbooks as they were; to go back to it completely, close the program,
-move `Field_Survey_Reports.sqlite3` away and copy the workbooks back.
+       The reports are kept in the database:
+           ...\Field_Survey_Reports.sqlite3
+           312 report(s), 4 PO-linked Withdrawal report(s).
+       The Excel file:
+           ...\Field_Survey_Reports.xlsx
+       is up to date.
+
+   * "*No database is in use, so there is nothing to do*": the reports are
+     in the Excel file already. Press a key; you are done.
+   * "*was CHANGED outside the program*": start the program once and close
+     it again (it decides about that file and tells you what it did), then
+     start again at step 1.
+4. **Type `YES`** in capital letters and press Enter. (Anything else stops
+   and changes nothing.)
+5. It brings the Excel file up to date and ends with **DONE**. The database
+   file is kept, renamed `Field_Survey_Reports.sqlite3.retired_<date>_<time>`
+   (it can be deleted later). Press a key to close the window.
+6. **Uninstall this version** (Windows Settings > Apps > Field Survey Report >
+   Uninstall) and **install the previous version** with its Setup file. Your
+   reports, accounts and settings are not removed by uninstalling.
+7. Start the previous version: it opens the Excel file with every report.
+
+### Good to know
+
+* Without step 1-5 the way back still works: the Excel file is kept up to
+  date after every save, and closing the program waits until it is. The
+  batch file is the sure way.
+* **Installing this version again later:** at its first start it finds the
+  Excel file changed by the previous version and takes it as it is, with a
+  new backup and the full comparison - nothing saved in the previous
+  version is lost.
+* After the batch file, **this** version would move the Excel file into a
+  database again at its next start (with a backup). Use the previous
+  version, or simply carry on with this one.
+
+## 5. Backups, and restoring one
+
+**How backups are made - and checked.**
+
+* **Daily backup** (before the first save of a day, newest 14 kept):
+  `Backups\Field_Survey_Reports_backup_<date>.sqlite3`. Made with SQLite's
+  own backup method, which gives a correct copy even while the program is
+  writing; then checked with SQLite's integrity check. A copy that fails the
+  check is deleted and the save says "*Today's backup copy ... could NOT be
+  made*" (the report itself is saved).
+* **Before an import:** `..._before_import_<time>.sqlite3`, made and checked
+  the same way; if the check fails, nothing is imported.
+* **Before the move** (`Backups\before_sqlite_<date>_<time>\`): there is no
+  database yet at that moment, so the workbooks and JSON files are copied
+  as files - and every copy is compared with its file, byte for byte. If one
+  differs, or a workbook is saved in Excel while the backup or the move
+  runs, the move is not finished: the program stays on the workbook and
+  tries again at the next start.
+* While the reports are still in the workbook, its daily copy and its copy
+  before an import are compared with the workbook byte for byte too.
+
+**Restoring the daily backup.** Close the program. Copy
+`Backups\Field_Survey_Reports_backup_<date>.sqlite3` over
+`Field_Survey_Reports.sqlite3`. At the next start the export is written from
+the restored database, and the MySQL ledger notices the change (every report
+counts as not owned, as after restoring a workbook).
+
+**Going back to before the move completely.** The folder
+`Backups\before_sqlite_...` holds the workbooks as they were. Close the
+program, move `Field_Survey_Reports.sqlite3` away and copy the workbooks
+back.
 
 ## 6. The code
 
@@ -118,6 +173,7 @@ move `Field_Survey_Reports.sqlite3` away and copy the workbooks back.
 |---|---|
 | `fsr_sqlite_store.py` | `SqliteStore`: every method of `ExcelStore`, same results; one transaction per write |
 | `fsr_sqlite_migrate.py` | the move (backup, copy, comparison), an export changed outside, the way back |
+| `GO_BACK_TO_WORKBOOK.bat` | the way back for everyone (section 4); it starts the program with `--database-status` / `--go-back-to-workbook` (no window, no sign-in) |
 | `fsr_sqlite_export.py` | the Excel export in today's layout, and the note of what was written |
 | `fsr_store.open_store()` | picks the store: the database once the workbook has moved |
 | `tests/test_store_contract.py` | the store contract, run on both stores (unchanged, one line added) |

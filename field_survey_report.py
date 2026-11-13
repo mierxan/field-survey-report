@@ -234,6 +234,23 @@ def log_unhandled(exc_type, exc_value, exc_tb):
     )
 
 
+def database_command(argv=None):
+    """("status" | "go-back", report file or None) when the program was
+    started by GO_BACK_TO_WORKBOOK.bat; None for a normal start."""
+    argv = list(sys.argv[1:] if argv is None else argv)
+    action = None
+    if "--database-status" in argv:
+        action = fsr_sqlite_migrate.STATUS
+    if "--go-back-to-workbook" in argv:
+        action = fsr_sqlite_migrate.GO_BACK
+    if action is None:
+        return None
+    report = None
+    if "--report" in argv and argv.index("--report") + 1 < len(argv):
+        report = argv[argv.index("--report") + 1]
+    return action, report
+
+
 def initial_excel_path():
     saved = settings.get("excel_path")
     if saved and Path(saved).parent.exists():
@@ -4388,6 +4405,8 @@ def build_window():
         DATA_DIR = EXCEL_ROOT / "demo_data"
     else:
         DATA_DIR = EXCEL_ROOT
+    DEFAULT_EXCEL_NAME = ("Field_Survey_Reports_DEMO.xlsx" if DEMO_MODE
+                          else "Field_Survey_Reports.xlsx")
     if not FROZEN or _home:
         PRIVATE_JSON_DIR = DATA_ROOT / "json" / "private"
     CONFIG_DIR = PRIVATE_JSON_DIR
@@ -4476,6 +4495,15 @@ def build_window():
 
 
     settings = load_settings()
+
+    # GO_BACK_TO_WORKBOOK.bat: the state of the reports database, or the way
+    # back to the Excel file - with the folders and settings of a normal
+    # start, but without a window or a sign-in (the program is closed).
+    _way_back = database_command()
+    if _way_back is not None:
+        sys.exit(fsr_sqlite_migrate.command(
+            _way_back[0], initial_excel_path(),
+            DATA_DIR if DEMO_MODE else None, _way_back[1]))
 
 
     # =====================================================
@@ -4621,10 +4649,6 @@ def build_window():
     # =====================================================
     # STATE
     # =====================================================
-
-    DEFAULT_EXCEL_NAME = ("Field_Survey_Reports_DEMO.xlsx" if DEMO_MODE
-                          else "Field_Survey_Reports.xlsx")
-
 
     # Excel file in use + whether the form shows a saved report / has changes.
     excel_state = {"path": initial_excel_path()}
