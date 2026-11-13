@@ -451,3 +451,12 @@ def test_the_copy_in_the_backup_folder_is_never_migrated_into(book):
     copy = fsr_storage.list_saved_reports(
         shutil.os.path.join(folder, book.name))
     assert "FSR-MIG-202611-0013" not in [r[0] for r in copy]
+
+
+def test_two_moves_in_the_same_second_keep_both_backups(book):
+    assert migrate.migrate(book, now=NOW).status == "migrated"
+    assert migrate.use_excel_again(book, now=NOW).status == "retired"
+    result = migrate.migrate(book, now=NOW)
+    assert result.status == "migrated", result.message
+    assert result.details["backup"].endswith("before_sqlite_20261113_120000_2")
+    assert len(list((book.parent / "Backups").glob("before_sqlite_*"))) == 2

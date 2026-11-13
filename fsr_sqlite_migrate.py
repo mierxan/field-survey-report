@@ -92,8 +92,15 @@ def backup(excel_path, required_root=None, now=None):
     """Copy everything belonging to this workbook, unchanged."""
     now = now or datetime.now()
     main, book = _books(excel_path, required_root)
-    folder = main.parent / BACKUP_FOLDER / f"before_sqlite_{_stamp(now)}"
-    folder.mkdir(parents=True, exist_ok=False)
+    base = main.parent / BACKUP_FOLDER / f"before_sqlite_{_stamp(now)}"
+    folder, number = base, 1
+    while True:
+        try:
+            folder.mkdir(parents=True, exist_ok=False)
+            break
+        except FileExistsError:         # a second move in the same second
+            number += 1
+            folder = base.with_name(f"{base.name}_{number}")
     for path in (main, book, main.with_name(fsr_paths.PO_MASTER_NAME),
                  main.with_name(fsr_paths.WITHDRAWN_ITEM_NAME)):
         if path.exists():
