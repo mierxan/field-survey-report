@@ -3085,6 +3085,20 @@ def start_on_database(then=None):
             messagebox.showwarning("Reports Database", result.message,
                                    parent=window)
         if fsr_sqlite_store.is_active(path):
+            gone = [p for p in fsr_sqlite_export.missing(data_store(path))
+                    if p == path]
+            if gone:
+                # moved, renamed or deleted while the program was closed:
+                # the reports are in the database; nothing is set aside
+                messagebox.showwarning(
+                    "Excel File Not Found",
+                    f"The Excel file is not in its place:\n    {path}\n\n"
+                    "The reports are safe in the database and the program "
+                    "works with them.\n\nIf you moved or renamed the Excel "
+                    "file, use Change Excel File... (Storage, on the right) "
+                    "and choose it in its new place: it goes on using this "
+                    "database. Otherwise the Excel file is written here "
+                    "again at the next save.", parent=window)
             settle_changed_export(path)
         if result is not None and result.status in (
                 "migrated", "moved", "relinked", "returned") and \

@@ -118,13 +118,25 @@ def export_paths(store):
 
 
 def changed_outside(store):
-    """The exported files that were changed since the program wrote them."""
+    """The exported files that were changed since the program wrote them.
+    A file that is not there (moved, renamed, deleted) is NOT a changed
+    file: nothing in it can be taken, and the database keeps every report
+    - it is written again at the next export (or found in its new place)."""
     state = load_state(store)
     if state is None:
         return []
     files = state.get("files") or {}
     return [path for name, path in export_paths(store).items()
-            if name in files and not _same(files[name], path)]
+            if name in files and Path(path).exists()
+            and not _same(files[name], path)]
+
+
+def missing(store):
+    """The exported workbooks that are not in their place any more."""
+    state = load_state(store) or {}
+    files = state.get("files") or {}
+    return [path for name, path in export_paths(store).items()
+            if name in files and not Path(path).exists()]
 
 
 def is_current(store):

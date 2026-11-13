@@ -321,3 +321,44 @@ def test_an_excel_file_from_another_pcs_database_is_never_taken(dirs):
     assert "FSR-OTH-202611-0009" in store.control_numbers()   # added
     assert "FSR-LOC-202611-0001" in store.control_numbers()
     assert location.workbook_identity(book) == mine_id
+
+
+# ---------- a workbook that is not in its place ----------
+
+def test_a_missing_workbook_never_starts_an_empty_database(dirs):
+    """Moved away while the program was closed: the program keeps the
+    database (it does NOT take the missing file as 'changed' and build an
+    empty database), and Change Excel File in the new place finds it."""
+    book = workbook(dirs / "data" / "excel", ("FSR-LOC-202611-0001",
+                                              "FSR-LOC-202611-0002"))
+    migrate.migrate(book)
+    store = fsr_store.open_store(book)
+    database_id = store.database_id
+    new_place = dirs / "elsewhere"
+    new_place.mkdir()
+    moved = new_place / book.name
+    shutil.move(book, moved)
+    # the next start, still pointing at the old place
+    assert migrate.migrate(book).status == "active"
+    assert export.missing(store) == [book]
+    assert export.changed_outside(store) == []
+    assert migrate.reconcile(book).status == "unchanged"
+    assert fsr_store.open_store(book).database_id == database_id
+    assert len(controls_of(book)) == 2                 # nothing set aside
+    # Change Excel File to the new place: the same database
+    result = migrate.migrate(moved)
+    assert result.status == "relinked", result.message
+    assert fsr_store.open_store(moved).database_id == database_id
+    assert len(controls_of(moved)) == 2
+
+
+def test_a_deleted_workbook_is_written_again_from_the_database(dirs):
+    book = workbook(dirs / "data" / "excel")
+    migrate.migrate(book)
+    store = fsr_store.open_store(book)
+    book.unlink()
+    assert migrate.reconcile(book).status == "unchanged"
+    store.write_report(receiving("FSR-LOC-202611-0002"), False, WHEN)
+    export.write_export(store)
+    assert sorted(r[0] for r in fsr_storage.list_saved_reports(book)) == [
+        "FSR-LOC-202611-0001", "FSR-LOC-202611-0002"]

@@ -416,3 +416,24 @@ def test_a_reopened_report_shows_the_quantity_as_typed(program):
     cells = [r[headers.index("Quantity")] for r in ws.iter_rows(min_row=2)
              if r[0].value == control]
     assert cells[0].value == 1250.5 and cells[0].number_format == "0,000.00"
+
+
+def test_a_missing_excel_file_is_said_and_nothing_is_set_aside(program,
+                                                               tmp_path):
+    import shutil
+    g, answers = program
+    path = book(g)
+    before = len(store(g).list_reports())
+    away = tmp_path / "moved_away.xlsx"
+    shutil.move(path, away)
+    try:
+        answers.calls.clear()
+        live(g)["start_on_database"](then=lambda: None)
+        said = [m for kind, title, m in answers.calls
+                if title == "Excel File Not Found"]
+        assert said and "not in its place" in said[0]
+        assert "Change Excel File" in said[0]
+        assert len(store(g).list_reports()) == before   # all still there
+        assert not path.exists()            # not written again at start
+    finally:
+        shutil.move(away, path)
