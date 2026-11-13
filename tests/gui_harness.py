@@ -94,11 +94,50 @@ def start_app(home, extra_env=None):
     return app, answers
 
 
+def _stray_root(window):
+    """A Tk root other than the program's window that ttkbootstrap's Style
+    is still bound to - it would stop every later GUI test module from
+    opening its window ("a Style is already bound to an existing live
+    root"). Returns a description, or None."""
+    try:
+        from ttkbootstrap.style import Style
+    except ImportError:
+        return None
+    existing = Style.get_instance()
+    other = getattr(existing, "master", None)
+    if other is None or other is window:
+        return None
+    try:
+        if not other.winfo_exists():
+            return None
+        children = [f"{w.winfo_class()} {w.winfo_name()!r}"
+                    for w in other.winfo_children()][:10]
+        title = other.title() if hasattr(other, "title") else ""
+    except tkinter.TclError:
+        return None
+    return f"{type(other).__name__} titled {title!r} holding {children}"
+
+
 def stop_app(app, answers):
     try:
         app["window"].destroy()
     except tkinter.TclError:
         pass
+    stray = _stray_root(app["window"])
+    if stray is not None:
+        # Close it so later modules can open their window, and say so: a
+        # second root left behind is a fault of the code under test.
+        from ttkbootstrap.style import Style
+        try:
+            Style.get_instance().master.destroy()
+        except tkinter.TclError:
+            pass
+        answers.uninstall()
+        os.environ.pop("FSR_HOME", None)
+        os.environ.pop("FSR_MYSQL_INLINE", None)
+        raise AssertionError(
+            "A second Tk root window was left alive after the program's "
+            f"window was closed: {stray}")
     answers.uninstall()
     os.environ.pop("FSR_HOME", None)
     os.environ.pop("FSR_MYSQL_INLINE", None)
