@@ -2927,6 +2927,10 @@ def lists_round_done(item):
 
 EXPORT_RETRY_MS = 30_000        # the export file open in Excel: try again
 EXPORT_CLOSE_SECONDS = 120      # closing waits this long for the export
+# A round starts this long after the change that asked for it: the save
+# that made the change finishes first (its official forms) instead of
+# sharing the processor with the export; changes meanwhile join the round.
+EXPORT_SETTLE_SECONDS = 1.0
 
 
 def sqlite_allowed():
@@ -2946,6 +2950,8 @@ def request_export_round(path=None):
 def export_round(path, root=None):
     """Background thread: write the Excel export from the database (no
     window calls here)."""
+    if not export_sender.inline:
+        time.sleep(EXPORT_SETTLE_SECONDS)
     store = data_store(path, root)
     if store.kind != "sqlite":
         return {"skipped": True}
