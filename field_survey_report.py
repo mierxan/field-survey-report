@@ -87,8 +87,8 @@ import fsr_import                  # Master Data files from the sites/phones
 import fsr_master_export           # one Master Data file for the owner
 import fsr_mysql_guard             # never overwrite another copy's report
 import fsr_mysql_sender            # MySQL in the background
-import fsr_renumber                # give a saved report another number
 import fsr_save_journal            # finishes a save that stopped halfway
+import fsr_store                   # the ONE storage interface
 import fsr_withdrawal              # PO-linked Withdrawal reports
 import fsr_withdrawal_ui
 from fsr_withdrawal_ui import WithdrawalPanel
@@ -96,19 +96,17 @@ from fsr_storage import (          # plain data layer
     Workbook,
     CHOICE_VALUES, clean_incident_reports, CONDITION_BAD, CONDITION_GOOD,
     DATE_FORMAT, DOCUMENT_FIELDS, empty_goods_types,
-    generate_control_number, GOODS_TYPES, INCIDENT_HEADER_FIELDS,
+    GOODS_TYPES, INCIDENT_HEADER_FIELDS,
     INCIDENT_MAX_LINES, incident_title, ITEM_HEADERS, ITEM_LINE_HEADERS,
     ITEM_FORM_CONTAINERIZED, ITEM_FORM_DEFAULT, ITEM_FORM_LOADING,
     item_form_name, ITEM_FORMS, ITEM_LINK_HEADERS, UNIT_NO_HEADER,
     UNIT_NO_LABELS,
     CURRENCIES, LEGACY_DATE_FORMAT, split_quantity_unit, UOM_CHOICES,
     WEIGHT_UNIT_CHOICES,
-    list_saved_reports, normalize_field, parse_date, read_report,
-    load_other_item_forms, recent_date_options, safe_filename, save_incident_data, SCHEDULE_FIELDS,
+    normalize_field, parse_date, recent_date_options, safe_filename, SCHEDULE_FIELDS,
     set_control_initials,
-    search_index_excel, to_number, TRANSPORT_FIELDS, TYPEABLE_CHOICES,
-    write_json_atomic, write_report_to_excel, withdrawal_control_numbers,
-    same_key,
+    to_number, TRANSPORT_FIELDS, TYPEABLE_CHOICES,
+    write_json_atomic, same_key,
 )
 
 # Sign in / sign up (app_auth.py beside this script). Without it the
@@ -498,6 +496,16 @@ def initial_excel_path():
 # Excel file in use + whether the form shows a saved report / has changes.
 excel_state = {"path": initial_excel_path()}
 report_state = {"editing": False, "dirty": False}
+
+
+def data_store(path=None, root="default"):
+    """The storage of the Excel file in use (fsr_store.ExcelStore): every
+    read and write of report data goes through it. `path`: another
+    workbook; `root`: the Demo Mode folder (default: as the program
+    runs)."""
+    if root == "default":
+        root = DATA_DIR if DEMO_MODE else None
+    return fsr_store.ExcelStore(path or excel_state["path"], root)
 
 
 def withdrawal_book():
@@ -2821,14 +2829,14 @@ def report_to_weekly_rows(data):
 def weekly_rows_from_excel(first_day, last_day):
     path = excel_state["path"]
     rows = []
-    for entry in list_saved_reports(path):
+    for entry in data_store(path).list_reports():
         day = parse_date(entry[2])
         if not isinstance(day, datetime):
             continue
         if first_day <= day.date() <= last_day:
             rows.append((day, entry[0], report_to_weekly_rows(
-                read_report(path, entry[0]))))
-    for report in fsr_withdrawal.read_all_reports(withdrawal_book()):
+                data_store(path).read_report(entry[0]))))
+    for report in data_store().read_all_withdrawal_reports():
         day = parse_date(report["general_information"]["inspection_date"])
         if isinstance(day, datetime) and first_day <= day.date() <= last_day:
             rows.append((day, report["control_no"],
@@ -5726,7 +5734,7 @@ def create_report_forms(excel_path, data):
     notes, pieces = [], []
     # A report from the phone prints its inspector's name, not this user's.
     print_name["value"] = (
-        fsr_import.imported_inspector(excel_path, control) or USER_FULL_NAME)
+        data_store(excel_path).imported_inspector(control) or USER_FULL_NAME)
     summary = "First Page"
 
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -5929,8 +5937,7 @@ mysql_numbers = {"values": []}
 def mysql_guard():
     """The guard of the Excel file in use: every write to MySQL goes
     through it (fsr_mysql_guard)."""
-    return fsr_mysql_guard.Guard(db_mysql, excel_state["path"],
-                                 user=USER_FULL_NAME)
+    return data_store().mysql_guard(db_mysql, user=USER_FULL_NAME)
 
 
 def mysql_in_use():
@@ -5943,12 +5950,12 @@ def next_new_control_number():
     hand out the same number."""
     path = excel_state["path"]
     if not mysql_numbers["values"] or not mysql_in_use():
-        return generate_control_number(path)
+        return data_store(path).next_control_number()
     try:
-        local = fsr_renumber.local_numbers(path)
+        local = data_store(path).control_numbers()
     except Exception:
         log.exception("Could not read the control numbers")
-        return generate_control_number(path)
+        return data_store(path).next_control_number()
     return fsr_storage_next_number([*local, *mysql_numbers["values"]])
 
 
@@ -5990,7 +5997,7 @@ def free_number_for_new_report(control):
         if mysql_guard().owns(control):
             return control
         return fsr_storage_next_number(
-            [*fsr_renumber.local_numbers(excel_state["path"]), *taken])
+            [*data_store().control_numbers(), *taken])
     except Exception:
         return control
 
@@ -6009,18 +6016,16 @@ def adopt_reports(path, guard, connection=None, root=None):
         if guard.ledger()["reports"]:
             return []
         reports = fsr_storage_read_all(path)
-        reports += fsr_withdrawal.read_all_reports(
-            fsr_paths.withdrawal_workbook_path(path, root))
+        reports += data_store(path, root).read_all_withdrawal_reports()
     if not reports:
         return []
     return guard.adopt_identical(reports, connection=connection)
 
 
 def fsr_storage_read_all(path):
-    import fsr_storage
     if not Path(path).exists():
         return []
-    return fsr_storage.read_all_reports(path)
+    return data_store(path).read_all_reports()
 
 
 def mysql_round(path, master=None, user="", root=None, with_conflicts=False,
@@ -6033,15 +6038,14 @@ def mysql_round(path, master=None, user="", root=None, with_conflicts=False,
     result = {"sent": [], "sent_ids": [], "notes": {}, "conflicts": [],
               "errors": [], "away": None, "numbers": None, "attempted": 0,
               "adopted": []}
-    journal = fsr_save_journal.Journal(path)
+    journal = data_store(path).save_record()
     waiting = fsr_save_journal.waiting_for_mysql(journal, with_conflicts)
     result["attempted"] = len(waiting)
     if not waiting and not numbers and not adopt:
         return result
     unreachable = getattr(db_mysql, "is_unreachable", lambda error: False)
-    guard = fsr_mysql_guard.Guard(db_mysql, path, user=user)
-    stores = fsr_save_journal.Stores(path, mysql=db_mysql,
-                                     required_root=root, guard=guard)
+    guard = data_store(path, root).mysql_guard(db_mysql, user=user)
+    stores = data_store(path, root).save_steps(mysql=db_mysql, guard=guard)
     supported = fsr_mysql_guard.supports(db_mysql)
     conn = db_mysql.connect() if supported else None
     try:
@@ -6121,16 +6125,14 @@ def hand_on_number(record, numbers):
     old = record["control"]
     root = DATA_DIR if DEMO_MODE else None
     guard = mysql_guard()
-    stores = fsr_save_journal.Stores(path, mysql=db_mysql,
-                                     required_root=root, guard=guard)
-    journal = fsr_save_journal.Journal(path)
+    stores = data_store(path, root).save_steps(mysql=db_mysql, guard=guard)
+    journal = data_store(path).save_record()
     try:
-        new = fsr_renumber.next_free(path, old, list(numbers or []))
+        new = data_store(path).next_free_number(old, list(numbers or []))
 
         def change(old_number, new_number):
             with guard.local_write():
-                fsr_renumber.renumber_report(path, old_number, new_number,
-                                             root)
+                data_store(path, root).renumber(old_number, new_number)
 
         moved = fsr_save_journal.renumber_record(journal, stores,
                                                  record["id"], new, change)
@@ -6191,7 +6193,7 @@ def mysql_round_done(item):
                            else db_mysql.explain_error(error))
         try:
             left = len(fsr_save_journal.waiting_for_mysql(
-                fsr_save_journal.Journal(excel_state["path"])))
+                data_store().save_record()))
         except Exception:
             left = 0
         if compose:
@@ -6266,8 +6268,8 @@ lists_state = {"warned": False}
 def lists_round(path, root=None, compose=False, save_id=None):
     """Background thread: rebuild PO_Master and Withdrawn_Item once for
     every save waiting for it (no window calls here)."""
-    journal = fsr_save_journal.Journal(path)
-    stores = fsr_save_journal.Stores(path, required_root=root)
+    journal = data_store(path).save_record()
+    stores = data_store(path, root).save_steps()
     return fsr_save_journal.rebuild_lists(journal, stores)
 
 
@@ -6317,7 +6319,7 @@ def refresh_mysql_waiting():
         return
     try:
         count = len(fsr_save_journal.waiting_for_mysql(
-            fsr_save_journal.Journal(excel_state["path"])))
+            data_store().save_record()))
     except Exception:
         count = 0
     if not mysql_in_use() or not count:
@@ -6367,10 +6369,10 @@ def load_report_into_form(control_no, source="excel"):
 
     # The workbook that holds a report decides where it is read and saved.
     # MySQL has no PO line details, so its copy is not used for these reports.
-    po_linked = fsr_withdrawal.owns_report(excel_state["path"], control_no)
+    po_linked = data_store().owns_withdrawal(control_no)
     try:
         if po_linked:
-            data = fsr_withdrawal.read_report(withdrawal_book(), control_no)
+            data = data_store().read_withdrawal_report(control_no)
         elif source == "mysql":
             try:
                 data = db_mysql.load_report(control_no)
@@ -6379,7 +6381,7 @@ def load_report_into_form(control_no, source="excel"):
                                          "this PC's Excel file"):
                     raise
                 try:
-                    data = read_report(excel_state["path"], control_no)
+                    data = data_store().read_report(control_no)
                 except PermissionError:
                     raise
                 except Exception:
@@ -6390,7 +6392,7 @@ def load_report_into_form(control_no, source="excel"):
                         "MySQL is running.", parent=window)
                     return
         else:
-            data = read_report(excel_state["path"], control_no)
+            data = data_store().read_report(control_no)
     except PermissionError:
         messagebox.showerror(
             "File In Use",
@@ -6409,8 +6411,7 @@ def load_report_into_form(control_no, source="excel"):
 
     item_forms_error = None
     try:
-        data["other_item_forms"] = load_other_item_forms(
-            excel_state["path"], data["control_no"])
+        data["other_item_forms"] = data_store().load_item_forms(data["control_no"])
     except ValueError as error:
         log.exception("Item form file could not be read")
         item_forms_error = str(error)
@@ -6459,9 +6460,9 @@ def read_withdrawal_listing():
     """(list rows, search index) of the Withdrawal workbook. Trouble with it
     is reported and does not hide the reports of the main workbook."""
     try:
-        book = withdrawal_book()
-        return (busy(fsr_withdrawal.list_reports, book),
-                busy(fsr_withdrawal.search_index, book))
+        store = data_store()    # ValueError in Demo Mode, as before
+        return (busy(store.list_withdrawal_reports),
+                busy(store.withdrawal_search_index))
     except Exception as error:
         log.exception("Reading the Withdrawal workbook failed")
         messagebox.showwarning(
@@ -6490,7 +6491,7 @@ def open_saved_report_dialog(initial_search=""):
         try:
             if source_var.get() == "mysql":
                 return busy(db_mysql.list_reports)
-            return sorted([*busy(list_saved_reports, path), *withdrawal_rows],
+            return sorted([*busy(data_store(path).list_reports), *withdrawal_rows],
                           reverse=True)
         except PermissionError:
             problem = ("Cannot read the Excel file. Close it in Excel and "
@@ -6522,7 +6523,7 @@ def open_saved_report_dialog(initial_search=""):
             if source_var.get() == "mysql":
                 found = busy(db_mysql.search_index)
             else:
-                found = {**busy(search_index_excel, path), **withdrawal_index}
+                found = {**busy(data_store(path).search_index), **withdrawal_index}
         except Exception:
             log.exception("Building the search list failed")
             found = {}
@@ -6797,9 +6798,8 @@ def save_report():
     linked = withdrawal_panel.linked()
     mysql_on = mysql_in_use()
     guard = mysql_guard() if mysql_on else None
-    stores = fsr_save_journal.Stores(
-        path, mysql=db_mysql if mysql_on else None,
-        required_root=DATA_DIR if DEMO_MODE else None, guard=guard)
+    stores = data_store(path).save_steps(
+        mysql=db_mysql if mysql_on else None, guard=guard)
     journal = record = None
     earlier_open = []
     if mysql_on and not report_state["editing"]:
@@ -6828,7 +6828,7 @@ def save_report():
         # stops halfway (power cut, file open in Excel, MySQL away) is
         # finished at the next save or the next start (fsr_save_journal).
         try:
-            journal = fsr_save_journal.Journal(path)
+            journal = data_store(path).save_record()
             # An earlier save of this same report that did not finish is
             # replaced by this one; what it still owed is done by this save
             # and said in the note below.
@@ -7085,15 +7085,14 @@ def finish_unfinished_saves(mysql_ok=False, skip=(), numbers=False,
         def ask_mysql():
             pass
     try:
-        journal = fsr_save_journal.Journal(path)
+        journal = data_store(path).save_record()
         if not [r for r in journal.pending() if r.get("id") not in skip]:
             ask_mysql()
             return []
         use_guard = mysql_in_use()
         guard = mysql_guard() if use_guard else None
-        stores = fsr_save_journal.Stores(
-            path, mysql=db_mysql if use_guard else None,
-            required_root=DATA_DIR if DEMO_MODE else None, guard=guard)
+        stores = data_store(path).save_steps(
+            mysql=db_mysql if use_guard else None, guard=guard)
         report = busy(fsr_save_journal.repair, journal, stores, False,
                       skip, False)
         request_lists_round()       # PO_Master / Withdrawn_Item, if waiting
@@ -7137,7 +7136,7 @@ conflict_state = {"dialog": None}
 def waiting_conflicts():
     try:
         return fsr_save_journal.conflicts(
-            fsr_save_journal.Journal(excel_state["path"]))
+            data_store().save_record())
     except Exception:
         return []
 
@@ -7257,10 +7256,8 @@ def open_mysql_conflicts(select=None):
 
     def stores_and_journal():
         guard = mysql_guard()
-        stores = fsr_save_journal.Stores(
-            excel_state["path"], mysql=db_mysql,
-            required_root=DATA_DIR if DEMO_MODE else None, guard=guard)
-        return fsr_save_journal.Journal(excel_state["path"]), stores, guard
+        stores = data_store().save_steps(mysql=db_mysql, guard=guard)
+        return data_store().save_record(), stores, guard
 
     def problem(outcome):
         error = outcome["failed"].get("mysql")
@@ -7283,7 +7280,7 @@ def open_mysql_conflicts(select=None):
         if record is None:
             return
         fsr_save_journal.resolve_keep(
-            fsr_save_journal.Journal(excel_state["path"]), record["id"])
+            data_store().save_record(), record["id"])
         log.info("MySQL conflict for %s closed: MySQL's report kept.",
                  record["control"])
         notify(f"{record['control']}: MySQL keeps its report. Nothing was "
@@ -7327,7 +7324,7 @@ def open_mysql_conflicts(select=None):
         old = record["control"]
         try:
             taken = list(db_mysql.control_numbers())
-            new = fsr_renumber.next_free(path, old, taken)
+            new = data_store(path).next_free_number(old, taken)
         except Exception as error:
             if not mysql_away(error, "nothing was changed; decide again "
                                      "when it is back"):
@@ -7350,9 +7347,7 @@ def open_mysql_conflicts(select=None):
 
         def change(old_number, new_number):
             with guard.local_write():
-                fsr_renumber.renumber_report(
-                    path, old_number, new_number,
-                    DATA_DIR if DEMO_MODE else None)
+                data_store(path).renumber(old_number, new_number)
 
         try:
             outcome = busy(fsr_save_journal.resolve_renumber, journal,
@@ -7515,15 +7510,14 @@ def import_master_data_file():
     # background, every report through the overwrite guard.
     mysql_now = mysql_in_use()
     guard = mysql_guard() if mysql_now else None
-    stores = fsr_save_journal.Stores(
-        path, mysql=db_mysql if mysql_now else None,
-        required_root=DATA_DIR if DEMO_MODE else None, guard=guard)
-    journal = fsr_save_journal.Journal(path)
+    stores = data_store(path).save_steps(
+        mysql=db_mysql if mysql_now else None, guard=guard)
+    journal = data_store(path).save_record()
     import_state["running"] = True
 
     def work(progress):
-        return fsr_import.import_master_data(
-            path, data, journal=journal, stores=stores, mysql=mysql_now,
+        return data_store(path).import_master_data(
+            data, journal=journal, stores=stores, mysql=mysql_now,
             progress=progress)
 
     def done(summary, error):
@@ -7631,7 +7625,7 @@ def sync_all_to_mysql():
         return
 
     path = excel_state["path"]
-    if not list_saved_reports(path) and not withdrawal_control_numbers(path):
+    if not data_store(path).list_reports() and not data_store(path).withdrawal_numbers():
         messagebox.showinfo(
             "Sync to MySQL",
             f"There are no saved reports in:\n{path}\n\nNothing was sent "
@@ -7642,9 +7636,9 @@ def sync_all_to_mysql():
 
     def read_and_plan():
         reports = []
-        for entry in list_saved_reports(path):
-            reports.append(read_report(path, entry[0]))
-        linked = fsr_withdrawal.read_all_reports(withdrawal_book())
+        for entry in data_store(path).list_reports():
+            reports.append(data_store(path).read_report(entry[0]))
+        linked = data_store().read_all_withdrawal_reports()
         return reports + linked, [r["control_no"] for r in linked], \
             guard.plan(reports + linked)
 
@@ -7663,7 +7657,7 @@ def sync_all_to_mysql():
     def send(replace):
         try:
             result = busy(fsr_save_journal.send_to_mysql,
-                          fsr_save_journal.Journal(path), guard, reports,
+                          data_store(path).save_record(), guard, reports,
                           replace, linked)
             db_mysql.save_master_lists(master_data)
         except Exception as error:
@@ -7776,9 +7770,9 @@ def restore_excel_from_mysql():
     def work():
         # A PO-linked report has its home in the Withdrawal workbook.
         have = {str(row[0]).strip().casefold()
-                for row in list_saved_reports(path)}
+                for row in data_store(path).list_reports()}
         have.update(str(number).strip().casefold()
-                    for number in withdrawal_control_numbers(path))
+                    for number in data_store(path).withdrawal_numbers())
         added, errors = 0, []
         for entry in db_mysql.list_reports():
             control = entry[0]
@@ -7786,10 +7780,10 @@ def restore_excel_from_mysql():
                 continue
             try:
                 data = db_mysql.load_report(control)
-                write_report_to_excel(path, data, True)
+                data_store(path).write_report(data, True)
                 if data["cargo_condition"] == CONDITION_BAD:
-                    save_incident_data(
-                        path, control, data["general_information"]["so_number"],
+                    data_store(path).save_incidents(
+                        control, data["general_information"]["so_number"],
                         data["incident_reports"])
                 added += 1
                 restored.append(control)
@@ -7809,7 +7803,7 @@ def restore_excel_from_mysql():
         # this copy's own from now on, so editing it needs no question.
         try:
             busy(restore_guard.adopt_identical,
-                 [read_report(path, control) for control in restored])
+                 [data_store(path).read_report(control) for control in restored])
         except Exception:
             log.exception("Could not adopt the restored reports")
     except PermissionError:
@@ -7925,7 +7919,7 @@ def close_when_sent(close, limit=CLOSE_WAIT_SECONDS):
     def show():
         try:
             count = len(fsr_save_journal.waiting_for_mysql(
-                fsr_save_journal.Journal(excel_state["path"])))
+                data_store().save_record()))
         except Exception:
             count = 0
         message.configure(text=(
