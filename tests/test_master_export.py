@@ -93,3 +93,91 @@ def test_owner_imports_a_site_export_once(tmp_path):
 
     again = fsr_import.import_master_data(owner_book, data)
     assert again["unchanged"] == ["FSR-202611-0001"] and not again["added"]
+
+
+# ---------- the whole file, both workbooks, and when it must stop ----------
+
+def withdrawal_book(tmp_path):
+    """A Receiving report in the main workbook and a PO-linked Withdrawal
+    report (its own workbook) taking 1 of its 2 crates."""
+    import fsr_store
+    path = tmp_path / "data.xlsx"
+    store = fsr_store.ExcelStore(path)
+    receiving = report("FSR-202611-0001", "Receiving", date(2026, 11, 1),
+                       "WH", [{"qty": 2, "unit": "Crate", "desc": "Pump",
+                               "po": "PO-7", "cargo": "C-1",
+                               "ref": "RCV-FSR-202611-0001-1-01"}],
+                       so="SO-R")
+    store.write_report(receiving, False)
+    taken = report("FSR-202611-0002", "Withdrawal", date(2026, 11, 3), "WH",
+                   [{"qty": 1, "unit": "Crate", "desc": "Pump", "po": "PO-7",
+                     "ref": "RCV-FSR-202611-0001-1-01"}], so="SO-W")
+    taken["other_item_forms"] = {}
+    store.write_withdrawal_report(taken, False)
+    return path
+
+
+def test_the_file_holds_both_workbooks_and_nothing_else(tmp_path):
+    path = withdrawal_book(tmp_path)
+    target = tmp_path / "out.json"
+    assert export.write_export(path, target, "pc-9", "Ben", LISTS) == 2
+    data = json.loads(target.read_text(encoding="utf-8"))
+    assert set(data) == {"format", "version", "device_id", "inspector",
+                         "exported_at", "master_lists", "reports",
+                         "case_status"}
+    assert data["version"] == fsr_import.SUPPORTED_VERSION
+    assert data["exported_at"][:4].isdigit() and "T" in data["exported_at"]
+    assert data["case_status"] == []
+    by_number = {r["control_no"]: r for r in data["reports"]}
+    assert sorted(by_number) == ["FSR-202611-0001", "FSR-202611-0002"]
+    assert by_number["FSR-202611-0001"]["general_information"][
+        "so_number"] == "SO-R"
+    taken = by_number["FSR-202611-0002"]
+    assert taken["inspection_schedule"]["activity"] == "Withdrawal"
+    assert taken["general_information"]["so_number"] == "SO-W"
+    row = taken["item_lists"][0]["rows"][0]
+    assert row["Receiving Ref"] == "RCV-FSR-202611-0001-1-01"
+    assert str(row["Quantity"]) == "1"
+    # each report carries when it was last saved; no error notes left in
+    assert all(r["last_saved"] for r in data["reports"])
+    assert not any("incident_error" in r for r in data["reports"])
+
+    # and the owner's import takes both, each into its own workbook
+    owner = tmp_path / "owner"
+    owner.mkdir()
+    summary = fsr_import.import_master_data(owner / "data.xlsx",
+                                            fsr_import.read_master_file(target))
+    assert sorted(summary["added"]) == ["FSR-202611-0001", "FSR-202611-0002"]
+
+
+def test_a_damaged_side_file_stops_the_export(tmp_path):
+    from warehouse.store import side_file_path
+    path = saved_book(tmp_path)
+    side = side_file_path(path)
+    side.parent.mkdir(parents=True, exist_ok=True)
+    side.write_text("{not json", encoding="utf-8")
+    target = tmp_path / "out.json"
+    with pytest.raises(export.MasterExportError, match="cannot be read"):
+        export.write_export(path, target, "pc-1")
+    assert not target.exists()
+
+
+def test_the_command_line_writes_the_same_file(tmp_path, monkeypatch,
+                                               capsys):
+    import runpy
+    import sys
+    path = saved_book(tmp_path)
+    lists = tmp_path / "master_list.json"
+    lists.write_text(json.dumps(LISTS), encoding="utf-8")
+    target = tmp_path / "cli.json"
+    monkeypatch.setattr(sys, "argv", [
+        "fsr_master_export.py", str(path), "--device", "pc-cli",
+        "--inspector", "Cy", "--out", str(target),
+        "--master-list", str(lists)])
+    runpy.run_path(export.__file__, run_name="__main__")
+    assert capsys.readouterr().out.strip() == \
+        f"1 report(s) written to {target}"
+    data = json.loads(target.read_text(encoding="utf-8"))
+    assert (data["device_id"], data["inspector"]) == ("pc-cli", "Cy")
+    assert data["master_lists"]["supplier_list"] == ["Site Supplier"]
+    assert [r["control_no"] for r in data["reports"]] == ["FSR-202611-0001"]
