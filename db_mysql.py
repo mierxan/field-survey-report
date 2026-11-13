@@ -403,8 +403,10 @@ def upgrade_schema(connection=None):
             try:
                 cur.execute("CREATE INDEX idx_item_cargo ON item_lines "
                             "(cargo_id)")
+            # Broad on purpose: whatever the server says (index exists, no
+            # right to make one), the index is not needed.
             except Exception:
-                pass                # index exists / not allowed: not needed
+                log.debug("idx_item_cargo not made", exc_info=True)
             cur.close()
         cur = conn.cursor()
         cur.execute("SHOW COLUMNS FROM reports")
@@ -591,14 +593,17 @@ def _write_report(conn, data):
             "WHERE control_no = %s",
             (text(tr.get("shipment_type"), 20),
              text(tr.get("container_type"), 30), control))
+    # Broad on purpose (also below): an older database without the newer
+    # columns still saves everything else; the driver may not even be
+    # installed (User edition), so its error class cannot be named here.
     except Exception:
-        pass
+        log.debug("shipment/container columns not written", exc_info=True)
     # Item List form (Default / Containerized / Loading), added later too.
     try:
         cur.execute("UPDATE reports SET item_form = %s WHERE control_no = %s",
                     (text(data.get("item_form"), 20) or "Default", control))
     except Exception:
-        pass
+        log.debug("item_form column not written", exc_info=True)
 
     for table in ("declared_goods", "item_lines", "remarks", "incident_reports"):
         cur.execute(f"DELETE FROM {table} WHERE control_no = %s", (control,))
@@ -777,15 +782,15 @@ def load_report(control_no, connection=None):
                         "WHERE control_no = %s", (control_no,))
             row = cur.fetchone()
             extra = (_show(row[0]), _show(row[1]))
-        except Exception:
-            pass                    # older database without the columns
+        except Exception:           # older database without the columns
+            log.debug("shipment/container columns not read", exc_info=True)
         item_form = "Default"
         try:
             cur.execute("SELECT item_form FROM reports WHERE control_no = %s",
                         (control_no,))
             item_form = _show(cur.fetchone()[0]) or "Default"
-        except Exception:
-            pass                    # older database without the column
+        except Exception:           # older database without the column
+            log.debug("item_form column not read", exc_info=True)
         (so, insp, consignee, supplier, brokerage, hauler, location,
          destination, country, activity, c_date, c_time, e_date, e_time,
          vessel, vtype, plate, invoice, po, jo, gatepass, bl, dr, other_docs,

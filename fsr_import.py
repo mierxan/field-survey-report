@@ -30,12 +30,15 @@ How it is written (Phase 3)
 """
 import copy
 import json
+import logging
 import shutil
 from datetime import datetime
 from pathlib import Path
 
 import fsr_storage as storage
 import fsr_paths
+
+log = logging.getLogger("fsr")
 
 FORMAT = "fsr-master-data"
 SUPPORTED_VERSION = 1
@@ -336,8 +339,10 @@ def import_master_data(excel_path, data, on_saved=None, journal=None,
         if records is not None:
             try:
                 journal.discard_batch(records)
+            # Broad on purpose: the error being raised is the one that
+            # matters; a failing clean-up must not replace it.
             except Exception:
-                pass
+                log.debug("Import records not discarded", exc_info=True)
         raise
 
     entries = {}

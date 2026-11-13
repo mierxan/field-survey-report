@@ -483,8 +483,10 @@ class Guard:
         except Exception:
             try:
                 conn.rollback()
+            # Broad on purpose: the error being raised is the one that
+            # matters; MySQL rolls back by itself when the connection ends.
             except Exception:
-                pass
+                log.debug("Rollback failed", exc_info=True)
             raise
         finally:
             if locked:

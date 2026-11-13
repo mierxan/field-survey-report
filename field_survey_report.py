@@ -263,7 +263,7 @@ if sys.platform == "win32":
     try:
         import ctypes
         ctypes.windll.shcore.SetProcessDpiAwareness(1)   # sharp text on HiDPI
-    except Exception:
+    except (AttributeError, OSError):   # older Windows: no shcore / refused
         pass
 
 try:
@@ -1397,8 +1397,10 @@ def notify(message, bootstyle="success"):
             title="Field Survey Report", message=message,
             duration=2500, bootstyle=bootstyle
         ).show_toast()
+    # Broad on purpose: a notice that cannot be shown must never stop the
+    # action it reports (ttkbootstrap's own errors are not documented).
     except Exception:
-        pass
+        log.debug("Toast notice not shown", exc_info=True)
 
 
 def mysql_away(error, what_now):
@@ -1435,8 +1437,8 @@ def add_tip(widget, text):
         return
     try:
         ToolTip(widget, text=text)
-    except Exception:
-        pass
+    except Exception:                   # broad: only a tooltip
+        log.debug("Tooltip not added", exc_info=True)
 
 
 def section_title(parent, text, first=False):
@@ -6073,8 +6075,11 @@ def mysql_round(path, master=None, user="", root=None, with_conflicts=False,
         if conn is not None:
             try:
                 conn.close()
+            # Broad on purpose: closing a lost connection may raise anything
+            # the driver likes; the round's result is what matters.
             except Exception:
-                pass
+                log.debug("MySQL connection not closed cleanly",
+                          exc_info=True)
     return result
 
 
@@ -7994,8 +7999,10 @@ def report_callback_exception(exc_type, exc_value, exc_traceback):
             "Unexpected Error",
             f"{exc_type.__name__}: {exc_value}\n\nDetails were saved to:\n"
             f"{LOG_FILE}", parent=window)
+    # Broad on purpose: this IS the last-resort error handler; the error
+    # was logged above, a failing box must not raise a second one.
     except Exception:
-        pass
+        log.debug("Error box not shown", exc_info=True)
 
 
 window.report_callback_exception = report_callback_exception
