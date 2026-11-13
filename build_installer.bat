@@ -37,9 +37,16 @@ if not exist "%PY%" (
   goto failed
 )
 
-rem version = build date, e.g. 2026.10.30
-for /f %%V in ('powershell -NoProfile -Command "Get-Date -Format yyyy.MM.dd"') do set APPVER=%%V
-if "%APPVER%"=="" set APPVER=1.0
+rem One unique identity per invocation, shared by Owner and User.
+rem Keep the numeric Windows file version separate from the release name.
+set APPVER=
+set WINVER=
+for /f "tokens=1,2" %%V in ('%PY% tools\build_version.py') do (
+  set "APPVER=%%V"
+  set "WINVER=%%W"
+)
+if not defined APPVER goto failed
+if not defined WINVER goto failed
 echo Building version %APPVER%
 echo.
 
@@ -165,6 +172,6 @@ if errorlevel 1 (
 
 if not defined ISCC exit /b 0
 echo [4/4] Building the %ED% Setup file...
-"%ISCC%" /Q "/DAppVersion=%APPVER%" "/DEdition=%ED%" installer.iss
+"%ISCC%" /Q "/DAppVersion=%APPVER%" "/DWindowsVersion=%WINVER%" "/DEdition=%ED%" installer.iss
 if errorlevel 1 exit /b 1
 exit /b 0

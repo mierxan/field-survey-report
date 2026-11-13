@@ -3,10 +3,10 @@ MAKE THE SETUP FILES (.exe) FOR THE FIELD SURVEY REPORT
 Do this ONCE on your own PC (the one with PyCharm). The result is two files
 that you copy to the other PCs and double-click. The other PCs do NOT need Python.
 
-  FieldSurveyReport_Owner_Setup_<date>.exe   for the OWNER's PC only
+  FieldSurveyReport_Owner_Setup_<version>.exe   for the OWNER's PC only
         Excel + MySQL (Workbench). "Import Master Data..." brings in the
         files sent by every site PC and every phone.
-  FieldSurveyReport_User_Setup_<date>.exe    for every SITE PC
+  FieldSurveyReport_User_Setup_<version>.exe    for every SITE PC
         Excel and JSON files on that PC only (no MySQL, no internet).
         "Export Master Data..." writes one .json file to send to the owner.
 
@@ -14,6 +14,9 @@ that you copy to the other PCs and double-click. The other PCs do NOT need Pytho
 2. Double-click  build_installer.bat  in the project folder. It takes a few minutes.
    (build_installer.bat /owner  or  /user  builds only one of them.)
 3. Your installers appear in the  Installer  folder.
+   Each run gets a version YYYY.MM.DD.HHMMSS-<unique ID>. Both editions in
+   that run share it; running the build again makes new filenames, even on
+   the same day. Windows' numeric file version is kept separately.
 
 ON EACH NEW PC
  * Run the right Setup file (Next > Next > Install). It adds a Start menu

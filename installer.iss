@@ -1,9 +1,12 @@
 ; Inno Setup script - builds one Setup file per edition:
 ;   Installer\FieldSurveyReport_Owner_Setup_<version>.exe  (Excel + MySQL)
 ;   Installer\FieldSurveyReport_User_Setup_<version>.exe   (this PC only)
-; build_installer.bat passes /DAppVersion=<build date> /DEdition=Owner|User
+; build_installer.bat passes the unique release and numeric Windows versions.
 #ifndef AppVersion
   #define AppVersion "1.0"
+#endif
+#ifndef WindowsVersion
+  #define WindowsVersion "1.0.0.0"
 #endif
 #ifndef Edition
   #define Edition "Owner"
@@ -24,7 +27,7 @@ AppId={#AppGuid}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#Edition} edition {#AppVersion}
-VersionInfoVersion={#AppVersion}
+VersionInfoVersion={#WindowsVersion}
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes

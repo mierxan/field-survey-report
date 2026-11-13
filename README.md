@@ -274,11 +274,15 @@ isolates every file in that folder, which is what the tests use.
 ## 9. Building the installer
 
 `build_installer.bat` builds both editions in one run:
-`Installer\FieldSurveyReport_Owner_Setup_<date>.exe` and
-`Installer\FieldSurveyReport_User_Setup_<date>.exe` (`/owner` or `/user`
+`Installer\FieldSurveyReport_Owner_Setup_<version>.exe` and
+`Installer\FieldSurveyReport_User_Setup_<version>.exe` (`/owner` or `/user`
 builds only one). The two install side by side as separate programs; only
 the Owner edition carries the MySQL driver, the MySQL defaults and the SQL
 scripts for Workbench. See `BUILD_INSTALLER.txt`.
+
+Each invocation gets a version `YYYY.MM.DD.HHMMSS-<unique ID>`, shared by
+both editions. Rebuilding on the same day produces new filenames. The
+Windows file version uses four numeric components separately.
 
 ## 10. PO-linked Withdrawal reports
 
