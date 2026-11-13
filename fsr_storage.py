@@ -1259,7 +1259,6 @@ def write_reports_to_excel(path, items):
 
 def _apply_report(sheets, data, editing, saved_at, elsewhere):
     """Put one report into the open workbook's sheets."""
-    schedule = data["inspection_schedule"]
     reports_ws = sheets["Reports"]
 
     control_no = data["control_no"]
@@ -1295,24 +1294,44 @@ def _apply_report(sheets, data, editing, saved_at, elsewhere):
     for name in ("Declared Goods", "Item List", "Remarks"):
         remove_key_rows(sheets[name], control_no)
 
-    for row in data["declared_goods"]:
-        append_row(
-            sheets["Declared Goods"],
-            [
-                control_no,
-                text_or_none(row["description"]),
-                to_number(row["quantity"]),
-                text_or_none(row["packaging"]),
-            ]
-        )
-
+    child = report_child_rows(data, control_no)
     price_formats = {
         4 + ITEM_HEADERS.index(header): "#,##0.00"
         for header in MONEY_ITEM_HEADERS
     }
-    item_rows = 0
-    receiving = same_key(schedule.get("activity"), "Receiving")
+    for name in ("Declared Goods", "Item List", "Remarks"):
+        for values in child[name]:
+            append_row(sheets[name], values,
+                       price_formats if name == "Item List" else None)
 
+    return {
+        "control": control_no,
+        "updated": existing_row is not None,
+        "goods": len(data["declared_goods"]),
+        "items": len(child["Item List"]),
+        "remarks": len(child["Remarks"]),
+    }
+
+
+def report_child_rows(data, control_no):
+    """The rows of one report on the Declared Goods, Item List and Remarks
+    sheets, as cell values: {sheet name: [row values, ...]}. A Receiving
+    line without a Receiving Ref gets its default one, written back into
+    `data` (MySQL and the form use it too). Shared by the workbook and the
+    SQLite store, so both hold exactly the same values."""
+    schedule = data["inspection_schedule"]
+    goods = [
+        [
+            control_no,
+            text_or_none(row["description"]),
+            to_number(row["quantity"]),
+            text_or_none(row["packaging"]),
+        ]
+        for row in data["declared_goods"]
+    ]
+
+    items = []
+    receiving = same_key(schedule.get("activity"), "Receiving")
     for list_no, item_list in enumerate(data["item_lists"], start=1):
         for line_no, row in enumerate(item_list["rows"], start=1):
             # Every received line is a batch with its own reference; it is
@@ -1326,31 +1345,18 @@ def _apply_report(sheets, data, editing, saved_at, elsewhere):
                     values.append(to_number(row.get(header, "")))
                 else:
                     values.append(text_or_none(row.get(header, "")))
+            items.append(values)
 
-            append_row(sheets["Item List"], values, price_formats)
-            item_rows += 1
-
-    remark_rows = 0
+    remarks = []
     sections = [
         ("Other Important Remarks", data["other_important_remarks"]),
         ("Findings and Remarks", data["findings_and_remarks"]),
     ]
+    for section_name, lines in sections:
+        for line_no, remark in enumerate(lines, start=1):
+            remarks.append([control_no, section_name, line_no, remark])
 
-    for section_name, remarks in sections:
-        for line_no, remark in enumerate(remarks, start=1):
-            append_row(
-                sheets["Remarks"],
-                [control_no, section_name, line_no, remark]
-            )
-            remark_rows += 1
-
-    return {
-        "control": control_no,
-        "updated": existing_row is not None,
-        "goods": len(data["declared_goods"]),
-        "items": item_rows,
-        "remarks": remark_rows,
-    }
+    return {"Declared Goods": goods, "Item List": items, "Remarks": remarks}
 
 
 def delete_reports_from_excel(path, control_numbers):

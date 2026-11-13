@@ -281,10 +281,13 @@ def withdrawn_by_ref(path, except_control="", main_reports=None,
     return totals
 
 
-def remaining_quantity(path, row, except_control=""):
+def remaining_quantity(path, row, except_control="", main_reports=None,
+                       book_reports=None):
     """What is left of this report row's Receiving line, not counting the
-    report `except_control`."""
-    taken = withdrawn_by_ref(path, except_control).get(
+    report `except_control`. `main_reports` / `book_reports`: the reports
+    when they were read already (the SQLite store passes them)."""
+    taken = withdrawn_by_ref(path, except_control, main_reports,
+                             book_reports).get(
         _ref_key(row.get("Receiving Ref")), Decimal(0))
     return parse_decimal(row[RECEIVED_HEADER]) - taken
 
@@ -317,13 +320,15 @@ def _shares_po(cell, wanted):
     return len(parts) > 1 and wanted in parts
 
 
-def find_po(path, po_number):
+def find_po(path, po_number, main_reports=None, book_reports=None):
     """Every Receiving line of one PO that still has something left to withdraw,
-    from the main workbook `path`."""
+    from the main workbook `path` (or from `main_reports` / `book_reports`
+    when they were read already)."""
     wanted = str(po_number or "").strip().casefold()
     lines, unreadable, shared, finished, line_no = [], 0, 0, 0, 0
-    source = _receiving_lines(path)
-    taken = withdrawn_by_ref(path)
+    source = _receiving_lines(path, main_reports)
+    taken = withdrawn_by_ref(path, main_reports=main_reports,
+                             book_reports=book_reports)
     for cell, ref, control, row, _ in source:
         if cell.casefold() != wanted:
             shared += _shares_po(cell, wanted)
@@ -392,13 +397,14 @@ def row_key(row):
                     row.get("Receiving Ref") or row.get(LINE_NO_HEADER, ""))
 
 
-def validate_rows(rows, main_path=None, control_no=""):
+def validate_rows(rows, main_path=None, control_no="", taken=None):
     """Everything that must hold for the lines of a report being saved. A line
     typed by hand has no Received Quantity, so it has no limit to check. All
     the lines are checked against what the OTHER reports already took."""
     if not rows:
         raise WithdrawalError("A PO-linked Withdrawal needs at least one line.")
-    taken = withdrawn_by_ref(main_path, control_no) if main_path else {}
+    if taken is None:
+        taken = withdrawn_by_ref(main_path, control_no) if main_path else {}
     seen = set()
     for row in rows:
         if not row.get(LINE_NO_HEADER):
@@ -448,12 +454,20 @@ def _reports_from(path, wb):
             if row and row[0] is not None:
                 by_control.setdefault(
                     str(row[0]).strip().casefold(), []).append(row)
+    return reports_from_rows(path, storage.report_dicts(wb[HEADER_SHEET]),
+                             grouped)
 
+
+def reports_from_rows(path, header_rows, grouped):
+    """The reports of the Withdrawal workbook from its rows: `header_rows`
+    ({column: value} per report, in sheet order) and `grouped` ({sheet name:
+    {Control # in lower case: [row values, ...]}}). Shared by the workbook
+    and the SQLite store."""
     sheet_for = {"Item List": LINE_SHEET, "Declared Goods": GOODS_SHEET,
                  "Remarks": REMARK_SHEET}
     extra_at = len(storage.ITEM_SHEET_HEADERS)
     reports = []
-    for values in storage.report_dicts(wb[HEADER_SHEET]):
+    for values in header_rows:
         if not values.get("Control #"):
             continue
         key = str(values["Control #"]).strip().casefold()
@@ -575,34 +589,71 @@ def _line_rows(ws, control_no):
     }
 
 
+def plan_lines(existing_ids, control_no, item_lists):
+    """What a save does to the lines of one report, given the Line IDs it
+    has now: (Line IDs to delete, [(Line ID, row values, is it an existing
+    line)] in order). A new line gets the next free Line ID, written back
+    into its row, so the form keeps it. Shared by the workbook and the
+    SQLite store."""
+    prefix = f"{control_no}-L"
+    number = 1 + max(
+        (int(line_id[len(prefix):]) for line_id in existing_ids
+         if line_id.startswith(prefix) and line_id[len(prefix):].isdigit()),
+        default=0)
+    keep = {row.get(LINE_ID_HEADER) for section in item_lists
+            for row in section["rows"]}
+    delete = [line_id for line_id in existing_ids if line_id not in keep]
+    remaining = set(existing_ids) - set(delete)
+    lines = []
+    for section in item_lists:
+        for line_no, row in enumerate(section["rows"], start=1):
+            if row.get(LINE_ID_HEADER) in remaining:
+                lines.append((row[LINE_ID_HEADER], _line_values(
+                    control_no, section["name"], line_no, row), True))
+            else:
+                row[LINE_ID_HEADER] = f"{control_no}-L{number:04d}"
+                number += 1
+                lines.append((row[LINE_ID_HEADER], _line_values(
+                    control_no, section["name"], line_no, row), False))
+    return delete, lines
+
+
 def _write_lines(ws, control_no, item_lists):
     """Changed lines are updated in place, removed lines deleted, new lines
     added. Each row gets its Line ID back, so the form keeps it."""
     existing = _line_rows(ws, control_no)
-    prefix = f"{control_no}-L"
-    number = 1 + max(
-        (int(line_id[len(prefix):]) for line_id in existing
-         if line_id.startswith(prefix) and line_id[len(prefix):].isdigit()),
-        default=0)
-
-    keep = {row.get(LINE_ID_HEADER) for section in item_lists
-            for row in section["rows"]}
+    delete, lines = plan_lines(list(existing), control_no, item_lists)
     for line_id, row_no in sorted(existing.items(), key=lambda kv: -kv[1]):
-        if line_id not in keep:
+        if line_id in delete:
             ws.delete_rows(row_no)
 
     locations = _line_rows(ws, control_no)
-    for section in item_lists:
-        for line_no, row in enumerate(section["rows"], start=1):
-            if row.get(LINE_ID_HEADER) in locations:
-                storage.set_row(
-                    ws, locations[row[LINE_ID_HEADER]],
-                    _line_values(control_no, section["name"], line_no, row))
-            else:
-                row[LINE_ID_HEADER] = f"{control_no}-L{number:04d}"
-                number += 1
-                storage.append_row(
-                    ws, _line_values(control_no, section["name"], line_no, row))
+    for line_id, values, kept in lines:
+        if kept:
+            storage.set_row(ws, locations[line_id], values)
+        else:
+            storage.append_row(ws, values)
+
+
+def header_values(data, control_no, saved_at=None):
+    """The Withdrawal Reports row of one report (marks it PO-linked)."""
+    data["entry_source"] = ENTRY_PO_LINKED
+    return storage.report_row_values(data, control_no, saved_at) + [
+        ENTRY_PO_LINKED, storage.text_or_none(data.get("po_source_file", ""))]
+
+
+def goods_and_remarks(data, control_no):
+    """The Declared Goods and Remarks rows of one Withdrawal report."""
+    goods = [[control_no, storage.text_or_none(row["description"]),
+              storage.to_number(row["quantity"]),
+              storage.text_or_none(row["packaging"])]
+             for row in data["declared_goods"]]
+    sections = [("Other Important Remarks", data["other_important_remarks"]),
+                ("Findings and Remarks", data["findings_and_remarks"])]
+    remarks = [[control_no, section_name, line_no, remark]
+               for section_name, lines in sections
+               for line_no, remark in enumerate(lines, start=1)]
+    return goods, remarks
 
 
 def write_withdrawal_report(path, data, editing, main_path,
@@ -640,9 +691,7 @@ def write_withdrawal_report(path, data, editing, main_path,
         ])
         existing_row = None
 
-    data["entry_source"] = ENTRY_PO_LINKED
-    values = storage.report_row_values(data, control_no, saved_at) + [
-        ENTRY_PO_LINKED, storage.text_or_none(data.get("po_source_file", ""))]
+    values = header_values(data, control_no, saved_at)
     if existing_row:
         storage.set_row(header_ws, existing_row, values, storage.REPORT_FORMATS)
     else:
@@ -652,19 +701,12 @@ def write_withdrawal_report(path, data, editing, main_path,
 
     for name in (GOODS_SHEET, REMARK_SHEET):
         storage.remove_key_rows(wb[name], control_no)
-    for row in data["declared_goods"]:
-        storage.append_row(wb[GOODS_SHEET], [
-            control_no, storage.text_or_none(row["description"]),
-            storage.to_number(row["quantity"]),
-            storage.text_or_none(row["packaging"])])
-    sections = [("Other Important Remarks", data["other_important_remarks"]),
-                ("Findings and Remarks", data["findings_and_remarks"])]
-    remark_rows = 0
-    for section_name, remarks in sections:
-        for line_no, remark in enumerate(remarks, start=1):
-            storage.append_row(wb[REMARK_SHEET],
-                               [control_no, section_name, line_no, remark])
-            remark_rows += 1
+    goods, remarks = goods_and_remarks(data, control_no)
+    for values in goods:
+        storage.append_row(wb[GOODS_SHEET], values)
+    for values in remarks:
+        storage.append_row(wb[REMARK_SHEET], values)
+    remark_rows = len(remarks)
 
     for name, (table_name, headers) in WITHDRAWAL_SHEETS.items():
         storage.finalize_sheet(wb[name], table_name, headers)
@@ -769,16 +811,19 @@ def _kept_list_rows(path, saved_controls):
             and storage.cell_text(row[0]).casefold() not in saved_controls]
 
 
-def sync_item_lists(main_path):
+def sync_item_lists(main_path, main_reports=None, book_reports=None):
     """Rebuild PO_Master.xlsx and Withdrawn_Item.xlsx beside `main_path`.
-    Each workbook is read once (it used to be read four times)."""
+    Each workbook is read once (it used to be read four times); the SQLite
+    store passes the reports instead."""
     main_path = Path(main_path).resolve()
     po_path = main_path.with_name(fsr_paths.PO_MASTER_NAME)
     withdrawn_path = main_path.with_name(fsr_paths.WITHDRAWN_ITEM_NAME)
     book = main_path.with_name(fsr_paths.WITHDRAWAL_WORKBOOK_NAME)
 
-    main_reports = _main_reports(main_path) if main_path.exists() else []
-    book_reports = read_all_reports(book)
+    if main_reports is None:
+        main_reports = _main_reports(main_path) if main_path.exists() else []
+    if book_reports is None:
+        book_reports = read_all_reports(book)
     lines = _receiving_lines(main_path, main_reports)
     saved_controls = {
         storage.cell_text(report["control_no"]).casefold()
