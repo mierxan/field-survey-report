@@ -11,6 +11,7 @@ from datetime import date, datetime
 import pytest
 from openpyxl import load_workbook
 
+import fsr_db_location as location
 import fsr_import
 import fsr_master_export
 import fsr_mysql_guard
@@ -61,6 +62,12 @@ def book(tmp_path):
     return path
 
 
+def aside(book, label):
+    """The database of `book` set aside (in the databases' folder)."""
+    db = location.default_db_path(book)
+    return db.with_name(f"{db.name}.{label}_20261113_120000")
+
+
 def files_of(folder):
     return sorted(p.relative_to(folder).as_posix() for p in folder.rglob("*")
                   if p.is_file())
@@ -84,9 +91,15 @@ def test_the_reports_move_in_and_everything_is_backed_up_first(book):
     assert not [c for c in copied if c.startswith("export_check")]
     for path, data in before.items():           # the copies are unchanged
         assert (folder / path.name).read_bytes() == data
-        assert path.read_bytes() == data         # and so are the files
     store = fsr_store.open_store(book)
     assert store.kind == "sqlite"
+    # the database is in the databases' folder (Local AppData), never next
+    # to the workbook; the Excel files are written from it at once and
+    # carry its id
+    assert store.db_path.parent == location.database_dir()
+    assert not location.legacy_db_path(book).exists()
+    for path in before:
+        assert location.workbook_identity(path) == store.database_id
     assert [r[0] for r in store.list_reports()] == ["FSR-MIG-202611-0002",
                                                     "FSR-MIG-202611-0001"]
     assert store.read_report("FSR-MIG-202611-0002")["incident_reports"][0][
@@ -128,8 +141,8 @@ def test_any_difference_keeps_the_workbook_and_says_what(book, monkeypatch):
     assert "SO-WRONG" in result.message and "'SO-M'" in result.message
     assert fsr_store.open_store(book).kind == "excel"     # as before
     assert book.read_bytes() == before
-    assert not sq.db_path_for(book).exists()
-    assert list(book.parent.glob("*.sqlite3.not_used_20261113_120000"))
+    assert not sq.is_active(book)
+    assert aside(book, "not_used").exists()
     # not tried again while the workbook is the same ...
     monkeypatch.setattr(sq, "load_header", real)
     assert migrate.migrate(book).status == "skipped"
@@ -142,8 +155,8 @@ def test_any_difference_keeps_the_workbook_and_says_what(book, monkeypatch):
 def test_a_difference_in_the_export_keeps_the_workbook(book, monkeypatch):
     real = export.main_workbook
 
-    def wrong(headers, rows):
-        wb = real(headers, rows)
+    def wrong(headers, rows, *more):
+        wb = real(headers, rows, *more)
         wb["Item List"]["D2"] = "changed"
         return wb
     monkeypatch.setattr(export, "main_workbook", wrong)
@@ -300,7 +313,7 @@ def test_changed_while_the_database_did_not_change_is_taken(book):
     assert store.kind == "sqlite"
     assert store.read_report("FSR-MIG-202611-0007")["general_information"][
         "so_number"] == "SO-OLD-VERSION"
-    assert list(book.parent.glob("*.sqlite3.replaced_20261113_120000"))
+    assert aside(book, "replaced").exists()
     assert migrate.reconcile(book).status == "unchanged"
 
 
@@ -354,7 +367,7 @@ def test_back_to_the_workbook_with_every_report_saved_since(book):
     assert old.read_report("FSR-MIG-202611-0010")["general_information"][
         "so_number"] == "SO-SINCE"
     assert "FSR-MIG-202611-0011" in old.withdrawal_numbers()
-    assert list(book.parent.glob("*.sqlite3.retired_20261113_120000"))
+    assert aside(book, "retired").exists()
     # the previous version saves in it as always
     old.write_report(receiving("FSR-MIG-202611-0012"), False, WHEN)
     # and this version moves it in again, with that report

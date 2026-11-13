@@ -30,6 +30,7 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 
+import fsr_db_location as location
 import fsr_paths
 import fsr_sqlite_export as export
 import fsr_sqlite_store as sq
@@ -437,31 +438,231 @@ def _read_once(paths):
 
 # ---------- 4. taking it into use -----------------------------------------
 
-def _activate(temp, db_path, excel_path):
-    """Give the database its name. The MySQL ledger (when MySQL is used)
-    keeps its trust: the write is announced to the guard like any other,
-    so a ledger that was current stays current - for the database now."""
+def _guarded(excel_path, work):
+    """Do work() as a write the MySQL guard is told about (when MySQL is
+    used): a ledger that was current stays current - for the database as
+    it is afterwards."""
     import fsr_mysql_guard
     guard = fsr_mysql_guard.Guard(None, excel_path)
     if guard.path.exists():
         with guard.local_write():
-            Path(temp).replace(db_path)
-    else:
+            return work()
+    return work()
+
+
+def _activate(temp, db_path, excel_path):
+    """Give the database its name in Local AppData and record it (its own
+    meta and databases.json). Returns its id."""
+    database_id = sq.read_meta(temp, "database_id") or location.new_id()
+
+    def work():
+        sq.write_meta(temp, {"database_id": database_id,
+                             "workbook": Path(excel_path).resolve()})
         Path(temp).replace(db_path)
+        location.register(db_path, excel_path, database_id)
+    _guarded(excel_path, work)
+    return database_id
 
 
-def _note_export(store, main, book):
-    """The workbooks as they are now are what the database holds: noted
-    as the current export, so they do not count as changed outside."""
-    files = {"main": export.file_note(main)}
-    if book.exists():
-        files["withdrawal"] = export.file_note(book)
-    export.save_state(store.excel_path, store.changes(), files)
+def _set_aside(store, label, now):
+    """Rename the database next to itself (kept, never deleted) and forget
+    it: the workbook is then used without it."""
+    aside = store.db_path.with_name(
+        f"{store.db_path.name}.{label}_{_stamp(now)}")
+
+    def work():
+        store.db_path.replace(aside)
+        location.forget(store.db_path)
+    _guarded(store.excel_path, work)
+    export.drop_state(store)
+    return aside
 
 
 def _quiet(*args, **kwargs):
     pass
 
+
+# ---------- a database in the wrong place, or a workbook in a new one ------
+
+def move_to_local(excel_path, required_root=None, now=None, progress=None):
+    """A database next to the workbook - where the first Phase 5 builds put
+    it, possibly in a folder OneDrive synchronises - moves to Local AppData:
+    copied with SQLite's backup method, checked, every report compared;
+    then the old file is renamed ".moved_to_local_<time>" (kept). If any of
+    that fails, it is used where it is and the move is tried again at the
+    next start."""
+    now = now or datetime.now()
+    progress = progress or _quiet
+    excel_path = Path(excel_path)
+    legacy = location.legacy_db_path(excel_path)
+    synced = location.sync_tool(legacy.parent)
+    problem = location.folder_problem(location.database_dir())
+    if problem:
+        return Result("kept_legacy",
+                      f"The reports database next to the Excel file could "
+                      f"not be moved: {problem}. It is used where it is.")
+    target = location.default_db_path(excel_path)
+    temp = target.with_name(target.name + ".moving")
+    old = sq.SqliteStore(excel_path, required_root, db_path=legacy)
+    try:
+        if temp.exists():
+            temp.unlink()
+        progress("Copying the reports database to this PC's Local AppData "
+                 "...")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        old.copy_to(temp)                       # SQLite backup + check
+        progress("Comparing every report, field by field ...")
+        differences = compare_stores(old, sq.SqliteStore(
+            excel_path, required_root, db_path=temp))
+        if differences:
+            raise MigrationRefused("the copy was not the same: "
+                                   + "; ".join(differences[:3]))
+        aside = legacy.with_name(
+            f"{legacy.name}.moved_to_local_{_stamp(now)}")
+        database_id = (sq.read_meta(legacy, "database_id")
+                       or location.new_id())
+
+        def work():
+            sq.write_meta(temp, {"database_id": database_id,
+                                 "workbook": excel_path.resolve()})
+            temp.replace(target)
+            location.register(target, excel_path, database_id)
+            legacy.replace(aside)
+        _guarded(excel_path, work)
+    except Exception as error:
+        log.exception("The database could not be moved to Local AppData")
+        try:
+            if temp.exists():
+                temp.unlink()
+        except OSError:
+            pass
+        return Result("kept_legacy",
+                      "The reports database next to the Excel file could "
+                      f"not be moved to this PC's Local AppData: {error}\n\n"
+                      "It is used where it is for now; the move is tried "
+                      "again at the next start.")
+    # the note of what was exported follows the database
+    moved = sq.SqliteStore(excel_path, required_root, db_path=target)
+    old_note = export.legacy_state_path(excel_path)
+    if old_note.exists() and not export.state_path(moved).exists():
+        try:
+            export.state_path(moved).write_bytes(old_note.read_bytes())
+            old_note.unlink()
+        except OSError:
+            log.exception("The export note could not be moved")
+    where = (f"in {legacy.parent}, a folder that {synced} synchronises"
+             if synced else f"next to the Excel file in {legacy.parent}")
+    return Result(
+        "moved",
+        f"The reports database was {where}. A database belongs in this "
+        f"PC's Local AppData, so it was moved - after a full check, every "
+        f"report compared - to:\n    {target}\nThe old file is kept as "
+        f"{aside.name}; it can be deleted.", path=str(target))
+
+
+def _find_by_id(database_id):
+    """(database file, the workbook recorded for it) of the database with
+    this id: from databases.json, else from the databases themselves."""
+    hit = location.entry_for_id(database_id)
+    if hit is not None:
+        return hit
+    folder = location.database_dir()
+    if not folder.is_dir():
+        return None
+    for path in folder.glob("*" + sq.DB_SUFFIX):
+        try:
+            if sq.read_meta(path, "database_id") == database_id:
+                return path, Path(sq.read_meta(path, "workbook") or "")
+        except Exception:               # an unreadable file is skipped
+            log.debug("%s skipped while looking for a database", path,
+                      exc_info=True)
+    return None
+
+
+# The files beside a workbook's reports (in its JSON folder): carried along
+# when the workbook is found in a new place.
+_SIDE_FOLDERS = (storage.INCIDENT_FOLDER_NAME, storage.ITEM_FORM_FOLDER_NAME,
+                 "MySQL Replaced")
+_SIDE_FILES = ("_mysql_ledger.json", "_pending_saves.json",
+               "_imported_reports.json")
+
+
+def carry_side_files(old_excel, new_excel):
+    """Copy what belongs to the workbook's reports from its old JSON folder
+    to the one of its new place - only what is not there yet; nothing is
+    removed. Returns what was copied."""
+    old_dir = fsr_paths.json_dir_for_workbook(old_excel)
+    new_dir = fsr_paths.json_dir_for_workbook(new_excel)
+    if not old_dir.is_dir():
+        return []
+    same_folder = location._key(old_dir) == location._key(new_dir)
+    copied = []
+    # the folders (named by Control #): only when the JSON folder changes;
+    # the records named after the workbook: also when only its name changes
+    for name in () if same_folder else _SIDE_FOLDERS:
+        source = old_dir / name
+        if not source.is_dir():
+            continue
+        for item in source.rglob("*"):
+            if not item.is_file():
+                continue
+            target = new_dir / name / item.relative_to(source)
+            if not target.exists():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(item, target)
+                copied.append(str(target.relative_to(new_dir)))
+    for suffix in _SIDE_FILES:
+        source = old_dir / f"{Path(old_excel).stem}{suffix}"
+        target = new_dir / f"{Path(new_excel).stem}{suffix}"
+        if source.is_file() and not target.exists():
+            new_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+            copied.append(target.name)
+    from warehouse.store import side_file_path
+    source, target = side_file_path(old_excel), side_file_path(new_excel)
+    if source.is_file() and not target.exists():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+        copied.append(target.name)
+    return copied
+
+
+def relink(excel_path, required_root=None):
+    """A workbook with no database at its path but carrying a database's id
+    (it was moved or renamed, or is chosen with Change Excel File in its new
+    place): that database is used again. Returns a Result ("relinked"), or
+    a note when the workbook is a COPY whose original is still in its place
+    (it gets a database of its own), or None."""
+    excel_path = Path(excel_path)
+    database_id = location.workbook_identity(excel_path)
+    if not database_id:
+        return None
+    found = _find_by_id(database_id)
+    if found is None:
+        return None
+    db_path, recorded = found
+    if recorded.exists() and \
+            location._key(recorded) != location._key(excel_path) and \
+            location.workbook_identity(recorded) == database_id:
+        return (f"This Excel file is a copy of {recorded}, which is still "
+                "in its place, so it gets a database of its own.")
+
+    def work():
+        sq.write_meta(db_path, {"workbook": excel_path.resolve()})
+        location.register(db_path, excel_path, database_id)
+    _guarded(excel_path, work)
+    copied = carry_side_files(recorded, excel_path) if str(recorded) else []
+    text = (f"This Excel file is in a new place:\n    {excel_path}\n"
+            f"(before: {recorded}).\nIt goes on using its reports database:"
+            f"\n    {db_path}")
+    if copied:
+        text += (f"\n\n{len(copied)} file(s) of its reports (incident texts, "
+                 "item forms, records) were copied from its old JSON folder "
+                 "to the new one; the old ones are left as they are.")
+    return Result("relinked", text, path=str(db_path), copied=copied)
+
+
+# ---------- the move -----------------------------------------------------------
 
 def migrate(excel_path, required_root=None, now=None, progress=None):
     """Move this workbook's reports into its database. Never raises for a
@@ -470,16 +671,44 @@ def migrate(excel_path, required_root=None, now=None, progress=None):
     now = now or datetime.now()
     progress = progress or _quiet
     excel_path = Path(excel_path)
-    db_path = sq.db_path_for(excel_path)
-    if db_path.is_file():
+    found_db = location.find_db(excel_path)
+    if found_db is not None:
+        problem = location.folder_problem(found_db.parent)
+        if problem:
+            # Local AppData itself synchronised or on a network drive: the
+            # reports go back into the Excel file.
+            back = use_excel_again(excel_path, required_root, now)
+            return Result("returned" if back.status == "retired" else "kept",
+                          f"The reports database cannot stay where it is: "
+                          f"{problem}, and a database must not be in a "
+                          f"synchronised folder or on a network drive.\n\n"
+                          f"{back.message}")
         return Result("active")
+    if location.legacy_db_path(excel_path).is_file():
+        return move_to_local(excel_path, required_root, now, progress)
     try:
         main, book = _books(excel_path, required_root)
     except ValueError as error:
         return Result("kept", str(error))
+    problem = location.folder_problem(location.database_dir())
+    if problem:
+        return Result("kept",
+                      "The reports stay in the Excel file, as before: the "
+                      f"folder for the reports database ({problem}) is not a "
+                      "safe place for a database - it must not be in a "
+                      "synchronised folder or on a network drive.")
+    db_path = location.default_db_path(excel_path)
     if not main.exists() and not book.exists():
-        sq.create(db_path)              # a new PC: nothing to move
-        return Result("new", "A new database was created.")
+        database_id = location.new_id()          # a new PC: nothing to move
+        sq.create(db_path, database_id, excel_path)
+        location.register(db_path, excel_path, database_id)
+        return Result("new", "A new database was created.", path=str(db_path))
+    copy_note = ""
+    if main.exists():
+        linked = relink(excel_path, required_root)
+        if isinstance(linked, Result):
+            return linked
+        copy_note = linked or ""
 
     failed = failure_path(excel_path)
     stats = _stats([main, book])
@@ -490,6 +719,7 @@ def migrate(excel_path, required_root=None, now=None, progress=None):
     if isinstance(earlier, dict) and earlier.get("books") == stats:
         return Result("skipped", earlier.get("message", ""))
 
+    db_path.parent.mkdir(parents=True, exist_ok=True)
     temp = db_path.with_name(db_path.name + ".migrating")
     if temp.exists():
         temp.unlink()               # a migration cut off earlier
@@ -557,19 +787,31 @@ def migrate(excel_path, required_root=None, now=None, progress=None):
                     "again at the next start; nothing was changed.")
 
     _activate(temp, db_path, excel_path)
-    store = sq.SqliteStore(excel_path, required_root)
-    _note_export(store, main, book)
     try:
         failed.unlink()
     except FileNotFoundError:
         pass
+    # The Excel file is written from the database at once (the same
+    # reports - checked above): from now on it carries the database's id.
+    progress("Writing the Excel file from the database ...")
+    store = sq.SqliteStore(excel_path, required_root, db_path=db_path)
+    later = ""
+    try:
+        export.write_export(store, force=True)
+    except PermissionError:
+        later = (" The Excel file is open in another program; it is "
+                 "brought up to date when it is closed.")
+    except Exception:
+        log.exception("The first export after the move failed")
+        later = " The Excel file is brought up to date at the next save."
     counts = (len(found[sq.MAIN][0]), len(found[sq.BOOK][0]))
     return Result(
         "migrated",
-        f"{counts[0] + counts[1]} report(s) were moved into the database "
-        f"{db_path.name}; the Excel file is now kept up to date as an "
-        f"export. Everything as it was is in {folder}.",
-        reports=counts, backup=str(folder))
+        (copy_note + "\n\n" if copy_note else "")
+        + f"{counts[0] + counts[1]} report(s) were moved into the reports "
+        f"database:\n    {db_path}\nThe Excel file is now kept up to date as "
+        f"an export.{later} Everything as it was is in {folder}.",
+        reports=counts, backup=str(folder), path=str(db_path))
 
 
 # ---------- an export changed outside the program -----------------------
@@ -580,14 +822,16 @@ def reconcile(excel_path, required_root=None, now=None):
     * No exported file was changed outside the program: nothing to do.
     * The database has not changed since that export (for example: the
       previous version was used again on the export, or a file was edited
-      in Excel): the file holds everything the database holds plus the
-      changes made to it, so it is taken as it is - the database is put
-      aside (".replaced_<time>") and the workbook is moved in again, with
-      the full backup and comparison.
-    * Both changed: the database stays; the changed file is kept beside it
-      as "<name> (changed outside <time>).xlsx"; reports that are only in
-      that file are added to the database (nothing is overwritten); reports
-      that differ are listed - the user decides about them.
+      in Excel), and the file was not written by ANOTHER database: the file
+      holds everything the database holds plus the changes made to it, so
+      it is taken as it is - the database is put aside (".replaced_<time>")
+      and the workbook is moved in again, with the full backup and
+      comparison.
+    * Otherwise (both changed, or the file comes from another PC's
+      database): the database stays; the changed file is kept beside it as
+      "<name> (changed outside <time>).xlsx"; reports that are only in that
+      file are added to the database (nothing is overwritten); reports that
+      differ are listed - the user decides about them.
     Returns a Result ("unchanged", "taken", "merged" or a migrate() result
     status when taking it failed)."""
     now = now or datetime.now()
@@ -598,22 +842,22 @@ def reconcile(excel_path, required_root=None, now=None):
     changed = export.changed_outside(store)
     if not changed:
         return Result("unchanged")
-    state = export.load_state(excel_path) or {}
+    state = export.load_state(store) or {}
     names = ", ".join(p.name for p in changed)
+    mine = store.database_id
+    foreign = [p for p in changed
+               if location.workbook_identity(p) not in (None, mine)]
 
-    if state.get("changes") == store.changes():
-        aside = store.db_path.with_name(
-            f"{store.db_path.name}.replaced_{_stamp(now)}")
-        store.db_path.replace(aside)
-        export.drop_state(excel_path)
+    if state.get("changes") == store.changes() and not foreign:
+        aside = _set_aside(store, "replaced", now)
         result = migrate(excel_path, required_root, now)
         if result.status == "migrated":
             return Result(
                 "taken",
                 f"{names} was changed outside the program after it was "
                 "last written. It was taken as it is now: the database was "
-                f"built again from it. The previous database is kept as "
-                f"{aside.name}.", aside=str(aside))
+                f"built again from it. The previous database is kept as:\n"
+                f"    {aside}", aside=str(aside))
         return result
 
     added, differing, problems = [], [], []
@@ -638,10 +882,10 @@ def reconcile(excel_path, required_root=None, now=None):
                         store.write_report(report, True)
                     added.append(control)
                 else:
-                    mine = (store.read_withdrawal_report(control) if linked
+                    ours = (store.read_withdrawal_report(control) if linked
                             else store.read_report(control))
-                    mine.pop("incident_error", None)
-                    if {k: v for k, v in mine.items() if k != "item_form"} \
+                    ours.pop("incident_error", None)
+                    if {k: v for k, v in ours.items() if k != "item_form"} \
                             != {k: v for k, v in report.items()
                                 if k != "item_form"}:
                         differing.append(control)
@@ -649,10 +893,21 @@ def reconcile(excel_path, required_root=None, now=None):
             log.exception("A changed export could not be read")
             problems.append(f"{kept.name}: {error}")
     export.write_export(store, force=True)
-    lines = [f"{names} was changed outside the program while the database "
-             "also had newer reports. The database was kept; the changed "
-             "file is kept beside it with \"(changed outside ...)\" in its "
-             "name."]
+    if foreign:
+        lines = [f"{names} was written by ANOTHER copy of the program - "
+                 "another reports database, for example another PC that "
+                 "synchronises this folder through OneDrive. This PC's "
+                 "database was kept and nothing in it was replaced; the "
+                 "other file is kept beside it with \"(changed outside "
+                 "...)\" in its name.",
+                 "Two PCs must not use one Excel file. Share reports through "
+                 "MySQL (the owner's PC) or with Export / Import Master "
+                 "Data."]
+    else:
+        lines = [f"{names} was changed outside the program while the "
+                 "database also had newer reports. The database was kept; "
+                 "the changed file is kept beside it with \"(changed outside "
+                 "...)\" in its name."]
     if added:
         lines.append("Reports that were only in that file were added: "
                      + ", ".join(added))
@@ -661,7 +916,7 @@ def reconcile(excel_path, required_root=None, now=None):
                      "taken (check them by hand): " + ", ".join(differing))
     lines += problems
     return Result("merged", "\n\n".join(lines), added=added,
-                  differing=differing)
+                  differing=differing, foreign=bool(foreign))
 
 
 # ---------- the way back ---------------------------------------------------
@@ -684,16 +939,7 @@ def use_excel_again(excel_path, required_root=None, now=None):
                               "program once first, so it can decide about "
                               "that file; nothing was changed.")
     export.write_export(store)
-    aside = store.db_path.with_name(
-        f"{store.db_path.name}.retired_{_stamp(now)}")
-    import fsr_mysql_guard
-    guard = fsr_mysql_guard.Guard(None, excel_path)
-    if guard.path.exists():
-        with guard.local_write():
-            store.db_path.replace(aside)
-    else:
-        store.db_path.replace(aside)
-    export.drop_state(excel_path)
+    aside = _set_aside(store, "retired", now)
     # A failed attempt noted earlier is not a reason to skip the next one.
     try:
         failure_path(excel_path).unlink()
@@ -701,7 +947,7 @@ def use_excel_again(excel_path, required_root=None, now=None):
         pass
     return Result("retired", f"The Excel file {excel_path.name} holds every "
                              "report and is used again. The database is "
-                             f"kept as {aside.name}.", aside=str(aside))
+                             f"kept as:\n    {aside}", aside=str(aside))
 
 
 # ---------- GO_BACK_TO_WORKBOOK.bat ----------------------------------------

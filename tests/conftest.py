@@ -9,6 +9,16 @@ import pytest
 # memory: the tests never touch the Windows Credential Manager.
 os.environ["FSR_SECRET_STORE"] = "memory"
 
+# The reports databases of the tests go to a temporary folder - never to
+# this PC's Local AppData (fsr_db_location).
+if not os.environ.get("FSR_DATABASE_DIR"):
+    import atexit
+    import shutil
+    import tempfile
+    os.environ["FSR_DATABASE_DIR"] = tempfile.mkdtemp(
+        prefix="fsr_test_databases_")
+    atexit.register(shutil.rmtree, os.environ["FSR_DATABASE_DIR"], True)
+
 # Counts skipped tests out loud; --fail-on-gui-skip (tests/skip_report.py).
 pytest_plugins = ["skip_report"]
 

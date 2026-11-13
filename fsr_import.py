@@ -237,10 +237,12 @@ def import_master_data(excel_path, data, on_saved=None, journal=None,
 
     def backup_once():
         if summary["backup"] is None and store.kind == "sqlite":
+            # beside the workbook in Documents, like the copy of a workbook
+            # (the database itself is in Local AppData)
             stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            db = store.db_path
-            target = db.with_name(
-                f"{db.stem}_before_import_{stamp}{db.suffix}")
+            target = excel_path.with_name(
+                f"{excel_path.stem}_before_import_{stamp}"
+                f"{store.db_path.suffix}")
             store.copy_to(target)
             summary["backup"] = str(target)
         if summary["backup"] is None and excel_path.exists():

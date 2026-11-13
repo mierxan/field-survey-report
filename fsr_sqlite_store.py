@@ -16,9 +16,11 @@ the import record, the MySQL ledger, the save record, PO_Master and
 Withdrawn_Item. The workbooks themselves become an export in today's
 layout (fsr_sqlite_export), written from here in the background.
 
-The database is in use when the file <workbook stem>.sqlite3 exists beside
-the workbook (it is given that name only after a migration passed its
-comparison - fsr_sqlite_migrate).
+Where the database lives: this Windows user's Local AppData, never next to
+the workbook (fsr_db_location). A database is in use for a workbook when
+fsr_db_location finds it (it is put there only after a migration passed its
+comparison - fsr_sqlite_migrate). A database still next to the workbook
+(where the first Phase 5 builds put it) is used until it is moved.
 """
 import json
 import sqlite3
@@ -28,6 +30,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import fsr_backup
+import fsr_db_location as location
 import fsr_import
 import fsr_mysql_guard
 import fsr_paths
@@ -36,7 +39,7 @@ import fsr_save_journal
 import fsr_storage as storage
 import fsr_withdrawal
 
-DB_SUFFIX = ".sqlite3"
+DB_SUFFIX = location.DB_SUFFIX
 SCHEMA_VERSION = 1
 MAIN, BOOK = "main", "withdrawal"
 
@@ -81,14 +84,24 @@ CREATE INDEX IF NOT EXISTS lines_by_key ON lines (key);
 """
 
 
+def existing_db(excel_path):
+    """The database in use for this workbook, or None: in Local AppData, or
+    still next to the workbook (until it is moved)."""
+    found = location.find_db(excel_path)
+    if found is not None:
+        return found
+    legacy = location.legacy_db_path(excel_path)
+    return legacy if legacy.is_file() else None
+
+
 def db_path_for(excel_path):
-    """The database beside the workbook: Field_Survey_Reports.sqlite3."""
-    excel_path = Path(excel_path)
-    return excel_path.with_name(excel_path.stem + DB_SUFFIX)
+    """The database of this workbook: where it is, else where a new one
+    goes (Local AppData)."""
+    return existing_db(excel_path) or location.default_db_path(excel_path)
 
 
 def is_active(excel_path):
-    return db_path_for(excel_path).is_file()
+    return existing_db(excel_path) is not None
 
 
 # ---------- cell values <-> JSON ------------------------------
@@ -177,17 +190,51 @@ def connect(path):
     return conn
 
 
-def create(path):
-    """A new, empty database (the file must not exist yet)."""
+def create(path, database_id=None, workbook=None):
+    """A new, empty database (the file must not exist yet), carrying its
+    id and the workbook it belongs to."""
     path = Path(path)
     if path.exists():
         raise FileExistsError(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
     conn = connect(path)
     try:
         conn.executescript(SCHEMA)
         conn.execute("INSERT INTO meta VALUES ('schema_version', ?)",
                      (str(SCHEMA_VERSION),))
         conn.execute("INSERT INTO meta VALUES ('changes', '0')")
+        conn.execute("INSERT INTO meta VALUES ('database_id', ?)",
+                     (database_id or location.new_id(),))
+        if workbook is not None:
+            conn.execute("INSERT INTO meta VALUES ('workbook', ?)",
+                         (str(Path(workbook).resolve()),))
+    finally:
+        conn.close()
+
+
+def read_meta(path, key):
+    """One value of a database's meta table (None when it is not there)."""
+    conn = sqlite3.connect(f"file:{Path(path).as_posix()}?mode=ro", uri=True)
+    try:
+        found = conn.execute("SELECT value FROM meta WHERE key=?",
+                             (key,)).fetchone()
+    except sqlite3.DatabaseError:
+        return None
+    finally:
+        conn.close()
+    return found[0] if found else None
+
+
+def write_meta(path, values):
+    """Set meta values (the id, the workbook) - one transaction. Not a
+    change of the reports: the change counter stays as it is."""
+    conn = connect(path)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        for key, value in values.items():
+            conn.execute("INSERT OR REPLACE INTO meta VALUES (?, ?)",
+                         (key, str(value)))
+        conn.execute("COMMIT")
     finally:
         conn.close()
 
@@ -209,6 +256,23 @@ class SqliteStore:
     def withdrawal_path(self):
         return fsr_paths.withdrawal_workbook_path(self.excel_path,
                                                   self.required_root)
+
+    @property
+    def database_id(self):
+        """The id this database carries (also written into its exports).
+        A database made before ids existed gets one now."""
+        found = read_meta(self.db_path, "database_id")
+        if not found:
+            found = location.new_id()
+            write_meta(self.db_path, {"database_id": found})
+        return found
+
+    @property
+    def backup_name(self):
+        """The name its backups are given: beside the workbook, in the
+        Backups folder in Documents (the database itself is in Local
+        AppData): Backups\\<workbook name>_backup_<date>.sqlite3."""
+        return self.excel_path.with_suffix(DB_SUFFIX)
 
     def ledger_files(self):
         """What the MySQL ledger's note of "the data as the program last
@@ -729,8 +793,9 @@ class SqliteStore:
     def backup_before_save(self, keep, linked=False):
         """Today's copy of the database (one file for both kinds of
         report), made with SQLite's own backup."""
-        return fsr_backup.backup_before_save(self.db_path, keep,
-                                             copy=self.copy_to)
+        return fsr_backup.backup_before_save(self.backup_name, keep,
+                                             copy=self.copy_to,
+                                             source=self.db_path)
 
     def copy_to(self, target):
         """A consistent copy of the database into `target`, made with
@@ -774,8 +839,11 @@ def integrity_problem(path):
 
 def new_store(excel_path, required_root=None):
     """The SQLite store of a workbook that has no reports yet: its empty
-    database is created (a new PC, a new data folder, the tests)."""
-    path = db_path_for(excel_path)
-    if not path.exists():
-        create(path)
+    database is created in Local AppData (a new PC, a new data folder, the
+    tests)."""
+    if not is_active(excel_path):
+        path = location.default_db_path(excel_path)
+        database_id = location.new_id()
+        create(path, database_id, excel_path)
+        location.register(path, excel_path, database_id)
     return SqliteStore(excel_path, required_root)

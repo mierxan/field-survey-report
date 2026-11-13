@@ -113,7 +113,8 @@ def list_backups(workbook):
     return sorted(found, reverse=True)
 
 
-def backup_before_save(workbook, keep=DEFAULT_KEEP, today=None, copy=None):
+def backup_before_save(workbook, keep=DEFAULT_KEEP, today=None, copy=None,
+                       source=None):
     """Call before a save. Makes today's backup when there is none yet, then
     removes this workbook's backups beyond the newest `keep`.
 
@@ -122,11 +123,14 @@ def backup_before_save(workbook, keep=DEFAULT_KEEP, today=None, copy=None):
     check (nothing else has happened then); a backup that could not be
     REMOVED is only logged. `copy(target)`: how to copy and check (the
     SQLite store: SQLite's own backup, then its integrity check); default a
-    plain file copy checked by verify_copy()."""
+    plain file copy checked by verify_copy(). `source`: the file copied
+    when it is not `workbook` itself (the database in Local AppData, whose
+    backups are named after the workbook and kept beside it)."""
     workbook = Path(workbook)
+    source = Path(source) if source is not None else workbook
     today = today or date.today()
     result = {"created": None, "removed": [], "kept": 0}
-    if keep <= 0 or not workbook.is_file():
+    if keep <= 0 or not source.is_file():
         return result                   # turned off / no workbook yet
 
     target = backup_path(workbook, today)
@@ -135,7 +139,7 @@ def backup_before_save(workbook, keep=DEFAULT_KEEP, today=None, copy=None):
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
             if copy is None:
-                verified_copy(workbook, temp)
+                verified_copy(source, temp)
             else:
                 copy(temp)
             os.replace(temp, target)

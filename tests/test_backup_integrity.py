@@ -81,7 +81,7 @@ def test_daily_backups_taken_while_the_program_writes(store):
         assert sq.integrity_problem(copy) is None
         reports, half_written = complete(copy)
         assert reports and half_written == []       # never half a report
-    assert not list(store.db_path.parent.glob("Backups/*.tmp"))
+    assert not list(store.excel_path.parent.glob("Backups/*.tmp"))
 
 
 def test_a_copy_that_fails_its_integrity_check_is_not_kept(store,
@@ -90,7 +90,7 @@ def test_a_copy_that_fails_its_integrity_check_is_not_kept(store,
                         lambda path: "Page 7 is never used")
     with pytest.raises(fsr_backup.BackupError, match="integrity check"):
         store.backup_before_save(14)
-    folder = store.db_path.parent / fsr_backup.FOLDER_NAME
+    folder = store.excel_path.parent / fsr_backup.FOLDER_NAME
     assert not folder.exists() or list(folder.iterdir()) == []
 
 
@@ -119,7 +119,7 @@ def test_the_copy_before_an_import_is_checked(store, monkeypatch):
     with pytest.raises(Exception, match="integrity check"):
         store.import_master_data(data)
     assert [r[0] for r in store.list_reports()] == before   # nothing in
-    assert not list(store.db_path.parent.glob("*_before_import_*"))
+    assert not list(store.excel_path.parent.glob("*_before_import_*"))
 
 
 # ---------- the workbook (plain file copies, checked) ----------
