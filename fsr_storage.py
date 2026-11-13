@@ -9,17 +9,20 @@ automated tests can use the real storage code without opening a window.
 field_survey_report.py imports everything from this module.
 """
 
+import io
 import json
 import logging
 import math
 import os
 import re
+import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 import fsr_paths
 
 try:
-    from openpyxl import Workbook, load_workbook
+    from openpyxl import Workbook
+    from openpyxl import load_workbook as _openpyxl_load_workbook
     from openpyxl.utils import get_column_letter
     from openpyxl.worksheet.table import Table, TableStyleInfo
 except ImportError:
@@ -30,6 +33,39 @@ log = logging.getLogger("fsr")
 CONTROL_PREFIX = "FSR"
 NO_INITIALS = "XX"               # as the Android app, when no inspector is known
 _control_initials = {"value": NO_INITIALS}
+
+
+def load_workbook(filename, *args, **kwargs):
+    """openpyxl's load_workbook - but a file is first read into memory and
+    closed again at once. Reading a large workbook takes seconds; for all
+    that time Windows would not let anyone replace the file, so a save made
+    while the dashboards (or anything else) were reading it failed with
+    "File In Use". Now the file is open only for the moment of copying."""
+    if isinstance(filename, (str, os.PathLike)):
+        with open(filename, "rb") as file:
+            buffer = io.BytesIO(file.read())
+        buffer.name = str(filename)     # what openpyxl reports as the file
+        filename = buffer
+    return _openpyxl_load_workbook(filename, *args, **kwargs)
+
+
+REPLACE_TRIES = 10                      # x 0.2 s: about 2 seconds
+REPLACE_PAUSE = 0.2
+
+
+def replace_file(temp_path, path):
+    """os.replace(temp_path, path), tried again for about two seconds when
+    Windows says the file is in use: a reader that has it open for a moment
+    (this program, a virus scanner) must not make a save fail. A file that
+    stays open (Excel) still fails, with PermissionError, as before."""
+    for attempt in range(REPLACE_TRIES):
+        try:
+            os.replace(temp_path, path)
+            return
+        except PermissionError:
+            if attempt == REPLACE_TRIES - 1:
+                raise
+            time.sleep(REPLACE_PAUSE)
 
 
 def write_json_atomic(path, data):
@@ -1195,7 +1231,7 @@ def write_reports_to_excel(path, items):
 
     try:
         wb.save(temp_path)
-        os.replace(temp_path, path)
+        replace_file(temp_path, path)
     finally:
         if temp_path.exists():
             try:
@@ -1326,7 +1362,7 @@ def delete_reports_from_excel(path, control_numbers):
     temp_path = path.with_name(path.stem + ".saving.tmp")
     try:
         wb.save(temp_path)
-        os.replace(temp_path, path)
+        replace_file(temp_path, path)
     finally:
         if temp_path.exists():
             try:

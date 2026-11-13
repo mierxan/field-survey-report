@@ -17,7 +17,7 @@ Printed report forms already made under the old number are left as they
 are; print the report again to get forms with the new number.
 """
 import json
-import os
+import os  # noqa: F401 - os.replace, via fsr_storage.replace_file
 from pathlib import Path
 
 import fsr_paths
@@ -86,7 +86,7 @@ def _renumber_workbook(path, old, new):
         temp = Path(path).with_name(Path(path).stem + ".saving.tmp")
         try:
             wb.save(temp)
-            os.replace(temp, path)
+            storage.replace_file(temp, path)
         finally:
             if temp.exists():
                 try:

@@ -34,7 +34,7 @@ so an edited report corrects them by itself:
 Quantities are Decimal here, so the limits are exact.
 """
 
-import os
+import os  # noqa: F401 - os.replace, via fsr_storage.replace_file
 import re
 import zipfile
 from dataclasses import dataclass
@@ -43,7 +43,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 try:
-    from openpyxl import Workbook, load_workbook
+    from openpyxl import Workbook
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     from openpyxl.utils.exceptions import InvalidFileException
 except ImportError:
@@ -52,6 +52,7 @@ except ImportError:
 
 import fsr_paths
 import fsr_storage as storage
+from fsr_storage import load_workbook   # reads into memory (no file lock)
 from warehouse.transactions import (RECEIVING, WITHDRAWAL, normalize_activity,
                                     normalize_unit)
 
@@ -671,7 +672,7 @@ def write_withdrawal_report(path, data, editing, main_path,
     temp_path = path.with_name(path.stem + ".saving.tmp")
     try:
         wb.save(temp_path)
-        os.replace(temp_path, path)
+        storage.replace_file(temp_path, path)
     finally:
         if temp_path.exists():
             try:
@@ -743,7 +744,7 @@ def _write_list(path, title, columns, rows):
     temp_path = path.with_name(path.stem + ".saving.tmp")
     try:
         wb.save(temp_path)
-        os.replace(temp_path, path)
+        storage.replace_file(temp_path, path)
     finally:
         if temp_path.exists():
             try:
