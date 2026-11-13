@@ -1,0 +1,224 @@
+"""The Excel export of the SQLite store (Phase 5).
+
+Once the reports are in the database, the workbooks Field_Survey_Reports.xlsx
+and Withdrawal_Reports.xlsx are written FROM it, in today's layout exactly
+(the same sheets, columns, number formats and tables, made by the same
+functions as before), in the background after each change. So:
+
+* opening the file in Excel, sending it, and the previous version of the
+  program all see every report, as before;
+* the file can be rebuilt at any time from the database.
+
+The program notes each file it wrote (size, change time, SHA-256) in
+<stem>_export.json beside the JSON files - not in the database, so writing
+the export never touches the database file the MySQL ledger watches. A file
+that differs from that note was changed outside the program: it is never
+overwritten (fsr_sqlite_migrate.reconcile decides what happens to it).
+"""
+import hashlib
+import json
+import logging
+from pathlib import Path
+
+import fsr_paths
+import fsr_storage as storage
+import fsr_withdrawal
+
+log = logging.getLogger("fsr")
+
+
+class ChangedOutside(Exception):
+    """An exported file was changed since the program wrote it."""
+
+    def __init__(self, paths):
+        super().__init__(", ".join(Path(p).name for p in paths))
+        self.paths = [Path(p) for p in paths]
+
+
+def state_path(excel_path):
+    excel_path = Path(excel_path)
+    return (fsr_paths.json_dir_for_workbook(excel_path)
+            / f"{excel_path.stem}_export.json")
+
+
+def load_state(excel_path):
+    try:
+        state = json.loads(state_path(excel_path).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError):
+        log.warning("The export note %s cannot be read",
+                    state_path(excel_path))
+        return None
+    return state if isinstance(state, dict) else None
+
+
+def save_state(excel_path, changes, files):
+    path = state_path(excel_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    storage.write_json_atomic(path, {"changes": changes, "files": files})
+
+
+def drop_state(excel_path):
+    try:
+        state_path(excel_path).unlink()
+    except FileNotFoundError:
+        pass
+
+
+def file_note(path):
+    """{size, mtime_ns, sha256} of a file, or None when it is not there."""
+    path = Path(path)
+    try:
+        info = path.stat()
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    except FileNotFoundError:
+        return None
+    return {"size": info.st_size, "mtime_ns": info.st_mtime_ns,
+            "sha256": digest}
+
+
+def _same(note, path):
+    """Is the file still what `note` says (by content)?"""
+    path = Path(path)
+    try:
+        info = path.stat()
+    except FileNotFoundError:
+        return note is None
+    if note is None:
+        return False
+    if info.st_size == note["size"] and info.st_mtime_ns == note["mtime_ns"]:
+        return True
+    return hashlib.sha256(path.read_bytes()).hexdigest() == note["sha256"]
+
+
+def export_paths(store):
+    return {"main": store.excel_path,
+            "withdrawal": store.excel_path.with_name(
+                fsr_paths.WITHDRAWAL_WORKBOOK_NAME)}
+
+
+def changed_outside(store):
+    """The exported files that were changed since the program wrote them."""
+    state = load_state(store.excel_path)
+    if state is None:
+        return []
+    files = state.get("files") or {}
+    return [path for name, path in export_paths(store).items()
+            if name in files and not _same(files[name], path)]
+
+
+def is_current(store):
+    """Has every change of the database been exported?"""
+    state = load_state(store.excel_path)
+    return state is not None and state.get("changes") == store.changes()
+
+
+# ---------- writing the workbooks ----------------------------
+
+def _snapshot(store):
+    """Every row of both books, and the change counter they belong to, read
+    while no write can happen in between."""
+    import fsr_sqlite_store as sq
+    with store._lock:
+        return {
+            "changes": store.changes(),
+            sq.MAIN: (store._headers(sq.MAIN),
+                      {s: store._sheet_rows(sq.MAIN, s)
+                       for s in sq.MAIN_SHEETS}),
+            sq.BOOK: (store._headers(sq.BOOK),
+                      {s: store._sheet_rows(sq.BOOK, s)
+                       for s in sq.BOOK_SHEETS}),
+        }
+
+
+def _save(wb, path):
+    path = Path(path)
+    temp = path.with_name(path.stem + ".saving.tmp")
+    try:
+        wb.save(temp)
+        storage.replace_file(temp, path)
+    finally:
+        if temp.exists():
+            try:
+                temp.unlink()
+            except OSError:
+                pass
+
+
+def main_workbook(headers, rows):
+    """Field_Survey_Reports.xlsx as fsr_storage.write_reports_to_excel()
+    makes it."""
+    wb = storage.Workbook()
+    wb.remove(wb.active)
+    price_formats = {
+        4 + storage.ITEM_HEADERS.index(header): "#,##0.00"
+        for header in storage.MONEY_ITEM_HEADERS
+    }
+    for name, (table_name, columns) in storage.EXCEL_SHEETS.items():
+        ws = wb.create_sheet(name)
+        ws.append(columns)
+        if name == "Reports":
+            for values in headers:
+                storage.append_row(ws, [values.get(c) for c in columns],
+                                   storage.REPORT_FORMATS)
+        else:
+            formats = price_formats if name == "Item List" else None
+            for row in rows[name]:
+                storage.append_row(ws, list(row), formats)
+        storage.finalize_sheet(ws, table_name, columns)
+    return wb
+
+
+def withdrawal_workbook(headers, rows):
+    """Withdrawal_Reports.xlsx as fsr_withdrawal.write_withdrawal_report()
+    makes it."""
+    wb = storage.Workbook()
+    wb.remove(wb.active)
+    for name, (table_name, columns) in fsr_withdrawal.WITHDRAWAL_SHEETS.items():
+        ws = wb.create_sheet(name)
+        ws.append(columns)
+        if name == fsr_withdrawal.HEADER_SHEET:
+            for values in headers:
+                storage.append_row(ws, [values.get(c) for c in columns],
+                                   storage.REPORT_FORMATS)
+        else:
+            for row in rows[name]:
+                storage.append_row(ws, list(row))
+        storage.finalize_sheet(ws, table_name, columns)
+    return wb
+
+
+def write_export(store, targets=None, force=False):
+    """Write both workbooks from the database. Raises ChangedOutside, and
+    writes nothing, when an exported file was changed since the program
+    wrote it (unless `force`). `targets`: {"main": path, "withdrawal":
+    path} to write elsewhere (the migration's check); then no note is kept.
+    Returns the change counter written."""
+    import fsr_sqlite_store as sq
+    keep_note = targets is None
+    targets = targets or export_paths(store)
+    if keep_note and not force:
+        changed = changed_outside(store)
+        if changed:
+            raise ChangedOutside(changed)
+    snap = _snapshot(store)
+    notes = dict((load_state(store.excel_path) or {}).get("files") or {}) \
+        if keep_note else {}
+
+    main_headers, main_rows = snap[sq.MAIN]
+    _save(main_workbook(main_headers, main_rows), targets["main"])
+    if keep_note:
+        notes["main"] = file_note(targets["main"])
+
+    book_headers, book_rows = snap[sq.BOOK]
+    # The Withdrawal workbook exists once there is a PO-linked report (as
+    # before); one that exists already is kept up to date.
+    if book_headers or Path(targets["withdrawal"]).exists():
+        _save(withdrawal_workbook(book_headers, book_rows),
+              targets["withdrawal"])
+        if keep_note:
+            notes["withdrawal"] = file_note(targets["withdrawal"])
+    if keep_note:
+        save_state(store.excel_path, snap["changes"], notes)
+    return snap["changes"]
