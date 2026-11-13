@@ -5,7 +5,8 @@ same harness as the GUI tests) on COPIES in a scratch folder:
 
   python tools/measure_performance.py --code <folder with the code>
          --work <scratch folder> --sizes 300 1000 3000
-         [--real <copy of a real workbook>] [--mysql] --out results.json
+         [--real <copy of a real workbook>] [--mysql] [--sqlite]
+         --out results.json
 
 * --code: the program to measure. For "before" figures this is a git
   worktree of the commit before any change, so later edits cannot creep
@@ -15,6 +16,10 @@ same harness as the GUI tests) on COPIES in a scratch folder:
 * --mysql: against field_survey_test only, through tests/real_mysql.py
   (which refuses any other database). Rows FSR-ZZP-... are removed at the
   end. Without --mysql, MySQL is off.
+* --sqlite (Phase 5): the program moves the workbook into its database at
+  the start, as it does on a PC, and works from there; the Excel export is
+  written in the background (waited for before the next run, and counted
+  in "until_mysql_done").
 
 For every operation: seconds (median of the runs), workbook loads and
 workbook writes by file, MySQL connections and the seconds spent opening
@@ -287,11 +292,13 @@ def wait_until_quiet(g, limit=600):
     while time.perf_counter() - started < limit:
         g["window"].update()
         busy = False
-        for name in ("mysql_sender", "lists_sender"):
+        for name in ("mysql_sender", "lists_sender", "export_sender"):
             sender = live.get(name)
             if sender is not None and not sender.idle():
                 busy = True
         if (live.get("import_state") or {}).get("running"):
+            busy = True
+        if (live.get("db_move_state") or {}).get("running"):
             busy = True
         shell = live.get("app_shell")
         if shell is not None and getattr(shell.service, "loading", False):
@@ -332,21 +339,32 @@ def measure(g, label, action, runs, results, prepare=None, after=None):
 
 
 def run_size(code, work, name, source_book, mysql, real_mysql, runs,
-             imports, saves=True):
+             imports, saves=True, sqlite=False):
     sys.path.insert(0, str(code / "tests"))
     import gui_harness as h
     import fsr_storage as storage
 
-    home = work / f"home_{name}_{'mysql' if mysql else 'off'}"
+    home = work / (f"home_{name}_{'mysql' if mysql else 'off'}"
+                   + ("_sqlite" if sqlite else ""))
     if home.exists():
         shutil.rmtree(home)
     (home / "excel").mkdir(parents=True)
     book = home / "excel" / "Field_Survey_Reports.xlsx"
     shutil.copy2(source_book, book)
 
-    g, answers = h.start_app(home)
+    started = time.perf_counter()
+    g, answers = h.start_app(home, {"FSR_NO_SQLITE": "0" if sqlite
+                                    else "1"})
     live = g["save_report"].__globals__
-    for name in ("mysql_sender", "lists_sender"):   # the real program
+    results = {}
+    if sqlite:
+        wait_until_quiet(g, limit=3600)     # the move into the database
+        results["start incl. the move into the database"] = {
+            "seconds": round(time.perf_counter() - started, 3)}
+        print("  moved:", [m for k, t, m in answers.calls
+                           if t == "Reports Database"], flush=True)
+        assert live["data_store"]().kind == "sqlite"
+    for name in ("mysql_sender", "lists_sender", "export_sender"):
         if name in live:                            # works in the
             live[name].inline = False               # background
     storage.set_control_initials("ZZP")
@@ -358,7 +376,6 @@ def run_size(code, work, name, source_book, mysql, real_mysql, runs,
         if "check_mysql_status" in live:
             pass
         live["mysql_numbers"]["values"] = []
-    results = {}
     try:
         controls = [row[0] for row in storage.list_saved_reports(book)]
         target = sorted(controls)[len(controls) // 2]
@@ -462,6 +479,7 @@ def main():
     parser.add_argument("--imports", nargs="*", type=int,
                         default=[1, 50, 200])
     parser.add_argument("--no-saves", action="store_true")
+    parser.add_argument("--sqlite", action="store_true")
     parser.add_argument("--out", required=True, type=Path)
     args = parser.parse_args()
 
@@ -490,11 +508,12 @@ def main():
                 build_workbook(storage, source, size)
         print(f"{name} reports, MySQL {'on' if args.mysql else 'off'}",
               flush=True)
-        key = f"{name}|{'mysql' if args.mysql else 'off'}"
+        key = (f"{name}|{'mysql' if args.mysql else 'off'}"
+               + ("|sqlite" if args.sqlite else ""))
         found = out.get(key, {})
         found.update(run_size(code, work, name, source, args.mysql,
                               real_mysql, args.runs, args.imports,
-                              saves=not args.no_saves))
+                              saves=not args.no_saves, sqlite=args.sqlite))
         out[key] = found
         out[key]["workbook_kb"] = round(source.stat().st_size / 1024)
         args.out.write_text(json.dumps(out, indent=2), encoding="utf-8")

@@ -73,6 +73,9 @@ def start_app(home, extra_env=None):
     # separately (tests/test_mysql_background_gui.py), with this off.
     os.environ["FSR_MYSQL_INLINE"] = "1"
     os.environ.pop("FSR_DEMO", None)
+    # The GUI tests of the workbook's own behaviour keep the reports in the
+    # workbook; the tests of the reports database pass FSR_NO_SQLITE="0".
+    os.environ["FSR_NO_SQLITE"] = "1"
     for key, value in (extra_env or {}).items():
         os.environ[key] = value
     sys.path.insert(0, str(ROOT))
@@ -146,6 +149,9 @@ def stop_app(app, answers):
     answers.uninstall()
     os.environ.pop("FSR_HOME", None)
     os.environ.pop("FSR_MYSQL_INLINE", None)
+    os.environ.pop("FSR_NO_SQLITE", None)
+    import fsr_sqlite_store
+    fsr_sqlite_store.listeners.clear()      # nothing of this window is left
     # The program put the test user's initials into new Control #s; tests
     # that run after this one start without initials again.
     import fsr_storage

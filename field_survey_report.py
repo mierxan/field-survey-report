@@ -84,6 +84,9 @@ import fsr_mysql_guard             # never overwrite another copy's report
 import fsr_mysql_sender            # MySQL in the background
 import fsr_save_journal            # finishes a save that stopped halfway
 import fsr_store                   # the ONE storage interface
+import fsr_sqlite_export           # the Excel export of the database
+import fsr_sqlite_migrate          # the move into the database, once
+import fsr_sqlite_store            # the reports database (Phase 5)
 import fsr_save_ui
 import fsr_open_dialog
 import fsr_weekly
@@ -239,13 +242,13 @@ def initial_excel_path():
 
 
 def data_store(path=None, root="default"):
-    """The storage of the Excel file in use (fsr_store.ExcelStore): every
+    """The storage of the Excel file in use (fsr_store.open_store): every
     read and write of report data goes through it. `path`: another
     workbook; `root`: the Demo Mode folder (default: as the program
     runs)."""
     if root == "default":
         root = DATA_DIR if DEMO_MODE else None
-    return fsr_store.ExcelStore(path or excel_state["path"], root)
+    return fsr_store.open_store(path or excel_state["path"], root)
 
 
 def withdrawal_book():
@@ -2920,6 +2923,148 @@ def lists_round_done(item):
     messagebox.showwarning("PO_Master - Not Updated", text, parent=window)
 
 
+# ---------- the reports database and its Excel export (Phase 5) ----------
+
+EXPORT_RETRY_MS = 30_000        # the export file open in Excel: try again
+EXPORT_CLOSE_SECONDS = 120      # closing waits this long for the export
+
+
+def sqlite_allowed():
+    """FSR_NO_SQLITE=1 keeps the reports in the workbook (the tests of the
+    workbook's own behaviour use it)."""
+    return os.environ.get("FSR_NO_SQLITE", "").strip() != "1"
+
+
+def request_export_round(path=None):
+    """Bring the Excel export up to date, in the background."""
+    path = Path(path or excel_state["path"])
+    if fsr_sqlite_store.is_active(path):
+        export_sender.request(path=str(path),
+                              root=DATA_DIR if DEMO_MODE else None)
+
+
+def export_round(path, root=None):
+    """Background thread: write the Excel export from the database (no
+    window calls here)."""
+    store = data_store(path, root)
+    if store.kind != "sqlite":
+        return {"skipped": True}
+    if fsr_sqlite_export.is_current(store) and \
+            not fsr_sqlite_export.changed_outside(store):
+        return {"current": True}
+    try:
+        fsr_sqlite_export.write_export(store)
+    except fsr_sqlite_export.ChangedOutside as changed:
+        return {"changed": [str(p) for p in changed.paths]}
+    return {"written": True}
+
+
+def export_round_done(item):
+    """On the window's thread: what the export did."""
+    request = item["request"]
+    result = item["result"] or {}
+    error = item["error"]
+    if result.get("changed"):
+        settle_changed_export(request.get("path"))
+        return
+    if error is None:
+        export_state["warned"] = False
+        return
+    if isinstance(error, PermissionError):
+        window.after(EXPORT_RETRY_MS, request_export_round)
+    if export_state["warned"]:
+        return                      # said once until it works again
+    export_state["warned"] = True
+    if isinstance(error, PermissionError):
+        notify("The Excel file is open in another program, so it could not "
+               "be brought up to date yet - it is, once it is closed. The "
+               "reports are safe in the database.", bootstyle="warning")
+    else:
+        messagebox.showwarning(
+            "Excel Export",
+            f"The Excel file could not be brought up to date:\n{error}\n\n"
+            "The reports are safe in the database; it is tried again at "
+            "the next save.", parent=window)
+
+
+def settle_changed_export(path=None):
+    """An exported workbook was changed outside the program: decide, and
+    say plainly what was done (fsr_sqlite_migrate.reconcile)."""
+    path = Path(path or excel_state["path"])
+    try:
+        result = busy(fsr_sqlite_migrate.reconcile, path,
+                      DATA_DIR if DEMO_MODE else None)
+    except Exception as error:
+        log.exception("A changed Excel file could not be settled")
+        messagebox.showwarning(
+            "Excel File Changed",
+            "The Excel file was changed outside the program, and the "
+            f"program could not decide about it:\n{error}\n\nIt was not "
+            "overwritten. The reports are safe in the database.",
+            parent=window)
+        return
+    if result.status in ("taken", "merged"):
+        messagebox.showwarning("Excel File Changed Outside the Program",
+                               result.message, parent=window)
+    elif result.status == "kept":
+        messagebox.showwarning(
+            "Reports Database",
+            "The reports are used from the Excel file again.\n\n"
+            + result.message, parent=window)
+    if result.status != "unchanged" and \
+            globals().get("app_shell") is not None:
+        app_shell.service.invalidate()
+    request_export_round(path)
+
+
+def start_on_database(then=None):
+    """Once per workbook: move its reports into the database (with a
+    progress window), then settle an export changed outside the program and
+    bring the export up to date. then() runs afterwards (the unfinished
+    saves of the start)."""
+    then = then or finish_unfinished_saves
+    path = Path(excel_state["path"])
+    root = DATA_DIR if DEMO_MODE else None
+    if not sqlite_allowed():
+        then()
+        return
+
+    def done(result, error):
+        db_move_state["running"] = False
+        if error is not None:
+            log.error("Moving the reports into the database failed: %s",
+                      error)
+            messagebox.showwarning(
+                "Reports Database",
+                "The reports stay in the Excel file, as before; nothing "
+                f"was changed.\n\n{error}", parent=window)
+        elif result.status == "migrated":
+            messagebox.showinfo("Reports Database", result.message,
+                                parent=window)
+        elif result.status == "kept":
+            messagebox.showwarning(
+                "Reports Database",
+                "The reports stay in the Excel file, as before; nothing "
+                "was changed.\n\n" + result.message, parent=window)
+        if fsr_sqlite_store.is_active(path):
+            settle_changed_export(path)
+        if result is not None and result.status == "migrated" and \
+                globals().get("app_shell") is not None:
+            app_shell.service.invalidate()
+        then()
+        for options in db_move_state.pop("pending", []):
+            finish_unfinished_saves(**options)
+
+    if fsr_sqlite_store.is_active(path):
+        done(fsr_sqlite_migrate.Result("active"), None)
+        return
+    db_move_state["running"] = True
+    run_with_progress(
+        window, "Moving the reports into the database (this is done once) "
+        "...", lambda progress: fsr_sqlite_migrate.migrate(
+            path, root, progress=progress), done, with_progress=True)
+
+
 def request_lists_round(**flags):
     lists_sender.request(path=excel_state["path"],
                          root=DATA_DIR if DEMO_MODE else None, **flags)
@@ -2952,6 +3097,7 @@ def poll_mysql_sender():
     try:
         mysql_sender.poll()
         lists_sender.poll()
+        export_sender.poll()
         busy_now = not mysql_sender.idle()
         if busy_now != mysql_wait_state["busy"]:
             mysql_wait_state["busy"] = busy_now
@@ -3123,6 +3269,7 @@ def change_excel_file():
     settings["excel_path"] = str(path)
     save_settings()
     new_report(confirm=False)
+    start_on_database(then=lambda: None)
 
 
 def open_file(path):
@@ -3149,6 +3296,12 @@ def finish_unfinished_saves(mysql_ok=False, skip=(), numbers=False,
     MySQL becomes reachable. Safe to run any number of times. This PC's
     files are done here; with mysql_ok the reports waiting for MySQL are
     handed to the background sender."""
+    if db_move_state["running"]:
+        # The reports are being moved into the database: this is done
+        # right after (start_on_database).
+        db_move_state.setdefault("pending", []).append(dict(
+            mysql_ok=mysql_ok, skip=skip, numbers=numbers, adopt=adopt))
+        return []
     path = excel_state["path"]
     if mysql_ok:
         def ask_mysql():
@@ -3938,7 +4091,10 @@ def close_when_sent(close, limit=CLOSE_WAIT_SECONDS):
     offers "Close now". The program keeps running its main loop meanwhile
     (no "Not Responding"). Whatever is not sent stays in the save record
     and goes at the next start. Returns the waiting window, or None."""
-    if mysql_sender.idle():
+    def quiet():
+        return mysql_sender.idle() and export_sender.idle()
+
+    if quiet():
         close()
         return None
 
@@ -3966,6 +4122,9 @@ def close_when_sent(close, limit=CLOSE_WAIT_SECONDS):
             log.warning("Closed while reports were still being sent to "
                         "MySQL (%s); they are sent at the next start.",
                         "Close now" if by_user else "after waiting")
+        if not export_sender.idle():
+            log.warning("Closed before the Excel export was up to date; "
+                        "it is brought up to date at the next start.")
         try:
             bar.stop()
             dialog.destroy()
@@ -3973,7 +4132,10 @@ def close_when_sent(close, limit=CLOSE_WAIT_SECONDS):
             pass
         close()
 
-    tb.Button(dialog, text="Close now; it will be sent at the next start",
+    tb.Button(dialog, text=(
+        "Close now; it will be sent at the next start"
+        if not mysql_sender.idle() else
+        "Close now; the Excel file is brought up to date at the next start"),
               bootstyle="secondary-outline",
               command=lambda: finish(by_user=True)).pack(
         padx=24, pady=(0, 20), fill="x")
@@ -3985,6 +4147,9 @@ def close_when_sent(close, limit=CLOSE_WAIT_SECONDS):
                 data_store().save_record()))
         except Exception:
             count = 0
+        if mysql_sender.idle():
+            message.configure(text="Bringing the Excel file up to date...")
+            return
         message.configure(text=(
             f"Sending {count} report(s) to MySQL..." if count
             else "Finishing the MySQL send..."))
@@ -3993,7 +4158,10 @@ def close_when_sent(close, limit=CLOSE_WAIT_SECONDS):
         if state["done"]:
             return
         mysql_sender.poll()
-        if mysql_sender.idle() or time.monotonic() - started >= limit:
+        export_sender.poll()
+        wait = limit if export_sender.idle() else max(limit,
+                                                      EXPORT_CLOSE_SECONDS)
+        if quiet() or time.monotonic() - started >= wait:
             finish()
             return
         show()
@@ -4115,6 +4283,7 @@ def build_window():
     order it always ran. Every name it makes is a module name, as
     before. Importing this module builds nothing (the functions
     and classes can be used and tested without a window)."""
+    global db_move_state, export_sender, export_state
     global BASE_DIR, CONFIG_DIR, COUNTRY_LIST_KEY, DATA_DIR, DATA_ROOT
     global DEFAULT_EXCEL_NAME, DEMO_MODE, DESTINATION_LIST_KEY
     global DOCUMENT_COLUMNS, DOT_BAD, DOT_OK, DOT_WAIT, EXCEL_ROOT
@@ -5342,6 +5511,17 @@ def build_window():
         inline=os.environ.get("FSR_MYSQL_INLINE", "").strip() == "1")
 
 
+    # ---------- the Excel export of the reports database ----------
+
+    export_state = {"warned": False}
+    db_move_state = {"running": False}
+    export_sender = fsr_mysql_sender.Sender(
+        export_round, export_round_done,
+        inline=os.environ.get("FSR_MYSQL_INLINE", "").strip() == "1")
+    # Every committed write of the database asks for a new export.
+    fsr_sqlite_store.listeners[:] = [request_export_round]
+
+
     unfinished_state = {"unreadable_shown": False}
 
 
@@ -5369,9 +5549,10 @@ def build_window():
     # Start with a new report and its automatic Control #.
     new_report(confirm=False)
 
-    # Saves that stopped halfway last time are finished now (this PC's files;
-    # MySQL follows when the check below finds the server).
-    window.after(300, finish_unfinished_saves)
+    # The reports move into the database (once); then the saves that stopped
+    # halfway last time are finished (this PC's files; MySQL follows when
+    # the check below finds the server).
+    window.after(300, start_on_database)
 
     if "check_mysql_status" in globals():
         window.after(600, check_mysql_status)
