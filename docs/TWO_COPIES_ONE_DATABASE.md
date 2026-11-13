@@ -82,10 +82,17 @@ MySQL's report still has that fingerprint, nobody else changed it.
 ### Control numbers
 
 * A new report gets a number that is free in this PC's workbooks **and** in
-  MySQL, as far as MySQL was seen ("Server active").
-* When Save is clicked on a new report, MySQL is asked again; if another
-  copy used the number in the meantime, the report takes the next free one
-  before anything is written.
+  MySQL, as far as MySQL was seen ("Server active"). MySQL's numbers are
+  read again after every send.
+* Save does not wait for MySQL (Phase 3). If another copy used the number
+  since MySQL was last seen, the background send finds out: the report is
+  given the next number free here and in MySQL, everywhere on this PC
+  (renumbered as with "Save mine under the next free number", forms made
+  again), and sent under that. The user gets an orange notice "… was
+  already used in MySQL by another copy of the program. Your report is now
+  …". Nothing in MySQL is touched. This is done only for the save's own
+  first send. A clash found later is a conflict for you to decide, as
+  below.
 * With MySQL away the number comes from the workbook only. A clash is then
   found when MySQL is back, and you choose (see the three decisions).
 
@@ -134,6 +141,23 @@ number at that moment is kept first, in the same folder.
   reports that differ from MySQL are asked about once.
 * The first start on a large workbook compares every report with MySQL
   once.
+
+## MySQL in the background (Phase 3)
+
+Save, import and the catch-up write this PC's files and leave the MySQL
+step in the save record; a background thread then sends every waiting
+report over ONE connection (each connection costs about 2 seconds on the
+owner's PC). The guard is unchanged: check and write per report under the
+MySQL lock and in one transaction. The window and the background share
+the ledger under a lock, so a workbook write and the renewal of the
+ledger's note of it are one step for the background - never "workbook
+newer than its note", which would make this copy's own reports look like
+someone else's.
+
+What is still waiting for MySQL is shown beside the MySQL circles
+("2 waiting for MySQL", "Sending 2 to MySQL..."). A conflict found in the
+background shows "MySQL - Not Updated" with the reason and opens MySQL
+Conflicts.
 
 ## The fault found on 12 November 2026
 

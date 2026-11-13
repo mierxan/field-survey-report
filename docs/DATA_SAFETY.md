@@ -69,9 +69,9 @@ the program now notes the save in
 
     Documents\Field Survey Report\json\Field_Survey_Reports_pending_saves.json
 
-and ticks off each place as it is written. When all are done the note is
-removed. A note that is still there - power cut, a file open in Excel,
-MySQL not reachable - is finished automatically:
+and, when the save on this PC is done, notes what is still open. When all
+are done the note is removed. A note that is still there - power cut, a
+file open in Excel, MySQL not reachable - is finished automatically:
 
 * at the next start of the program,
 * after the next save,
@@ -92,8 +92,11 @@ the workbook.
 |---|---|
 | Excel file open in Excel | "File In Use" - nothing was saved, click Save again (as before). |
 | Report saved, but one of the other files could not be written | "Report Saved - Note" names the file and adds "It will also be finished automatically at the next save or the next start." |
-| Report saved, MySQL not reachable | No message box. The green notice becomes orange: "Report … saved on this PC - MySQL was not reached; it will be sent at the next save or start". The status shows "Server inactive". |
-| MySQL refused the login, a table is missing, ... | "Report Saved - Note: The report was saved to Excel, but NOT to MySQL" with the reason (as before). |
+| Report saved (owner's PC) | Green notice "Report … saved on this PC … Sending it to MySQL...", then, a moment later, "Report … is now in MySQL". Beside the MySQL circles: "Sending 1 to MySQL..." while it is on its way. The window does not wait (Phase 3). |
+| Report saved, MySQL not reachable | No message box. An orange notice: "MySQL was not reached - N report(s) saved on this PC wait; they are sent at the next save or start". Beside the circles: "N waiting for MySQL". The status shows "Server inactive". |
+| MySQL refused the login, a table is missing, ... | "MySQL - Not Updated": the reports are saved on this PC but not in MySQL, with the reason. |
+| An import was cut off before the Excel file was written | "Unfinished Save": "The import of N report(s) ... was cut off before the Excel file was changed. NOTHING was imported; import the file again." |
+| An import was cut off after the Excel file was written | "Unfinished Save": "The import of N report(s) ... had not finished. The Excel file already held all of them; it was completed now: ... Everything was imported." |
 | An unfinished save was completed | "Unfinished Save": "<Control #>: the save of <date> had not finished. It was completed now: <what>." |
 | It still cannot be written | "Unfinished Save" (warning): "<what> could still NOT be written (<reason>). It will be tried again at the next save or the next start." |
 | The report was saved again since | "Unfinished Save": "The newer version was kept; the unfinished one was not applied." |
@@ -118,8 +121,19 @@ the workbook.
   Demo Mode.)
 * The official report forms (First Page, Cargo Details) are not part of the
   note; use Print / PDF to make them again.
-* Each save writes the small note file several times (once per step):
-  about 0.1 s more per save on today's workbook.
+* The note is written twice per save (three times for a new report), not
+  once per step: every step can be repeated, so a save cut off between two
+  steps simply has those steps done again at the next start. (Phase 3; it
+  was about seven writes.)
+* MySQL is sent in the background (Phase 3). The step is ticked off only
+  after MySQL has committed. A program closed, or a PC losing power, while
+  a report is on its way leaves the step open; at the next start the report
+  is sent again, and the overwrite guard finds MySQL either without it
+  (written then) or equal to it (nothing written, it counts as this copy's
+  own). Closing the program waits up to 8 seconds for a send in progress.
+* An import is written into the workbook in ONE write for the whole file
+  (Phase 3). The file is replaced as a whole, so it holds either every
+  report of the import or none, and the note says which.
 
 ## 3. Control # and letter case
 

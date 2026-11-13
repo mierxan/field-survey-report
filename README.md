@@ -71,6 +71,13 @@ a TEST COPY that refuses the real database - see
 [docs/TWO_COPIES_ONE_DATABASE.md](docs/TWO_COPIES_ONE_DATABASE.md), which
 also has the steps for the test database.
 
+Save does not wait for MySQL: the report is saved on this PC and sent in
+the background ("N waiting for MySQL" beside the MySQL circles). An import
+is written in one go, with a progress window. Measured times:
+[docs/PERFORMANCE_BASELINE.md](docs/PERFORMANCE_BASELINE.md); a proposal for
+larger data: [docs/STORAGE_PROPOSAL.md](docs/STORAGE_PROPOSAL.md); open
+decisions for the owner: [docs/OPEN_DECISIONS.md](docs/OPEN_DECISIONS.md).
+
 ## 3. The modules (left navigation bar)
 
 | Module | What it does |
