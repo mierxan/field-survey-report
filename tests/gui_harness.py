@@ -85,8 +85,13 @@ def start_app(home, extra_env=None):
     answers = AutoAnswers()
     answers.install()
     try:
-        app = runpy.run_path(str(ROOT / "field_survey_report.py"),
-                             run_name="fsr_under_test")
+        # Loading the module builds nothing (Phase 4); build_window() then
+        # sets up the program and its window, as main() does. The tests
+        # get the module's own globals (runpy hands back a copy).
+        loaded = runpy.run_path(str(ROOT / "field_survey_report.py"),
+                                run_name="fsr_under_test")
+        app = loaded["build_window"].__globals__
+        app["build_window"]()
     finally:
         app_auth.run_login = saved_login
         tkinter.Misc.mainloop = saved_mainloop

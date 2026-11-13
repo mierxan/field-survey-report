@@ -129,120 +129,6 @@ try:
 except ImportError:
     app_auth = None
 
-# Where things live. Managed workbooks and JSON data use parallel folders.
-FROZEN = bool(getattr(sys, "frozen", False))
-if FROZEN:
-    BASE_DIR = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
-    _documents = Path.home() / "Documents"
-    DATA_ROOT = (_documents if _documents.exists() else Path.home()) / \
-        "Field Survey Report"
-    PRIVATE_JSON_DIR = Path(os.environ.get("APPDATA") or Path.home()) / \
-        "FieldSurveyReport"
-else:
-    BASE_DIR = Path(__file__).resolve().parent
-    DATA_ROOT = BASE_DIR / "data"
-
-# Demo Mode keeps sample workbooks and JSON in separate subfolders; MySQL is
-# disabled. FSR_HOME provides the same layout for automated tests.
-DEMO_MODE = os.environ.get("FSR_DEMO", "").strip() == "1"
-_home = os.environ.get("FSR_HOME", "").strip()
-if _home:
-    DATA_ROOT = Path(_home)
-
-JSON_ROOT = DATA_ROOT / "json"
-JSON_DIR = JSON_ROOT
-EXCEL_ROOT = DATA_ROOT / "excel"
-if DEMO_MODE and not _home:
-    JSON_DIR = JSON_ROOT / "demo_data"
-    DATA_DIR = EXCEL_ROOT / "demo_data"
-else:
-    DATA_DIR = EXCEL_ROOT
-if not FROZEN or _home:
-    PRIVATE_JSON_DIR = DATA_ROOT / "json" / "private"
-CONFIG_DIR = PRIVATE_JSON_DIR
-
-fsr_paths.configure_data_dirs(DATA_ROOT, JSON_ROOT, EXCEL_ROOT)
-
-for _folder in (DATA_DIR, JSON_DIR, PRIVATE_JSON_DIR):
-    try:
-        _folder.mkdir(parents=True, exist_ok=True)
-    except OSError as error:
-        raise OSError(f"Could not create application data folder {_folder}: "
-                      f"{error}") from error
-
-MASTER_LIST_FILE = JSON_DIR / "master_list.json"
-SETTINGS_FILE = ((JSON_DIR / "settings.json") if DEMO_MODE and not _home
-                 else PRIVATE_JSON_DIR / "settings.json")
-USERS_FILE = PRIVATE_JSON_DIR / "users.json"
-LOG_FILE = PRIVATE_JSON_DIR / "field_survey_report.log"
-
-if not DEMO_MODE:
-    if not MASTER_LIST_FILE.exists():
-        legacy_master_list = DATA_ROOT / "master_list.json"
-        if legacy_master_list.exists():
-            MASTER_LIST_FILE.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(legacy_master_list, MASTER_LIST_FILE)
-    _default_files = [
-        (MASTER_LIST_FILE, BASE_DIR / "data" / "json" / "master_list.json"),
-    ]
-    if fsr_edition.IS_OWNER_EDITION:
-        _default_files.append(
-            (PRIVATE_JSON_DIR / "db_config.json",
-             BASE_DIR / "data" / "json" / "private" / "installer_defaults"
-             / "db_config.json"))
-    for _target, _source in _default_files:
-        if not _target.exists() and _source.exists() and _target != _source:
-            _target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(_source, _target)
-
-# The User edition keeps everything in this PC's Excel/JSON files and sends
-# Master Data files to the owner; only the Owner edition uses MySQL.
-IS_OWNER_EDITION = fsr_edition.IS_OWNER_EDITION
-MYSQL_ALLOWED = IS_OWNER_EDITION and not DEMO_MODE
-
-if db_mysql is not None:
-    db_mysql.CONFIG_FILE = PRIVATE_JSON_DIR / "db_config.json"
-    if not MYSQL_ALLOWED:
-        db_mysql.is_enabled = lambda: False       # Demo Mode / User edition
-    else:
-        # A password still written in db_config.json goes to the Windows
-        # Credential Manager (the file keeps it if that is not possible).
-        # Whatever goes wrong here must never stop the program from
-        # starting: the password then simply stays where it is.
-        try:
-            db_mysql.move_password_to_store()
-        except Exception:
-            logging.getLogger("fsr").exception(
-                "The MySQL password could not be moved to the Credential "
-                "Manager")
-
-# Names of the lists inside master_list.json.
-LOCATION_LIST_KEY = "location_list"
-DESTINATION_LIST_KEY = "destination_list"
-COUNTRY_LIST_KEY = "country_of_origin_list"
-
-THEME_LIGHT = "flatly"
-THEME_DARK = "superhero"          # becomes "fsr_night" when it can be built
-NIGHT_THEME = "fsr_night"         # the dark navy dashboard look
-UI_VERSION = 3                    # bump to show the new look once
-
-# =====================================================
-# LOGGING + SETTINGS
-# =====================================================
-
-log = logging.getLogger("fsr")
-log.setLevel(logging.INFO)
-try:
-    _handler = RotatingFileHandler(
-        LOG_FILE, maxBytes=500_000, backupCount=3, encoding="utf-8"
-    )
-    _handler.setFormatter(
-        logging.Formatter("%(asctime)s %(levelname)s %(message)s")
-    )
-    log.addHandler(_handler)
-except OSError:
-    log.addHandler(logging.NullHandler())      # read-only folder: no log file
-
 
 # write_json_atomic() is in fsr_storage.py
 
@@ -255,43 +141,11 @@ def load_settings():
         return {}
 
 
-settings = load_settings()
-
-
 def save_settings():
     try:
         write_json_atomic(SETTINGS_FILE, settings)
     except (OSError, TypeError):
         log.exception("Could not save settings")
-
-
-# =====================================================
-# MAIN WINDOW
-# =====================================================
-
-if sys.platform == "win32":
-    try:
-        import ctypes
-        ctypes.windll.shcore.SetProcessDpiAwareness(1)   # sharp text on HiDPI
-    except (AttributeError, OSError):   # older Windows: no shcore / refused
-        pass
-
-try:
-    window = tb.Window(themename="superhero")
-except Exception:
-    window = tb.Window(themename=THEME_LIGHT)
-
-style = tb.Style()
-window.title("Field Survey Report")
-
-NIGHT_COLORS = {
-    "primary": "#5bc0eb", "secondary": "#3a4a6b", "success": "#2fbf9b",
-    "info": "#7fd3f0", "warning": "#f5c04a", "danger": "#e8554e",
-    "light": "#c5d0e6", "dark": "#0d1730", "bg": "#0f1a38",
-    "fg": "#e8eefc", "selectbg": "#2a3f6f", "selectfg": "#ffffff",
-    "border": "#3b5b8f", "inputfg": "#e8eefc", "inputbg": "#17254a",
-    "active": "#1d2d57",
-}
 
 
 def make_night_theme():
@@ -313,40 +167,6 @@ def make_night_theme():
     return False
 
 
-if make_night_theme():
-    THEME_DARK = NIGHT_THEME
-
-# The light look of the warehouse update (navy navigation, white panels);
-# warehouse_ui/ holds the navigation and the warehouse modules.
-try:
-    import warehouse_ui
-    from warehouse_ui import theme as ui_theme
-    if ui_theme.register_day_theme(style):
-        THEME_LIGHT = ui_theme.DAY_THEME
-except Exception:
-    warehouse_ui = ui_theme = None
-    log.exception("The warehouse modules could not be loaded")
-
-try:
-    saved_theme = settings.get("theme")
-    start_theme = (saved_theme if settings.get("ui_version") == UI_VERSION
-                   and saved_theme in (THEME_LIGHT, THEME_DARK)
-                   else THEME_LIGHT)
-    style.theme_use(start_theme)
-    settings["theme"] = start_theme
-except Exception:
-    log.exception("Could not apply the start theme")
-settings["ui_version"] = UI_VERSION
-
-# Window / taskbar icon = logo.png (+ logo.ico on Windows).
-# The app still starts if the logo files are missing. The icon is set
-# again a moment after start-up, because ttkbootstrap puts its own
-# feather icon on the window while it is being built.
-LOGO_PNG = BASE_DIR / "logo.png"
-LOGO_ICO = BASE_DIR / "logo.ico"
-logo = None
-
-
 def apply_window_icon():
     global logo
     try:
@@ -361,11 +181,6 @@ def apply_window_icon():
     except tkinter.TclError:
         pass
 
-
-apply_window_icon()
-window.after(200, apply_window_icon)
-window.after(1200, apply_window_icon)
-
 # =====================================================
 # SIGN IN  (the Field Survey Report opens only after signing in)
 # =====================================================
@@ -377,62 +192,6 @@ def icon_for_dialog(dialog):
             dialog.iconphoto(False, logo)
     except tkinter.TclError:
         pass
-
-
-window.withdraw()
-if app_auth is None:
-    messagebox.showerror(
-        "Field Survey Report",
-        f"The sign in module was not found.\n\nPut app_auth.py here:\n"
-        f"{BASE_DIR}")
-    window.destroy()
-    sys.exit(1)
-
-try:
-    # Only the Owner edition is installed with the owner's account.
-    user_store = app_auth.UserStore(
-        USERS_FILE, use_seed=fsr_edition.IS_OWNER_EDITION,
-        site_pc=not fsr_edition.IS_OWNER_EDITION)
-except app_auth.UserDataError as error:
-    messagebox.showerror(
-        "Field Survey Report",
-        f"{error}\n\nThe account file was not overwritten.")
-    window.destroy()
-    sys.exit(1)
-except OSError as error:
-    messagebox.showerror(
-        "Field Survey Report",
-        f"The user file could not be opened:\n{USERS_FILE}\n\n{error}")
-    window.destroy()
-    sys.exit(1)
-
-if user_store.backup_path is not None:
-    log.info("The account file was brought up to date. The earlier file is "
-             "kept as %s; %d retired account(s) removed.",
-             user_store.backup_path, len(user_store.removed_accounts))
-if user_store.problem is not None:
-    log.warning("The account file is not trusted (%s): sign in is limited "
-                "to an Administrator until it is reviewed.",
-                user_store.problem["kind"])
-
-current_user = app_auth.run_login(
-    window, user_store, last_initials=settings.get("last_login_initials", ""),
-    on_icon=icon_for_dialog)
-if current_user is None:
-    window.destroy()
-    sys.exit(0)
-
-settings["last_login_initials"] = current_user.get("initials", "")
-save_settings()
-USER_FULL_NAME = app_auth.full_name(current_user)      # printed on the forms
-set_control_initials(current_user.get("initials"))     # in every new Control #
-print_name["value"] = USER_FULL_NAME   # preparer of this printout (fsr_forms)
-IS_OWNER = app_auth.is_admin(current_user)   # Owner or site Administrator
-ROLE_LABEL = app_auth.role_text(current_user)
-# A copy that runs from the source folder is a TEST COPY: the title bar
-# always says so, and it does not connect to the real database unless
-# db_config.json explicitly allows it (db_mysql.refuses_real_database).
-TEST_COPY = not FROZEN
 
 
 def title_prefix():
@@ -451,10 +210,6 @@ def title_prefix():
     return "TEST COPY (REAL DATABASE) - " if real else "TEST COPY - "
 
 
-window.title(f"{title_prefix()}Field Survey Report "
-             f"({fsr_edition.LABEL} edition) - {USER_FULL_NAME}")
-
-
 def center_window(win, width, height, top_margin=10):
     """Open the window at the top-center of any screen size."""
     screen_w = win.winfo_screenwidth()
@@ -468,16 +223,6 @@ def center_window(win, width, height, top_margin=10):
     win.geometry(f"{width}x{height}+{x}+{y}")
 
 
-center_window(window, 1440, 820)
-window.minsize(1180, 640)
-
-default_font = tkfont.nametofont("TkDefaultFont")
-bold_font = default_font.copy()
-bold_font.configure(weight="bold")
-title_font = default_font.copy()
-title_font.configure(weight="bold", size=default_font.cget("size") + 8)
-
-
 def log_unhandled(exc_type, exc_value, exc_tb):
     log.error("Unhandled error", exc_info=(exc_type, exc_value, exc_tb))
     messagebox.showerror(
@@ -488,26 +233,11 @@ def log_unhandled(exc_type, exc_value, exc_tb):
     )
 
 
-window.report_callback_exception = log_unhandled
-
-# =====================================================
-# STATE
-# =====================================================
-
-DEFAULT_EXCEL_NAME = ("Field_Survey_Reports_DEMO.xlsx" if DEMO_MODE
-                      else "Field_Survey_Reports.xlsx")
-
-
 def initial_excel_path():
     saved = settings.get("excel_path")
     if saved and Path(saved).parent.exists():
         return Path(saved)
     return DATA_DIR / DEFAULT_EXCEL_NAME
-
-
-# Excel file in use + whether the form shows a saved report / has changes.
-excel_state = {"path": initial_excel_path()}
-report_state = {"editing": False, "dirty": False}
 
 
 def data_store(path=None, root="default"):
@@ -525,17 +255,6 @@ def withdrawal_book():
     must stay inside the demo folder (ValueError otherwise)."""
     return fsr_paths.withdrawal_workbook_path(
         excel_state["path"], DATA_DIR if DEMO_MODE else None)
-pdf_state = {"folder": settings.get("pdf_folder")}
-
-# Filled in later (declared here so callbacks can refer to them).
-item_frames = []
-findings_frame = None
-
-# =====================================================
-# SCROLLABLE TAB
-# =====================================================
-
-scroll_frames = []
 
 
 class ScrollFrame(tb.Frame):
@@ -682,11 +401,6 @@ def scroll_instead_of_change(combo):
         combo.bind(sequence, handler)
 
 
-window.bind_all("<MouseWheel>", on_mousewheel)
-window.bind_all("<Button-4>", on_mousewheel)
-window.bind_all("<Button-5>", on_mousewheel)
-
-
 def scroll_to_widget(widget):
     for sf in scroll_frames:
         if sf.contains(widget):
@@ -700,20 +414,6 @@ def on_focus_in(event):
             scroll_to_widget(event.widget)
     except (AttributeError, KeyError, tkinter.TclError):
         pass        # e.g. the drop-down list of a combobox (a plain string)
-
-
-window.bind_all("<FocusIn>", on_focus_in)
-
-# =====================================================
-# KEYBOARD NAVIGATION
-#   Up / Down        in a text box: go to the box above / below
-#   Ctrl + Up / Down in a drop-down: go to the box above / below
-#   Left / Right     move inside the text (and between tabs on a tab)
-#   Page Up / Down   scroll the page;  Ctrl + Home / End: top / bottom
-#   Ctrl + PgUp / PgDn  (Ctrl + Tab)  previous / next tab
-# =====================================================
-
-FIELD_CLASSES = ("TEntry", "TCombobox")
 
 
 def field_is_usable(widget):
@@ -804,31 +504,6 @@ def scroll_page(event, kind):
     return "break"
 
 
-window.bind_class("TEntry", "<Up>",
-                  lambda e: move_to_neighbour(e, -1), add="+")
-window.bind_class("TEntry", "<Down>",
-                  lambda e: move_to_neighbour(e, 1), add="+")
-window.bind_class("TCombobox", "<Control-Up>",
-                  lambda e: move_to_neighbour(e, -1), add="+")
-window.bind_class("TCombobox", "<Control-Down>",
-                  lambda e: move_to_neighbour(e, 1), add="+")
-window.bind_all("<Prior>", lambda e: scroll_page(e, -1), add="+")
-window.bind_all("<Next>", lambda e: scroll_page(e, 1), add="+")
-window.bind_all("<Control-Home>", lambda e: scroll_page(e, "top"), add="+")
-window.bind_all("<Control-End>", lambda e: scroll_page(e, "bottom"), add="+")
-
-
-# =====================================================
-# DIRTY FLAG (unsaved changes)
-# =====================================================
-
-IGNORED_KEYS = {
-    "Tab", "ISO_Left_Tab", "Shift_L", "Shift_R", "Control_L", "Control_R",
-    "Alt_L", "Alt_R", "Escape", "Up", "Down", "Left", "Right", "Home",
-    "End", "Prior", "Next", "Caps_Lock", "Return", "Num_Lock",
-}
-
-
 def set_dirty(flag):
     if report_state["dirty"] != flag:
         report_state["dirty"] = flag
@@ -869,10 +544,6 @@ def on_combo_selected(event):
             mark_dirty()
     except (AttributeError, KeyError, tkinter.TclError):
         pass
-
-
-window.bind_all("<KeyRelease>", on_any_key, add="+")
-window.bind_all("<<ComboboxSelected>>", on_combo_selected, add="+")
 
 # =====================================================
 # JSON MASTER LIST CONFIGURATION
@@ -953,21 +624,6 @@ def save_master_lists():
             f"Unable to save master_list.json:\n{error}"
         )
         return False
-
-
-master_data = load_master_lists()
-
-# =====================================================
-# SEARCHABLE COMBOBOX
-# =====================================================
-
-NAV_KEYS = (
-    "Return", "Escape", "Tab", "ISO_Left_Tab",
-    "Up", "Down", "Left", "Right", "Home", "End",
-    "Shift_L", "Shift_R", "Control_L", "Control_R",
-)
-
-searchable_combos = []
 
 
 def create_searchable_combobox(parent, list_key, width=30):
@@ -1069,13 +725,6 @@ def create_searchable_combobox(parent, list_key, width=30):
     combo.commit = commit
     searchable_combos.append(combo)
     return combo
-
-
-# =====================================================
-# LINE LIMIT DISPLAY
-# =====================================================
-
-LOW_LINES_WARNING = 3      # turn orange when this few lines are left
 
 
 def add_button_text(used, limit):
@@ -1265,9 +914,6 @@ def format_entry(entry, kind):
         set_entry(entry, normalized)
 
 
-FIELD_COLUMNS = 4       # every frame of the General tab shares this grid
-
-
 def build_field_row(parent, fields, layout=None):
     """
     Label above a box for every field. Returns {key: widget}.
@@ -1376,13 +1022,6 @@ def validate_format_fields():
     return True
 
 
-# =====================================================
-# STATUS / NOTIFICATIONS
-# =====================================================
-
-status_var = tkinter.StringVar()
-
-
 def notify(message, bootstyle="success"):
     """Short non-blocking message (status bar + toast)."""
     status_var.set(message)
@@ -1419,19 +1058,6 @@ def mysql_away(error, what_now):
     return True
 
 
-# =====================================================
-# LAYOUT  (dashboard style)
-#   top bar | icon rail | sections menu | page | commands panel
-# =====================================================
-
-NAV_WIDTH = 210
-PANEL_WIDTH = 300
-small_font = default_font.copy()
-small_font.configure(weight="bold", size=max(default_font.cget("size") - 1, 8))
-panel_font = default_font.copy()
-panel_font.configure(weight="bold", size=default_font.cget("size") + 4)
-
-
 def add_tip(widget, text):
     if ToolTip is None:
         return
@@ -1446,45 +1072,6 @@ def section_title(parent, text, first=False):
                      bootstyle="info")
     label.pack(anchor="w", pady=(0 if first else 16, 5))
     return label
-
-
-# ---------- navigation sidebar (filled by warehouse_ui at start-up) ----------
-if ui_theme is not None:
-    ui_theme.apply_styles(style)
-sidebar = ttk.Frame(window, style="Sidebar.TFrame", width=272)
-sidebar.pack(side="left", fill="y")
-sidebar.pack_propagate(False)
-
-# ---------- top bar ----------
-topbar = tb.Frame(window, padding=(16, 10))
-topbar.pack(side="top", fill="x")
-
-module_title = tb.Label(topbar, text="Inspection Reports", font=title_font)
-module_title.pack(side="left", padx=(4, 12))
-if DEMO_MODE:
-    tb.Label(topbar, text="DEMO MODE - TEST DATA ONLY", font=bold_font,
-             bootstyle="inverse-warning", padding=(10, 3)).pack(
-        side="left", padx=(0, 4))
-status_badge = tb.Label(
-    topbar, text="NEW REPORT", bootstyle="inverse-info",
-    padding=(10, 3), font=bold_font
-)
-status_badge.pack(side="left", padx=16)
-
-# the MySQL status (three circles + label) is placed here further down
-mysql_box = tb.Frame(topbar)
-mysql_box.pack(side="right")
-
-# signed-in user + account menu (left of the MySQL circles)
-user_box = tb.Frame(topbar)
-user_box.pack(side="right", padx=(0, 22))
-account_menu_button = tb.Menubutton(
-    user_box, text=f"{USER_FULL_NAME}  ({ROLE_LABEL})  \u25be",
-    bootstyle="secondary-outline"
-)
-account_menu_button.pack()
-account_menu = tkinter.Menu(account_menu_button, tearoff=False)
-account_menu_button["menu"] = account_menu
 
 
 def rebuild_account_menu():
@@ -1519,10 +1106,6 @@ def rebuild_account_menu():
         waiting = user_store.pending_count()
         account_menu_button.configure(
             bootstyle="warning-outline" if waiting else "secondary-outline")
-
-
-rebuild_account_menu()
-account_menu.configure(postcommand=rebuild_account_menu)
 
 
 def restart_program():
@@ -1645,39 +1228,6 @@ def open_mysql_settings():
               command=dialog.destroy, width=10).pack(side="right", padx=8)
     dialog.bind("<Escape>", lambda e: dialog.destroy())
 
-ttk.Separator(window, orient="horizontal").pack(side="top", fill="x")
-
-# ---------- body: 4 columns ----------
-body = tb.Frame(window)
-body.pack(side="top", fill="both", expand=True)
-body.columnconfigure(2, weight=1)
-body.rowconfigure(0, weight=1)
-
-# icon rail (new / open / light-dark)
-rail = tb.Frame(body, padding=(10, 14))
-rail.grid(row=0, column=0, sticky="ns")
-rail_new = tb.Button(rail, text="+", width=3, bootstyle="info-outline",
-                     command=lambda: new_report())
-rail_new.pack(pady=(0, 8))
-rail_open = tb.Button(rail, text="☰", width=3, bootstyle="info-outline",
-                      command=lambda: open_saved_report_dialog())
-rail_open.pack(pady=8)
-theme_button = tb.Button(rail, text="◐", width=3,
-                         bootstyle="info-outline",
-                         command=lambda: toggle_theme())
-theme_button.pack(pady=8)
-add_tip(rail_new, "New report (Ctrl+N)")
-add_tip(rail_open, "Open saved report (Ctrl+O)")
-add_tip(theme_button, "Light / dark mode")
-
-# sections menu (filled in once all pages exist)
-nav = tb.Frame(body, padding=(8, 14), width=NAV_WIDTH)
-nav.grid(row=0, column=1, sticky="ns")
-nav.pack_propagate(False)
-section_title(nav, "Sections", first=True)
-nav_holder = tb.Frame(nav)
-nav_holder.pack(fill="x")
-
 # the pages (their own tab strip is hidden; the sections menu drives them)
 def hide_notebook_tabs():
     """Layouts belong to a theme, so this also runs after a theme change."""
@@ -1688,55 +1238,6 @@ def hide_notebook_tabs():
     except Exception:
         log.exception("Could not hide the tab strip")
         return False
-
-
-if hide_notebook_tabs():
-    notebook = ttk.Notebook(body, style="Hidden.TNotebook")
-else:
-    notebook = tb.Notebook(body, bootstyle="primary")
-notebook.grid(row=0, column=2, sticky="nsew", padx=(6, 6), pady=(8, 8))
-
-general_tab = ScrollFrame(notebook)
-documents_tab = ScrollFrame(notebook)
-items_tab = ScrollFrame(notebook, horizontal=True)
-findings_tab = ScrollFrame(notebook)
-
-notebook.add(general_tab, text="  General  ")
-notebook.add(documents_tab, text="  Documents & Goods  ")
-notebook.add(items_tab, text="  Item Lists  ")
-notebook.add(findings_tab, text="  Additional Details  ")
-notebook.enable_traversal()       # Ctrl+Tab / Ctrl+PgUp / Ctrl+PgDn
-
-# ---------- commands panel ----------
-panel = tb.Frame(body, padding=(16, 14), width=PANEL_WIDTH)
-panel.grid(row=0, column=3, sticky="ns")
-panel.pack_propagate(False)
-
-status_label = tb.Label(panel, textvariable=status_var, bootstyle="secondary",
-                        wraplength=PANEL_WIDTH - 40, justify="left")
-status_label.pack(side="bottom", anchor="w", pady=(8, 0))
-
-tb.Label(panel, text="General commands", font=panel_font).pack(anchor="w")
-ttk.Separator(panel, orient="horizontal").pack(fill="x", pady=(8, 12))
-
-section_title(panel, "Report", first=True)
-tb.Label(panel, text="Control #").pack(anchor="w")
-# Control # is generated automatically and cannot be typed over.
-control_entry = tb.Entry(panel, state="readonly", font=bold_font)
-control_entry.pack(fill="x", pady=(2, 0))
-
-section_title(panel, "Cargo condition")
-condition_var = tkinter.StringVar(value="")      # nothing chosen yet
-condition_row = tb.Frame(panel)
-condition_row.pack(fill="x")
-condition_row.columnconfigure(0, weight=1, uniform="cond")
-condition_row.columnconfigure(1, weight=1, uniform="cond")
-good_button = tb.Button(condition_row, text=CONDITION_GOOD,
-                        command=lambda: choose_condition(CONDITION_GOOD))
-good_button.grid(row=0, column=0, sticky="we", padx=(0, 3))
-bad_button = tb.Button(condition_row, text=CONDITION_BAD,
-                       command=lambda: choose_condition(CONDITION_BAD))
-bad_button.grid(row=0, column=1, sticky="we", padx=(3, 0))
 
 
 def refresh_condition_buttons(*_):
@@ -1757,24 +1258,6 @@ def choose_condition(value):
         # the form just unlocked: start at the first box
         notebook.select(general_tab)
         SO_number_entry.focus_set()
-
-
-condition_var.trace_add("write", refresh_condition_buttons)
-refresh_condition_buttons()
-
-# ---- the form stays locked until Good Order / Bad Order is chosen ----
-# A cover sits over the pages (the Weekly Summary page is not covered).
-lock_cover = tb.Frame(body, padding=30)
-tb.Label(
-    lock_cover, text="Select the Cargo Condition to start",
-    font=title_font, bootstyle="info", anchor="center"
-).pack(pady=(80, 8))
-tb.Label(
-    lock_cover,
-    text="Choose  Good Order  or  Bad Order  in the panel on the right "
-         "before you start writing the report.",
-    bootstyle="secondary", anchor="center", justify="center"
-).pack()
 
 
 def form_is_locked():
@@ -1805,145 +1288,6 @@ def keep_focus_out_of_locked_form(event):
             good_button.focus_set()
     except (AttributeError, tkinter.TclError):
         pass
-
-
-condition_var.trace_add("write", update_form_lock)
-window.bind_all("<FocusIn>", keep_focus_out_of_locked_form, add="+")
-update_form_lock()
-
-section_title(panel, "Actions")
-save_report_button = tb.Button(
-    panel, text="SAVE (Ctrl+S)", bootstyle="success",
-    command=lambda: save_report()
-)
-save_report_button.pack(fill="x", pady=3)
-print_pdf_button = tb.Button(
-    panel, text="Print / PDF...  (Ctrl+P)", bootstyle="info-outline",
-    command=lambda: print_pdf_current_report()
-)
-print_pdf_button.pack(fill="x", pady=3)
-
-section_title(panel, "Storage")
-file_label = tb.Label(panel, text="", bootstyle="secondary",
-                      wraplength=PANEL_WIDTH - 40, justify="left")
-file_label.pack(anchor="w", pady=(0, 4))
-change_file_button = tb.Button(
-    panel, text="Change Excel File...", bootstyle="secondary-outline",
-    command=lambda: change_excel_file()
-)
-change_file_button.pack(fill="x", pady=3)
-import_master_button = tb.Button(
-    panel, text="Import Master Data...", bootstyle="secondary-outline",
-    command=lambda: import_master_data_file()
-)
-if IS_OWNER_EDITION:        # the owner compiles the files of every site
-    import_master_button.pack(fill="x", pady=3)
-export_master_button = tb.Button(
-    panel, text="Export Master Data...", bootstyle="secondary-outline",
-    command=lambda: export_master_data()
-)
-export_master_button.pack(fill="x", pady=3)
-
-# MySQL: three circles. All three colours = MySQL works,
-# three red circles = it does not. Click them to check again.
-mysql_on = db_mysql is not None and db_mysql.is_enabled()
-DOT_OK = ("#f6c945", "#3dbb93", "#ee5a4f")       # yellow, green, red
-DOT_BAD = ("#e0392d",) * 3
-DOT_WAIT = ("#6b7894",) * 3
-mysql_state = {"text": "Checking MySQL..."}
-
-if IS_OWNER_EDITION:    # the User edition never uses MySQL
-    section_title(panel, "MySQL")
-    mysql_label = tb.Label(mysql_box, text="Checking...",
-                           font=bold_font, bootstyle="secondary")
-    mysql_label.pack(side="right", padx=(8, 0))
-    dots_canvas = tkinter.Canvas(
-        mysql_box, width=104, height=32, highlightthickness=0, bd=0,
-        background=style.colors.bg, cursor="hand2"
-    )
-    dots_canvas.pack(side="right")
-    mysql_waiting_label = tb.Label(mysql_box, text="", bootstyle="warning")
-    mysql_waiting_label.pack(side="right", padx=(0, 8))
-    dot_items = [
-        dots_canvas.create_oval(4 + i * 34, 4, 4 + i * 34 + 26, 30,
-                                fill=DOT_WAIT[i], outline="")
-        for i in range(3)
-    ]
-
-    def set_mysql_dots(state, message=""):
-        colors = {"ok": DOT_OK, "bad": DOT_BAD}.get(state, DOT_WAIT)
-        for item, color in zip(dot_items, colors):
-            dots_canvas.itemconfigure(item, fill=color)
-        mysql_label.configure(
-            text={"ok": "Server active", "bad": "Server inactive"}.get(
-                state, "Checking..."),
-            bootstyle={"ok": "success", "bad": "danger"}.get(
-                state, "secondary"))
-        mysql_state["text"] = message or {
-            "ok": "MySQL is working", "bad": "MySQL is not working",
-        }.get(state, "Checking MySQL...")
-
-    def check_mysql_status(show_error=False):
-        """Test the connection in the background (the window never freezes)."""
-        set_mysql_dots("wait")
-        result = {}
-
-        def worker():
-            try:
-                if db_mysql is None or not db_mysql.is_enabled():
-                    result["value"] = (
-                        False, "MySQL is turned off. Open the account menu "
-                               "(top right) > MySQL Settings to set it up.")
-                else:
-                    check = getattr(db_mysql, "check_connection", None)
-                    if check is not None:
-                        ok, message, away = check()
-                        result["value"] = (ok, message)
-                        result["away"] = away
-                    else:
-                        result["value"] = db_mysql.test_connection()
-            except Exception as error:
-                result["value"] = (False, str(error))
-
-        thread = threading.Thread(target=worker, daemon=True)
-        thread.start()
-
-        def poll():
-            if thread.is_alive():
-                window.after(150, poll)
-                return
-            ok, message = result.get("value", (False, "No answer"))
-            set_mysql_dots("ok" if ok else "bad", message)
-            if ok and "finish_unfinished_saves" in globals():
-                # MySQL catches up, MySQL's numbers are read and (first
-                # run) equal reports are adopted - all in the background.
-                finish_unfinished_saves(mysql_ok=True, numbers=True,
-                                        adopt=True)
-            if show_error and not ok:
-                if db_mysql is None or not db_mysql.is_enabled():
-                    open_mysql_settings()
-                elif result.get("away"):
-                    notify("MySQL was not reached  -  reports are saved on "
-                           "this PC and sent when it is back",
-                           bootstyle="warning")
-                else:
-                    messagebox.showerror("MySQL", message, parent=window)
-
-        window.after(150, poll)
-
-    dots_canvas.bind("<Button-1>", lambda e: check_mysql_status(True))
-    add_tip(dots_canvas, "Three colours: the MySQL server is active. "
-                         "Three red: inactive.\nClick to check again "
-                         "(or to set MySQL up).")
-
-    tb.Button(
-        panel, text="Sync to MySQL", bootstyle="secondary-outline",
-        command=lambda: sync_all_to_mysql()
-    ).pack(fill="x", pady=3)
-    tb.Button(
-        panel, text="Restore Excel from MySQL", bootstyle="secondary-outline",
-        command=lambda: restore_excel_from_mysql()
-    ).pack(fill="x", pady=3)
 
 
 def toggle_theme():
@@ -1977,26 +1321,6 @@ def add_field(parent, label_text, widget, row, col):
     widget.grid(row=row * 2 + 1, column=col, padx=8, pady=(0, 6), sticky="we")
 
 
-general_body = general_tab.body
-
-general_information_frame = tb.Labelframe(
-    general_body, text="General Information", padding=12
-)
-general_information_frame.grid(row=1, column=0, pady=6, sticky="we")
-for _col in range(4):
-    general_information_frame.columnconfigure(_col, weight=1, uniform="gi")
-
-SO_number_entry = tb.Entry(general_information_frame)
-add_field(general_information_frame, "SO Number", SO_number_entry, 0, 0)
-
-inspection_date_entry = tb.DateEntry(
-    general_information_frame, dateformat=DATE_FORMAT, firstweekday=0,
-    bootstyle="primary"
-)
-add_field(general_information_frame, "Inspection Date",
-          inspection_date_entry, 0, 1)
-
-
 def get_inspection_date():
     return inspection_date_entry.entry.get().strip()
 
@@ -2004,11 +1328,6 @@ def get_inspection_date():
 def set_inspection_date(text):
     inspection_date_entry.entry.delete(0, "end")
     inspection_date_entry.entry.insert(0, text)
-
-
-# Choosing / typing an Inspection Date copies it to the Commenced Date
-# (unless the user already typed a different Commenced Date).
-date_sync = {"last": ""}
 
 
 def sync_commenced_date(event=None):
@@ -2022,130 +1341,6 @@ def sync_commenced_date(event=None):
     date_sync["last"] = new
 
 
-inspection_date_entry.bind("<<DateEntrySelected>>", sync_commenced_date,
-                           add="+")
-inspection_date_entry.entry.bind("<FocusOut>", sync_commenced_date, add="+")
-inspection_date_entry.entry.bind("<Return>", sync_commenced_date, add="+")
-
-
-consignee_combobox = create_searchable_combobox(
-    general_information_frame, "consignee_list")
-add_field(general_information_frame, "Consignee", consignee_combobox, 1, 0)
-
-supplier_combobox = create_searchable_combobox(
-    general_information_frame, "supplier_list")
-add_field(general_information_frame, "Supplier", supplier_combobox, 1, 1)
-
-brokerage_combobox = create_searchable_combobox(
-    general_information_frame, "broker_list")
-add_field(general_information_frame, "Brokerage", brokerage_combobox, 1, 2)
-
-hauler_combobox = create_searchable_combobox(
-    general_information_frame, "hauler_list")
-add_field(general_information_frame, "Hauler", hauler_combobox, 1, 3)
-
-location_combobox = create_searchable_combobox(
-    general_information_frame, LOCATION_LIST_KEY)
-add_field(general_information_frame, "Location", location_combobox, 2, 0)
-
-destination_combobox = create_searchable_combobox(
-    general_information_frame, DESTINATION_LIST_KEY)
-add_field(general_information_frame, "Destination", destination_combobox, 2, 1)
-
-country_combobox = create_searchable_combobox(
-    general_information_frame, COUNTRY_LIST_KEY)
-add_field(general_information_frame, "Country of Origin",
-          country_combobox, 2, 2)
-
-# Inspection Schedule Summary
-schedule_frame = tb.Labelframe(
-    general_body, text="Inspection Schedule Summary", padding=12
-)
-schedule_frame.grid(row=2, column=0, pady=6, sticky="we")
-# Activity | Commenced Date | Commenced Time   (row 1)
-#            Completion Date | Completion Time (row 2)
-schedule_entries = build_field_row(
-    schedule_frame, SCHEDULE_FIELDS,
-    layout=[(0, 0), (0, 1), (0, 2), (1, 1), (1, 2)]
-)
-
-# Shipment / Transport Details
-transport_frame = tb.Labelframe(
-    general_body, text="Shipment/Transport Details", padding=12
-)
-transport_frame.grid(row=3, column=0, pady=6, sticky="we")
-transport_entries = build_field_row(transport_frame, TRANSPORT_FIELDS)
-
-# =====================================================
-# TAB 2 - DOCUMENTS USED, DECLARED GOODS, OTHER REMARKS
-# =====================================================
-
-documents_body = documents_tab.body
-
-documents_used_frame = tb.Labelframe(
-    documents_body, text="Documents Used", padding=12
-)
-documents_used_frame.grid(row=0, column=0, pady=6, sticky="we")
-
-# DOCUMENT_FIELDS (label text, JSON key) is in fsr_storage.py.
-
-DOCUMENT_COLUMNS = 4
-document_entries = {}
-
-for _col in range(DOCUMENT_COLUMNS):
-    documents_used_frame.columnconfigure(_col, weight=1, uniform="doc")
-
-for index, (label_text, key) in enumerate(DOCUMENT_FIELDS):
-    entry = tb.Entry(documents_used_frame)
-    add_field(documents_used_frame, label_text, entry,
-              index // DOCUMENT_COLUMNS, index % DOCUMENT_COLUMNS)
-    document_entries[key] = entry
-
-declared_goods_frame = tb.Labelframe(
-    documents_body, text="Declared Goods (up to 5 lines print on the form)",
-    padding=12
-)
-declared_goods_frame.grid(row=1, column=0, pady=1)
-declared_goods_frame.columnconfigure(0, weight=1)
-
-for _col, _text in enumerate(("Description", "Quantity", "Packaging")):
-    tb.Label(declared_goods_frame, text=_text).grid(
-        row=0, column=_col, padx=1, pady=(0, 2)
-    )
-
-declared_goods_rows = []   # each item: (description, quantity, packaging)
-
-for row in range(1, 6):
-    description_entry = tb.Entry(declared_goods_frame, width=40)
-    description_entry.grid(row=row, column=0, padx=1, pady=3)
-
-    quantity_entry = tb.Entry(declared_goods_frame, width=12)
-    quantity_entry.grid(row=row, column=1, padx=1, pady=3)
-
-    packaging_entry = tb.Entry(declared_goods_frame, width=18)
-    packaging_entry.grid(row=row, column=2, padx=1, pady=3)
-
-    declared_goods_rows.append(
-        (description_entry, quantity_entry, packaging_entry)
-    )
-
-# Types of Goods: the six check boxes of the First Page form.
-goods_types_frame = tb.Labelframe(
-    documents_body, text="Types of Goods (ticks the check boxes on the First Page)",
-    padding=12
-)
-goods_types_frame.grid(row=2, column=0, pady=6)
-
-goods_type_vars = {key: tkinter.BooleanVar() for _, key in GOODS_TYPES}
-others_var = tkinter.BooleanVar()
-
-for _col, (_label, _key) in enumerate(GOODS_TYPES):
-    tb.Checkbutton(
-        goods_types_frame, text=_label, variable=goods_type_vars[_key],
-        command=mark_dirty
-    ).grid(row=0, column=_col, padx=(8, 18), pady=2, sticky="w")
-
-
 def on_others_toggled():
     others_entry.configure(
         state="normal" if others_var.get() else "disabled"
@@ -2153,17 +1348,6 @@ def on_others_toggled():
     if others_var.get():
         others_entry.focus_set()
     mark_dirty()
-
-
-others_check = tb.Checkbutton(
-    goods_types_frame, text="Others:", variable=others_var,
-    command=on_others_toggled
-)
-others_check.grid(row=0, column=len(GOODS_TYPES), padx=(8, 4), pady=2,
-                  sticky="w")
-others_entry = tb.Entry(goods_types_frame, width=28, state="disabled")
-others_entry.grid(row=0, column=len(GOODS_TYPES) + 1, padx=(0, 8), pady=2)
-goods_types_frame.columnconfigure(len(GOODS_TYPES) + 1, weight=1)
 
 
 def collect_goods_types():
@@ -2185,72 +1369,6 @@ def set_goods_types(types):
     others_entry.configure(
         state="normal" if types["others"] else "disabled"
     )
-
-
-OTHER_REMARKS_MAX = 12      # the First Page form has 12 remark lines
-
-other_remarks_frame, other_remarks_entries = create_remarks_section(
-    documents_body,
-    title="Other Important Remarks",
-    entry_width=60,
-    initial_rows=5,
-    max_rows=OTHER_REMARKS_MAX
-)
-other_remarks_frame.grid(row=3, column=0, pady=6)
-
-# =====================================================
-# TAB 3 - ITEM LISTS
-# =====================================================
-
-MAX_ROWS = 30
-
-# ITEM_HEADERS (the printed Item List columns) is in fsr_storage.py.
-# The Default form shows them with UOM after Quantity, Weight Unit after
-# Weights and Currency before the prices. Weight Unit is a form box only:
-# it is saved together with the number in Weights ("1,250 KG").
-# Cargo ID / Receiving Ref are not shown: values saved earlier
-# (and the Receiving Ref given at save time) are kept with the line.
-ITEM_FORM_HEADERS = [
-    "Description of Goods", "PO Number", "Packaging", "Quantity", "UOM",
-    "Dimensions", "Weights", "Weight Unit", "Currency", "Unit Price",
-    "Total Price", "Findings",
-]
-ITEM_WIDTHS = [32, 12, 14, 9, 9, 12, 9, 7, 7, 11, 12, 28]
-# Containerized / Loading forms (Containerized_Loading_Form.xlsx): the
-# Container No. / Truck Plate No. first, no PO Number and no prices.
-# Each form keeps its own lines (see set_item_form).
-UNIT_FORM_HEADERS = [
-    UNIT_NO_HEADER, "Description of Goods", "Packaging", "Quantity", "UOM",
-    "Dimensions", "Weights", "Weight Unit", "Findings",
-]
-UNIT_FORM_WIDTHS = [18, 32, 14, 9, 9, 12, 9, 7, 28]
-UNIT_FORM_LABELS = {"Description of Goods": "Description",
-                    "Dimensions": "Dimension", "Weights": "Weight"}
-ITEM_FORM_COLUMNS = {
-    ITEM_FORM_DEFAULT: (ITEM_FORM_HEADERS, ITEM_WIDTHS),
-    ITEM_FORM_CONTAINERIZED: (UNIT_FORM_HEADERS, UNIT_FORM_WIDTHS),
-    ITEM_FORM_LOADING: (UNIT_FORM_HEADERS, UNIT_FORM_WIDTHS),
-}
-# A line is saved when one of these has text (Cargo ID / Receiving Ref
-# alone do not make a line).
-SAVED_LINE_HEADERS = [h for h in ITEM_LINE_HEADERS
-                      if h not in ITEM_LINK_HEADERS]
-ITEM_HEADER_TIPS = {
-    "Quantity": "The number only, e.g. 12. The unit goes in UOM.",
-    "Weights": "The number only, e.g. 1,250. The unit goes in Weight Unit.",
-    "Currency": "Currency of the Unit Price and Total Price.",
-}
-
-item_form_var = tkinter.StringVar(value=ITEM_FORM_DEFAULT)
-
-items_body = items_tab.body
-
-items_toolbar = tb.Frame(items_body)
-items_toolbar.grid(row=0, column=0, sticky="w", pady=(0, 6))
-
-item_lists_frame = tb.Frame(items_body)
-item_lists_frame.grid(row=1, column=0)
-item_lists_frame.columnconfigure(0, weight=1)
 
 
 class ItemLine(list):
@@ -2614,12 +1732,6 @@ def set_item_list_count(count):
     refresh_findings_counter()
 
 
-# Lines typed on the forms not shown: form -> [(lines, row count)] per
-# Item List. Each form keeps its own lines; every form with lines is
-# printed. The selected form is the one that counts as stock.
-item_form_store = {}
-
-
 def collect_other_item_forms():
     """{form: item lists} of the forms not shown that have lines."""
     return {
@@ -2663,113 +1775,6 @@ def choose_item_form():
     if any(section.form != item_form_var.get() for section in item_frames):
         set_item_form(item_form_var.get())
         mark_dirty()
-
-
-ITEM_FORM_HINTS = {
-    ITEM_FORM_DEFAULT:
-        "Total Price = Quantity x Unit Price unless you type it yourself.  "
-        "Shift + mouse wheel scrolls sideways.",
-    ITEM_FORM_CONTAINERIZED:
-        "One line per cargo with its Container No.  Prints on the "
-        "Containerized form.",
-    ITEM_FORM_LOADING:
-        "One line per cargo with its Truck Plate No.  Prints on the "
-        "Loading form.",
-}
-
-form_row = tb.Frame(items_toolbar)
-form_row.grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
-tb.Label(form_row, text="Item List Form:", font=bold_font).pack(
-    side="left", padx=(0, 6))
-for _form in ITEM_FORMS:
-    tb.Radiobutton(
-        form_row, text=_form, value=_form, variable=item_form_var,
-        bootstyle="info-outline-toolbutton", width=14,
-        command=choose_item_form
-    ).pack(side="left", padx=(0, 4))
-add_tip(form_row,
-        "Default - the original columns.\n"
-        "Containerized - Container No. first (Containerized form).\n"
-        "Loading - Truck Plate No. first (Loading form).\n"
-        "Each form keeps its own lines, and every form with lines is\n"
-        "printed. The form selected when you save counts as stock.")
-
-new_frame_button = tb.Button(
-    items_toolbar, text="Create New Item List", bootstyle="primary",
-    command=add_item_frame
-)
-new_frame_button.grid(row=1, column=0, padx=(0, 8))
-
-remove_frame_button = tb.Button(
-    items_toolbar, text="Remove Last Item List",
-    bootstyle="secondary-outline", command=remove_item_frame
-)
-remove_frame_button.grid(row=1, column=1)
-
-items_hint = tb.Label(
-    items_toolbar, text=ITEM_FORM_HINTS[ITEM_FORM_DEFAULT],
-    bootstyle="secondary"
-)
-items_hint.grid(row=1, column=2, padx=16)
-
-
-withdrawal_panel = WithdrawalPanel(items_body, SimpleNamespace(
-    window=window, activity_entry=schedule_entries["activity"],
-    form_var=item_form_var,
-    main_path=lambda: Path(excel_state["path"]),
-    control_no=lambda: control_entry.get().strip(),
-    sections=lambda: item_frames,
-    stored_in_main=lambda: report_state["editing"],
-    header_po_entry=lambda: document_entries["po_number"],
-    mark_dirty=mark_dirty,
-), row=2)
-for _event in ("<<ComboboxSelected>>", "<FocusOut>"):
-    schedule_entries["activity"].bind(
-        _event, lambda e: withdrawal_panel.context_changed(), add="+")
-
-# =====================================================
-# TAB 4 - ADDITIONAL DETAILS (free text; saved as the report's remark lines)
-# Created ONCE (shared by all Item Lists).
-# =====================================================
-
-findings_frame, findings_entries = create_remarks_section(
-    findings_tab.body,
-    title="Additional Details",
-    entry_width=100,
-    initial_rows=5,
-    max_rows=60,
-    capacity_func=lambda: remark_capacity(total_item_rows())
-)
-findings_frame.grid(row=0, column=0, pady=6)
-
-# =====================================================
-# WEEKLY SUMMARY REPORT
-# Month + year + week -> one line per item of every report inspected in
-# that week, with the report's supplier / documents / vehicle / cargo
-# condition. "Export" saves it as an Excel file.
-# =====================================================
-
-# A weekly row has 28 fields: the columns below, except that Quantity is
-# split into Quantity + UOM and each price comes after a Currency field.
-# The table / Excel show them together ("6 pcs", "jpy 460,000.00").
-WEEKLY_COLUMNS = [               # (heading, width in pixels)
-    ("SO Number", 120), ("Date", 95), ("Activity", 85),
-    ("Shipment type", 95), ("Supplier", 160), ("Broker", 140),
-    ("Hauler", 140), ("Destination", 105), ("Origin", 100),
-    ("Invoice", 100), ("Purchase Order", 115), ("Job Order", 95),
-    ("Gatepass", 95), ("BL / AWB", 105), ("DR", 85),
-    ("Vehicle Type", 115), ("Plate #", 95),
-    ("Description", 230), ("PO", 95), ("Packaging", 95), ("Quantity", 85),
-    ("Dimension", 105), ("Weight", 85),
-    ("Unit Price", 115), ("Total Price", 125), ("Cargo Condition", 115),
-]
-WEEKLY_NUMBER_COLUMNS = {"Unit Price", "Total Price"}
-WEEKLY_QTY, WEEKLY_UOM, WEEKLY_CURRENCY = 20, 21, 24   # field positions
-WEEKLY_ITEM_KEYS = ("Description of Goods", "PO Number", "Packaging",
-                    "Quantity", "UOM", "Dimensions", "Weights", "Currency",
-                    "Unit Price", "Total Price")
-MONTH_LIST = [calendar.month_name[n] for n in range(1, 13)]
-weekly_state = {"rows": [], "span": None}
 
 
 def week_span(year, month, week):
@@ -2965,88 +1970,6 @@ def write_weekly_workbook(path, title, rows):
     wb.save(path)
 
 
-# ---------- the page ----------
-summary_tab = tb.Frame(notebook, padding=(14, 12))
-notebook.add(summary_tab, text="  Weekly Summary  ")
-summary_tab.columnconfigure(0, weight=1)
-summary_tab.rowconfigure(3, weight=1)
-
-_today = date.today()
-month_var = tkinter.StringVar(value=calendar.month_name[_today.month])
-year_var = tkinter.StringVar(value=str(_today.year))
-week_var = tkinter.IntVar(value=min((_today.day - 1) // 7 + 1, 5))
-source_var_weekly = tkinter.StringVar(
-    value="mysql" if db_mysql is not None and db_mysql.is_enabled()
-    else "excel")
-
-pick_row = tb.Frame(summary_tab)
-pick_row.grid(row=0, column=0, sticky="we")
-tb.Label(pick_row, text="Month", font=bold_font).pack(side="left", padx=(0, 8))
-month_combo = tb.Combobox(pick_row, textvariable=month_var, values=MONTH_LIST,
-                          state="readonly", width=14)
-month_combo.pack(side="left")
-year_combo = tb.Combobox(
-    pick_row, textvariable=year_var, state="readonly", width=7,
-    values=[str(y) for y in range(_today.year - 6, _today.year + 2)])
-year_combo.pack(side="left", padx=8)
-for _combo in (month_combo, year_combo):
-    _combo.no_dirty = True          # picking a month is not a report edit
-    scroll_instead_of_change(_combo)
-
-export_weekly_button = tb.Button(
-    pick_row, text="Export", bootstyle="info", width=14,
-    command=lambda: export_weekly_summary()
-)
-export_weekly_button.pack(side="right")
-
-if db_mysql is not None and db_mysql.is_enabled():
-    for _text, _value in (("MySQL database", "mysql"), ("Excel file", "excel")):
-        tb.Radiobutton(
-            pick_row, text=_text, value=_value, variable=source_var_weekly,
-            command=lambda: refresh_weekly()
-        ).pack(side="right", padx=(0, 12))
-    tb.Label(pick_row, text="Data from:").pack(side="right", padx=(0, 6))
-
-week_row = tb.Frame(summary_tab)
-week_row.grid(row=1, column=0, sticky="we", pady=(10, 2))
-week_buttons = {}
-for _week in (1, 2, 3, 4, 5, 0):
-    _button = tb.Button(
-        week_row, text="Week %d" % _week if _week else "Whole month",
-        bootstyle="secondary-outline", width=12,
-        command=lambda w=_week: choose_week(w)
-    )
-    _button.pack(side="left", padx=(0, 6))
-    week_buttons[_week] = _button
-range_label = tb.Label(summary_tab, text="", bootstyle="secondary")
-range_label.grid(row=2, column=0, sticky="w", pady=(2, 8))
-
-tree_holder = tb.Frame(summary_tab)
-tree_holder.grid(row=3, column=0, sticky="nsew")
-tree_holder.columnconfigure(0, weight=1)
-tree_holder.rowconfigure(0, weight=1)
-summary_tree = ttk.Treeview(
-    tree_holder, columns=[f"c{i}" for i in range(len(WEEKLY_COLUMNS))],
-    show="headings", selectmode="browse"
-)
-for _index, (_heading, _width) in enumerate(WEEKLY_COLUMNS):
-    summary_tree.heading(f"c{_index}", text=_heading)
-    summary_tree.column(
-        f"c{_index}", width=_width, minwidth=60, stretch=False,
-        anchor="e" if _heading in WEEKLY_NUMBER_COLUMNS else "w")
-_vsb = ttk.Scrollbar(tree_holder, orient="vertical",
-                     command=summary_tree.yview)
-_hsb = ttk.Scrollbar(tree_holder, orient="horizontal",
-                     command=summary_tree.xview)
-summary_tree.configure(yscrollcommand=_vsb.set, xscrollcommand=_hsb.set)
-summary_tree.grid(row=0, column=0, sticky="nsew")
-_vsb.grid(row=0, column=1, sticky="ns")
-_hsb.grid(row=1, column=0, sticky="we")
-
-summary_note = tb.Label(summary_tab, text="", bootstyle="secondary")
-summary_note.grid(row=4, column=0, sticky="w", pady=(8, 0))
-
-
 def weekly_selection():
     return int(year_var.get()), MONTH_LIST.index(month_var.get()) + 1, \
         week_var.get()
@@ -3137,36 +2060,6 @@ def export_weekly_summary():
                              parent=window)
         return
     notify(f"Exported {len(rows)} line(s) to {Path(chosen).name}")
-
-
-# =====================================================
-# TAB 5 - INCIDENT REPORT (only shown for Bad Order)
-# One card per Incident Report form (15 lines each). When a card is
-# full, "+ Add Additional Incident Report" adds the next one.
-# Saved to a JSON file - NOT to the Excel file.
-# =====================================================
-
-INCIDENT_TAB_TEXT = "  Incident Report  "
-
-incident_tab = ScrollFrame(notebook)      # added to the notebook on demand
-incident_body = incident_tab.body
-incident_cards = []
-
-incident_info = tb.Label(
-    incident_body,
-    text="Type what happened, one statement per line (about 110 characters "
-         "fit on a printed line). The header is filled from the report; "
-         "you can change it.",
-    bootstyle="secondary", justify="left"
-)
-incident_info.grid(row=0, column=0, sticky="w", pady=(0, 6))
-
-incident_cards_frame = tb.Frame(incident_body)
-incident_cards_frame.grid(row=1, column=0, sticky="we")
-incident_cards_frame.columnconfigure(0, weight=1)
-
-incident_actions = tb.Frame(incident_body)
-incident_actions.grid(row=2, column=0, sticky="w", pady=(8, 0))
 
 
 def incident_header_defaults():
@@ -3410,20 +2303,6 @@ def remove_last_incident():
     mark_dirty()
 
 
-add_more_button = tb.Button(
-    incident_actions, text="+ Add Additional Incident Report",
-    bootstyle="primary", command=add_additional_incident
-)
-add_more_button.grid(row=0, column=0, padx=(0, 8))
-remove_last_button = tb.Button(
-    incident_actions, text="Remove Last Incident Report",
-    bootstyle="secondary-outline", command=remove_last_incident
-)
-remove_last_button.grid(row=0, column=1)
-incident_hint = tb.Label(incident_actions, text="", bootstyle="secondary")
-incident_hint.grid(row=0, column=2, padx=14, sticky="w")
-
-
 def set_incident_reports(reports):
     """Show these cards (an empty list = one empty card)."""
     reports = list(reports or [])
@@ -3506,23 +2385,6 @@ def on_tab_changed(event=None):
         refresh_nav()
 
 
-notebook.bind("<<NotebookTabChanged>>", on_tab_changed, add="+")
-
-
-# ---- the sections menu (left column) ----
-nav_buttons = []
-for _text, _tab in (
-    ("General", general_tab), ("Documents & Goods", documents_tab),
-    ("Item Lists", items_tab), ("Additional Details", findings_tab),
-    (INCIDENT_TAB_TEXT.strip(), incident_tab),
-    ("Weekly Summary", summary_tab),
-):
-    nav_buttons.append((_tab, tb.Button(
-        nav_holder, text=_text, bootstyle="secondary-outline",
-        padding=(12, 8), command=lambda t=_tab: notebook.select(t)
-    )))
-
-
 def refresh_nav(*_):
     """Show a button for every open page; the current one is highlighted."""
     try:
@@ -3536,10 +2398,6 @@ def refresh_nav(*_):
                 bootstyle="info" if current == str(tab) else "secondary-outline"
             )
             button.pack(fill="x", pady=3)
-
-
-refresh_nav()
-add_incident_card(copy_voyage=False, autofill=False)   # filled when shown
 
 
 # =====================================================
@@ -4152,10 +3010,6 @@ def confirm_discard(title, question):
     )
 
 
-# Control #s MySQL holds, as last seen (filled when the server answers).
-mysql_numbers = {"values": []}
-
-
 def mysql_guard():
     """The guard of the Excel file in use: every write to MySQL goes
     through it (fsr_mysql_guard)."""
@@ -4307,12 +3161,6 @@ def mysql_round(path, master=None, user="", root=None, with_conflicts=False,
                 log.debug("MySQL connection not closed cleanly",
                           exc_info=True)
     return result
-
-
-# record id -> (what happened, detail), for a save that asked to be told
-# at once (only when the sender runs inline, as in the automated tests)
-mysql_feedback = {}
-mysql_wait_state = {"busy": False}
 
 
 def request_mysql_round(**flags):
@@ -4476,17 +3324,6 @@ def mysql_round_done(item):
         app_shell.service.invalidate()
 
 
-mysql_sender = fsr_mysql_sender.Sender(
-    mysql_round, mysql_round_done,
-    inline=os.environ.get("FSR_MYSQL_INLINE", "").strip() == "1")
-
-
-# ---------- PO_Master and Withdrawn_Item, also in the background ----------
-
-lists_feedback = {}         # record id -> exception or None (inline only)
-lists_state = {"warned": False}
-
-
 def lists_round(path, root=None, compose=False, save_id=None):
     """Background thread: rebuild PO_Master and Withdrawn_Item once for
     every save waiting for it (no window calls here)."""
@@ -4522,11 +3359,6 @@ def lists_round_done(item):
                 f"{error}\n\nThey are tried again at the next save or "
                 "the next start.")
     messagebox.showwarning("PO_Master - Not Updated", text, parent=window)
-
-
-lists_sender = fsr_mysql_sender.Sender(
-    lists_round, lists_round_done,
-    inline=os.environ.get("FSR_MYSQL_INLINE", "").strip() == "1")
 
 
 def request_lists_round(**flags):
@@ -5288,9 +4120,6 @@ def save_report():
     return True
 
 
-unfinished_state = {"unreadable_shown": False}
-
-
 def finish_unfinished_saves(mysql_ok=False, skip=(), numbers=False,
                             adopt=False):
     """Complete every save on record that stopped halfway and tell the user
@@ -5346,13 +4175,6 @@ def finish_unfinished_saves(mysql_ok=False, skip=(), numbers=False,
     ask_mysql()
     refresh_conflict_count()
     return report
-
-
-# =====================================================
-# MYSQL CONFLICTS  (a copy never overwrites what it does not own)
-# =====================================================
-
-conflict_state = {"dialog": None}
 
 
 def waiting_conflicts():
@@ -5751,9 +4573,6 @@ def import_master_data_file():
 
     run_with_progress(window, "Importing the Master Data file...", work,
                       done, with_progress=True)
-
-
-import_state = {"running": False}
 
 
 def import_stopped(path, error):
@@ -6183,29 +5002,6 @@ def show_inspection_then(func):
         func()
     return run
 
-
-for _key, _func in (("s", save_report),
-                    ("n", show_inspection_then(new_report)),
-                    ("o", show_inspection_then(open_saved_report_dialog)),
-                    ("p", print_pdf_current_report)):
-    window.bind(f"<Control-{_key}>", shortcut(_func))
-    window.bind(f"<Control-{_key.upper()}>", shortcut(_func))
-
-window.protocol("WM_DELETE_WINDOW", on_close)
-
-update_item_list_buttons()
-
-# Start with a new report and its automatic Control #.
-new_report(confirm=False)
-
-# Saves that stopped halfway last time are finished now (this PC's files;
-# MySQL follows when the check below finds the server).
-window.after(300, finish_unfinished_saves)
-
-if "check_mysql_status" in globals():
-    window.after(600, check_mysql_status)
-window.after(250, poll_mysql_sender)
-
 def report_callback_exception(exc_type, exc_value, exc_traceback):
     """Any unexpected error: write it to the log and tell the user where."""
     log.error("Unexpected error", exc_info=(exc_type, exc_value,
@@ -6219,9 +5015,6 @@ def report_callback_exception(exc_type, exc_value, exc_traceback):
     # was logged above, a failing box must not raise a second one.
     except Exception:
         log.debug("Error box not shown", exc_info=True)
-
-
-window.report_callback_exception = report_callback_exception
 
 
 # =====================================================
@@ -6269,40 +5062,6 @@ def after_sample_change(path):
         new_report(confirm=False)
 
 
-app_shell = None
-if warehouse_ui is not None:
-    from types import SimpleNamespace
-    ui_context = SimpleNamespace(
-        window=window, sidebar=sidebar, inspection_frame=body, log=log,
-        log_file=LOG_FILE, user_name=USER_FULL_NAME, is_owner=IS_OWNER,
-        role_label=ROLE_LABEL,
-        owner_edition=IS_OWNER_EDITION, edition_label=fsr_edition.LABEL,
-        demo_mode=DEMO_MODE, data_dir=DATA_DIR, db_mysql=db_mysql,
-        master_data=master_data, save_master_lists=save_master_lists,
-        excel_path=lambda: Path(excel_state["path"]),
-        data_source=analytics_source, set_data_source=set_analytics_source,
-        source_text=lambda: ("MySQL database" if analytics_source() == "mysql"
-                             else f"Excel - {Path(excel_state['path']).name}"),
-        mysql_enabled=lambda: db_mysql is not None and db_mysql.is_enabled(),
-        notify=notify, open_file=open_file,
-        run_with_progress=run_with_progress, reports_folder=reports_folder,
-        open_report=open_report_from_module, set_title=set_module_title,
-        change_excel_file=change_excel_file, toggle_theme=toggle_theme,
-        open_mysql_settings=open_mysql_settings,
-        after_sample_change=after_sample_change,
-    )
-    try:
-        app_shell = warehouse_ui.install(ui_context)
-        app_shell.show("dashboard")
-    except Exception:
-        log.exception("The navigation could not be built")
-        app_shell = None
-        sidebar.pack_forget()
-
-window.deiconify()
-window.lift()
-
-
 def tell_owner_about_requests():
     waiting = user_store.pending_count()
     if IS_OWNER and waiting:
@@ -6312,6 +5071,1324 @@ def tell_owner_about_requests():
             "Open the account menu (top right) > Manage Users.",
             parent=window)
 
+# =====================================================
+# BUILDING THE WINDOW (Phase 4: not when the module is imported)
+# =====================================================
 
-window.after(600, tell_owner_about_requests)
-window.mainloop()
+def build_window():
+    """Everything the program sets up and shows: the data folders,
+    the settings, the sign-in, the window and its widgets - in the
+    order it always ran. Every name it makes is a module name, as
+    before. Importing this module builds nothing (the functions
+    and classes can be used and tested without a window)."""
+    global BASE_DIR, CONFIG_DIR, COUNTRY_LIST_KEY, DATA_DIR, DATA_ROOT
+    global DEFAULT_EXCEL_NAME, DEMO_MODE, DESTINATION_LIST_KEY
+    global DOCUMENT_COLUMNS, DOT_BAD, DOT_OK, DOT_WAIT, EXCEL_ROOT
+    global FIELD_CLASSES, FIELD_COLUMNS, FROZEN, IGNORED_KEYS
+    global INCIDENT_TAB_TEXT, IS_OWNER, IS_OWNER_EDITION, ITEM_FORM_COLUMNS
+    global ITEM_FORM_HEADERS, ITEM_FORM_HINTS, ITEM_HEADER_TIPS, ITEM_WIDTHS
+    global JSON_DIR, JSON_ROOT, LOCATION_LIST_KEY, LOGO_ICO, LOGO_PNG
+    global LOG_FILE, LOW_LINES_WARNING, MASTER_LIST_FILE, MAX_ROWS
+    global MONTH_LIST, MYSQL_ALLOWED, NAV_KEYS, NAV_WIDTH, NIGHT_COLORS
+    global NIGHT_THEME, OTHER_REMARKS_MAX, PANEL_WIDTH, PRIVATE_JSON_DIR
+    global ROLE_LABEL, SAVED_LINE_HEADERS, SETTINGS_FILE, SO_number_entry
+    global SimpleNamespace, TEST_COPY, THEME_DARK, THEME_LIGHT, UI_VERSION
+    global UNIT_FORM_HEADERS, UNIT_FORM_LABELS, UNIT_FORM_WIDTHS, USERS_FILE
+    global USER_FULL_NAME, WEEKLY_COLUMNS, WEEKLY_CURRENCY, WEEKLY_ITEM_KEYS
+    global WEEKLY_NUMBER_COLUMNS, WEEKLY_QTY, WEEKLY_UOM, _button, _col
+    global _combo, _default_files, _documents, _event, _folder, _form, _func
+    global _handler, _heading, _home, _hsb, _index, _key, _label, _source
+    global _tab, _target, _text, _today, _value, _vsb, _week, _width
+    global account_menu, account_menu_button, add_more_button, app_shell
+    global bad_button, body, bold_font, brokerage_combobox
+    global change_file_button, check_mysql_status, condition_row
+    global condition_var, conflict_state, consignee_combobox, control_entry
+    global country_combobox, ctypes, current_user, date_sync
+    global declared_goods_frame, declared_goods_rows, default_font
+    global description_entry, destination_combobox, document_entries
+    global documents_body, documents_tab, documents_used_frame, dot_items
+    global dots_canvas, entry, error, excel_state, export_master_button
+    global export_weekly_button, file_label, findings_entries
+    global findings_frame, findings_tab, form_row, general_body
+    global general_information_frame, general_tab, good_button
+    global goods_type_vars, goods_types_frame, hauler_combobox
+    global import_master_button, import_state, incident_actions
+    global incident_body, incident_cards, incident_cards_frame
+    global incident_hint, incident_info, incident_tab, index
+    global inspection_date_entry, item_form_store, item_form_var
+    global item_frames, item_lists_frame, items_body, items_hint, items_tab
+    global items_toolbar, key, label_text, legacy_master_list
+    global lists_feedback, lists_sender, lists_state, location_combobox
+    global lock_cover, log, logo, master_data, module_title, month_combo
+    global month_var, mysql_box, mysql_feedback, mysql_label, mysql_numbers
+    global mysql_on, mysql_sender, mysql_state, mysql_wait_state
+    global mysql_waiting_label, nav, nav_buttons, nav_holder
+    global new_frame_button, notebook, other_remarks_entries
+    global other_remarks_frame, others_check, others_entry, others_var
+    global packaging_entry, panel, panel_font, pdf_state, pick_row
+    global print_pdf_button, quantity_entry, rail, rail_new, rail_open
+    global range_label, remove_frame_button, remove_last_button
+    global report_state, row, save_report_button, saved_theme
+    global schedule_entries, schedule_frame, scroll_frames
+    global searchable_combos, set_mysql_dots, settings, sidebar, small_font
+    global source_var_weekly, start_theme, status_badge, status_label
+    global status_var, style, summary_note, summary_tab, summary_tree
+    global supplier_combobox, theme_button, title_font, topbar
+    global transport_entries, transport_frame, tree_holder, ui_context
+    global ui_theme, unfinished_state, user_box, user_store, warehouse_ui
+    global week_buttons, week_row, week_var, weekly_state, window
+    global withdrawal_panel, year_combo, year_var
+
+    # Where things live. Managed workbooks and JSON data use parallel folders.
+    FROZEN = bool(getattr(sys, "frozen", False))
+    if FROZEN:
+        BASE_DIR = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+        _documents = Path.home() / "Documents"
+        DATA_ROOT = (_documents if _documents.exists() else Path.home()) / \
+            "Field Survey Report"
+        PRIVATE_JSON_DIR = Path(os.environ.get("APPDATA") or Path.home()) / \
+            "FieldSurveyReport"
+    else:
+        BASE_DIR = Path(__file__).resolve().parent
+        DATA_ROOT = BASE_DIR / "data"
+
+    # Demo Mode keeps sample workbooks and JSON in separate subfolders; MySQL is
+    # disabled. FSR_HOME provides the same layout for automated tests.
+    DEMO_MODE = os.environ.get("FSR_DEMO", "").strip() == "1"
+    _home = os.environ.get("FSR_HOME", "").strip()
+    if _home:
+        DATA_ROOT = Path(_home)
+
+    JSON_ROOT = DATA_ROOT / "json"
+    JSON_DIR = JSON_ROOT
+    EXCEL_ROOT = DATA_ROOT / "excel"
+    if DEMO_MODE and not _home:
+        JSON_DIR = JSON_ROOT / "demo_data"
+        DATA_DIR = EXCEL_ROOT / "demo_data"
+    else:
+        DATA_DIR = EXCEL_ROOT
+    if not FROZEN or _home:
+        PRIVATE_JSON_DIR = DATA_ROOT / "json" / "private"
+    CONFIG_DIR = PRIVATE_JSON_DIR
+
+    fsr_paths.configure_data_dirs(DATA_ROOT, JSON_ROOT, EXCEL_ROOT)
+
+    for _folder in (DATA_DIR, JSON_DIR, PRIVATE_JSON_DIR):
+        try:
+            _folder.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            raise OSError(f"Could not create application data folder {_folder}: "
+                          f"{error}") from error
+
+    MASTER_LIST_FILE = JSON_DIR / "master_list.json"
+    SETTINGS_FILE = ((JSON_DIR / "settings.json") if DEMO_MODE and not _home
+                     else PRIVATE_JSON_DIR / "settings.json")
+    USERS_FILE = PRIVATE_JSON_DIR / "users.json"
+    LOG_FILE = PRIVATE_JSON_DIR / "field_survey_report.log"
+
+    if not DEMO_MODE:
+        if not MASTER_LIST_FILE.exists():
+            legacy_master_list = DATA_ROOT / "master_list.json"
+            if legacy_master_list.exists():
+                MASTER_LIST_FILE.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(legacy_master_list, MASTER_LIST_FILE)
+        _default_files = [
+            (MASTER_LIST_FILE, BASE_DIR / "data" / "json" / "master_list.json"),
+        ]
+        if fsr_edition.IS_OWNER_EDITION:
+            _default_files.append(
+                (PRIVATE_JSON_DIR / "db_config.json",
+                 BASE_DIR / "data" / "json" / "private" / "installer_defaults"
+                 / "db_config.json"))
+        for _target, _source in _default_files:
+            if not _target.exists() and _source.exists() and _target != _source:
+                _target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(_source, _target)
+
+    # The User edition keeps everything in this PC's Excel/JSON files and sends
+    # Master Data files to the owner; only the Owner edition uses MySQL.
+    IS_OWNER_EDITION = fsr_edition.IS_OWNER_EDITION
+    MYSQL_ALLOWED = IS_OWNER_EDITION and not DEMO_MODE
+
+    if db_mysql is not None:
+        db_mysql.CONFIG_FILE = PRIVATE_JSON_DIR / "db_config.json"
+        if not MYSQL_ALLOWED:
+            db_mysql.is_enabled = lambda: False       # Demo Mode / User edition
+        else:
+            # A password still written in db_config.json goes to the Windows
+            # Credential Manager (the file keeps it if that is not possible).
+            # Whatever goes wrong here must never stop the program from
+            # starting: the password then simply stays where it is.
+            try:
+                db_mysql.move_password_to_store()
+            except Exception:
+                logging.getLogger("fsr").exception(
+                    "The MySQL password could not be moved to the Credential "
+                    "Manager")
+
+    # Names of the lists inside master_list.json.
+    LOCATION_LIST_KEY = "location_list"
+    DESTINATION_LIST_KEY = "destination_list"
+    COUNTRY_LIST_KEY = "country_of_origin_list"
+
+    THEME_LIGHT = "flatly"
+    THEME_DARK = "superhero"          # becomes "fsr_night" when it can be built
+    NIGHT_THEME = "fsr_night"         # the dark navy dashboard look
+    UI_VERSION = 3                    # bump to show the new look once
+
+    # =====================================================
+    # LOGGING + SETTINGS
+    # =====================================================
+
+    log = logging.getLogger("fsr")
+    log.setLevel(logging.INFO)
+    try:
+        _handler = RotatingFileHandler(
+            LOG_FILE, maxBytes=500_000, backupCount=3, encoding="utf-8"
+        )
+        _handler.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+        )
+        log.addHandler(_handler)
+    except OSError:
+        log.addHandler(logging.NullHandler())      # read-only folder: no log file
+
+
+    settings = load_settings()
+
+
+    # =====================================================
+    # MAIN WINDOW
+    # =====================================================
+
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)   # sharp text on HiDPI
+        except (AttributeError, OSError):   # older Windows: no shcore / refused
+            pass
+
+    try:
+        window = tb.Window(themename="superhero")
+    except Exception:
+        window = tb.Window(themename=THEME_LIGHT)
+
+    style = tb.Style()
+    window.title("Field Survey Report")
+
+    NIGHT_COLORS = {
+        "primary": "#5bc0eb", "secondary": "#3a4a6b", "success": "#2fbf9b",
+        "info": "#7fd3f0", "warning": "#f5c04a", "danger": "#e8554e",
+        "light": "#c5d0e6", "dark": "#0d1730", "bg": "#0f1a38",
+        "fg": "#e8eefc", "selectbg": "#2a3f6f", "selectfg": "#ffffff",
+        "border": "#3b5b8f", "inputfg": "#e8eefc", "inputbg": "#17254a",
+        "active": "#1d2d57",
+    }
+
+
+    if make_night_theme():
+        THEME_DARK = NIGHT_THEME
+
+    # The light look of the warehouse update (navy navigation, white panels);
+    # warehouse_ui/ holds the navigation and the warehouse modules.
+    try:
+        import warehouse_ui
+        from warehouse_ui import theme as ui_theme
+        if ui_theme.register_day_theme(style):
+            THEME_LIGHT = ui_theme.DAY_THEME
+    except Exception:
+        warehouse_ui = ui_theme = None
+        log.exception("The warehouse modules could not be loaded")
+
+    try:
+        saved_theme = settings.get("theme")
+        start_theme = (saved_theme if settings.get("ui_version") == UI_VERSION
+                       and saved_theme in (THEME_LIGHT, THEME_DARK)
+                       else THEME_LIGHT)
+        style.theme_use(start_theme)
+        settings["theme"] = start_theme
+    except Exception:
+        log.exception("Could not apply the start theme")
+    settings["ui_version"] = UI_VERSION
+
+    # Window / taskbar icon = logo.png (+ logo.ico on Windows).
+    # The app still starts if the logo files are missing. The icon is set
+    # again a moment after start-up, because ttkbootstrap puts its own
+    # feather icon on the window while it is being built.
+    LOGO_PNG = BASE_DIR / "logo.png"
+    LOGO_ICO = BASE_DIR / "logo.ico"
+    logo = None
+
+
+    apply_window_icon()
+    window.after(200, apply_window_icon)
+    window.after(1200, apply_window_icon)
+
+
+    window.withdraw()
+    if app_auth is None:
+        messagebox.showerror(
+            "Field Survey Report",
+            f"The sign in module was not found.\n\nPut app_auth.py here:\n"
+            f"{BASE_DIR}")
+        window.destroy()
+        sys.exit(1)
+
+    try:
+        # Only the Owner edition is installed with the owner's account.
+        user_store = app_auth.UserStore(
+            USERS_FILE, use_seed=fsr_edition.IS_OWNER_EDITION,
+            site_pc=not fsr_edition.IS_OWNER_EDITION)
+    except app_auth.UserDataError as error:
+        messagebox.showerror(
+            "Field Survey Report",
+            f"{error}\n\nThe account file was not overwritten.")
+        window.destroy()
+        sys.exit(1)
+    except OSError as error:
+        messagebox.showerror(
+            "Field Survey Report",
+            f"The user file could not be opened:\n{USERS_FILE}\n\n{error}")
+        window.destroy()
+        sys.exit(1)
+
+    if user_store.backup_path is not None:
+        log.info("The account file was brought up to date. The earlier file is "
+                 "kept as %s; %d retired account(s) removed.",
+                 user_store.backup_path, len(user_store.removed_accounts))
+    if user_store.problem is not None:
+        log.warning("The account file is not trusted (%s): sign in is limited "
+                    "to an Administrator until it is reviewed.",
+                    user_store.problem["kind"])
+
+    current_user = app_auth.run_login(
+        window, user_store, last_initials=settings.get("last_login_initials", ""),
+        on_icon=icon_for_dialog)
+    if current_user is None:
+        window.destroy()
+        sys.exit(0)
+
+    settings["last_login_initials"] = current_user.get("initials", "")
+    save_settings()
+    USER_FULL_NAME = app_auth.full_name(current_user)      # printed on the forms
+    set_control_initials(current_user.get("initials"))     # in every new Control #
+    print_name["value"] = USER_FULL_NAME   # preparer of this printout (fsr_forms)
+    IS_OWNER = app_auth.is_admin(current_user)   # Owner or site Administrator
+    ROLE_LABEL = app_auth.role_text(current_user)
+    # A copy that runs from the source folder is a TEST COPY: the title bar
+    # always says so, and it does not connect to the real database unless
+    # db_config.json explicitly allows it (db_mysql.refuses_real_database).
+    TEST_COPY = not FROZEN
+
+
+    window.title(f"{title_prefix()}Field Survey Report "
+                 f"({fsr_edition.LABEL} edition) - {USER_FULL_NAME}")
+
+
+    center_window(window, 1440, 820)
+    window.minsize(1180, 640)
+
+    default_font = tkfont.nametofont("TkDefaultFont")
+    bold_font = default_font.copy()
+    bold_font.configure(weight="bold")
+    title_font = default_font.copy()
+    title_font.configure(weight="bold", size=default_font.cget("size") + 8)
+
+
+    window.report_callback_exception = log_unhandled
+
+    # =====================================================
+    # STATE
+    # =====================================================
+
+    DEFAULT_EXCEL_NAME = ("Field_Survey_Reports_DEMO.xlsx" if DEMO_MODE
+                          else "Field_Survey_Reports.xlsx")
+
+
+    # Excel file in use + whether the form shows a saved report / has changes.
+    excel_state = {"path": initial_excel_path()}
+    report_state = {"editing": False, "dirty": False}
+    pdf_state = {"folder": settings.get("pdf_folder")}
+
+    # Filled in later (declared here so callbacks can refer to them).
+    item_frames = []
+    findings_frame = None
+
+    # =====================================================
+    # SCROLLABLE TAB
+    # =====================================================
+
+    scroll_frames = []
+
+
+    window.bind_all("<MouseWheel>", on_mousewheel)
+    window.bind_all("<Button-4>", on_mousewheel)
+    window.bind_all("<Button-5>", on_mousewheel)
+
+
+    window.bind_all("<FocusIn>", on_focus_in)
+
+    # =====================================================
+    # KEYBOARD NAVIGATION
+    #   Up / Down        in a text box: go to the box above / below
+    #   Ctrl + Up / Down in a drop-down: go to the box above / below
+    #   Left / Right     move inside the text (and between tabs on a tab)
+    #   Page Up / Down   scroll the page;  Ctrl + Home / End: top / bottom
+    #   Ctrl + PgUp / PgDn  (Ctrl + Tab)  previous / next tab
+    # =====================================================
+
+    FIELD_CLASSES = ("TEntry", "TCombobox")
+
+
+    window.bind_class("TEntry", "<Up>",
+                      lambda e: move_to_neighbour(e, -1), add="+")
+    window.bind_class("TEntry", "<Down>",
+                      lambda e: move_to_neighbour(e, 1), add="+")
+    window.bind_class("TCombobox", "<Control-Up>",
+                      lambda e: move_to_neighbour(e, -1), add="+")
+    window.bind_class("TCombobox", "<Control-Down>",
+                      lambda e: move_to_neighbour(e, 1), add="+")
+    window.bind_all("<Prior>", lambda e: scroll_page(e, -1), add="+")
+    window.bind_all("<Next>", lambda e: scroll_page(e, 1), add="+")
+    window.bind_all("<Control-Home>", lambda e: scroll_page(e, "top"), add="+")
+    window.bind_all("<Control-End>", lambda e: scroll_page(e, "bottom"), add="+")
+
+
+    # =====================================================
+    # DIRTY FLAG (unsaved changes)
+    # =====================================================
+
+    IGNORED_KEYS = {
+        "Tab", "ISO_Left_Tab", "Shift_L", "Shift_R", "Control_L", "Control_R",
+        "Alt_L", "Alt_R", "Escape", "Up", "Down", "Left", "Right", "Home",
+        "End", "Prior", "Next", "Caps_Lock", "Return", "Num_Lock",
+    }
+
+
+    window.bind_all("<KeyRelease>", on_any_key, add="+")
+    window.bind_all("<<ComboboxSelected>>", on_combo_selected, add="+")
+
+
+    master_data = load_master_lists()
+
+    # =====================================================
+    # SEARCHABLE COMBOBOX
+    # =====================================================
+
+    NAV_KEYS = (
+        "Return", "Escape", "Tab", "ISO_Left_Tab",
+        "Up", "Down", "Left", "Right", "Home", "End",
+        "Shift_L", "Shift_R", "Control_L", "Control_R",
+    )
+
+    searchable_combos = []
+
+
+    # =====================================================
+    # LINE LIMIT DISPLAY
+    # =====================================================
+
+    LOW_LINES_WARNING = 3      # turn orange when this few lines are left
+
+
+    FIELD_COLUMNS = 4       # every frame of the General tab shares this grid
+
+
+    # =====================================================
+    # STATUS / NOTIFICATIONS
+    # =====================================================
+
+    status_var = tkinter.StringVar()
+
+
+    # =====================================================
+    # LAYOUT  (dashboard style)
+    #   top bar | icon rail | sections menu | page | commands panel
+    # =====================================================
+
+    NAV_WIDTH = 210
+    PANEL_WIDTH = 300
+    small_font = default_font.copy()
+    small_font.configure(weight="bold", size=max(default_font.cget("size") - 1, 8))
+    panel_font = default_font.copy()
+    panel_font.configure(weight="bold", size=default_font.cget("size") + 4)
+
+
+    # ---------- navigation sidebar (filled by warehouse_ui at start-up) ----------
+    if ui_theme is not None:
+        ui_theme.apply_styles(style)
+    sidebar = ttk.Frame(window, style="Sidebar.TFrame", width=272)
+    sidebar.pack(side="left", fill="y")
+    sidebar.pack_propagate(False)
+
+    # ---------- top bar ----------
+    topbar = tb.Frame(window, padding=(16, 10))
+    topbar.pack(side="top", fill="x")
+
+    module_title = tb.Label(topbar, text="Inspection Reports", font=title_font)
+    module_title.pack(side="left", padx=(4, 12))
+    if DEMO_MODE:
+        tb.Label(topbar, text="DEMO MODE - TEST DATA ONLY", font=bold_font,
+                 bootstyle="inverse-warning", padding=(10, 3)).pack(
+            side="left", padx=(0, 4))
+    status_badge = tb.Label(
+        topbar, text="NEW REPORT", bootstyle="inverse-info",
+        padding=(10, 3), font=bold_font
+    )
+    status_badge.pack(side="left", padx=16)
+
+    # the MySQL status (three circles + label) is placed here further down
+    mysql_box = tb.Frame(topbar)
+    mysql_box.pack(side="right")
+
+    # signed-in user + account menu (left of the MySQL circles)
+    user_box = tb.Frame(topbar)
+    user_box.pack(side="right", padx=(0, 22))
+    account_menu_button = tb.Menubutton(
+        user_box, text=f"{USER_FULL_NAME}  ({ROLE_LABEL})  \u25be",
+        bootstyle="secondary-outline"
+    )
+    account_menu_button.pack()
+    account_menu = tkinter.Menu(account_menu_button, tearoff=False)
+    account_menu_button["menu"] = account_menu
+
+
+    rebuild_account_menu()
+    account_menu.configure(postcommand=rebuild_account_menu)
+
+    ttk.Separator(window, orient="horizontal").pack(side="top", fill="x")
+
+    # ---------- body: 4 columns ----------
+    body = tb.Frame(window)
+    body.pack(side="top", fill="both", expand=True)
+    body.columnconfigure(2, weight=1)
+    body.rowconfigure(0, weight=1)
+
+    # icon rail (new / open / light-dark)
+    rail = tb.Frame(body, padding=(10, 14))
+    rail.grid(row=0, column=0, sticky="ns")
+    rail_new = tb.Button(rail, text="+", width=3, bootstyle="info-outline",
+                         command=lambda: new_report())
+    rail_new.pack(pady=(0, 8))
+    rail_open = tb.Button(rail, text="☰", width=3, bootstyle="info-outline",
+                          command=lambda: open_saved_report_dialog())
+    rail_open.pack(pady=8)
+    theme_button = tb.Button(rail, text="◐", width=3,
+                             bootstyle="info-outline",
+                             command=lambda: toggle_theme())
+    theme_button.pack(pady=8)
+    add_tip(rail_new, "New report (Ctrl+N)")
+    add_tip(rail_open, "Open saved report (Ctrl+O)")
+    add_tip(theme_button, "Light / dark mode")
+
+    # sections menu (filled in once all pages exist)
+    nav = tb.Frame(body, padding=(8, 14), width=NAV_WIDTH)
+    nav.grid(row=0, column=1, sticky="ns")
+    nav.pack_propagate(False)
+    section_title(nav, "Sections", first=True)
+    nav_holder = tb.Frame(nav)
+    nav_holder.pack(fill="x")
+
+
+    if hide_notebook_tabs():
+        notebook = ttk.Notebook(body, style="Hidden.TNotebook")
+    else:
+        notebook = tb.Notebook(body, bootstyle="primary")
+    notebook.grid(row=0, column=2, sticky="nsew", padx=(6, 6), pady=(8, 8))
+
+    general_tab = ScrollFrame(notebook)
+    documents_tab = ScrollFrame(notebook)
+    items_tab = ScrollFrame(notebook, horizontal=True)
+    findings_tab = ScrollFrame(notebook)
+
+    notebook.add(general_tab, text="  General  ")
+    notebook.add(documents_tab, text="  Documents & Goods  ")
+    notebook.add(items_tab, text="  Item Lists  ")
+    notebook.add(findings_tab, text="  Additional Details  ")
+    notebook.enable_traversal()       # Ctrl+Tab / Ctrl+PgUp / Ctrl+PgDn
+
+    # ---------- commands panel ----------
+    panel = tb.Frame(body, padding=(16, 14), width=PANEL_WIDTH)
+    panel.grid(row=0, column=3, sticky="ns")
+    panel.pack_propagate(False)
+
+    status_label = tb.Label(panel, textvariable=status_var, bootstyle="secondary",
+                            wraplength=PANEL_WIDTH - 40, justify="left")
+    status_label.pack(side="bottom", anchor="w", pady=(8, 0))
+
+    tb.Label(panel, text="General commands", font=panel_font).pack(anchor="w")
+    ttk.Separator(panel, orient="horizontal").pack(fill="x", pady=(8, 12))
+
+    section_title(panel, "Report", first=True)
+    tb.Label(panel, text="Control #").pack(anchor="w")
+    # Control # is generated automatically and cannot be typed over.
+    control_entry = tb.Entry(panel, state="readonly", font=bold_font)
+    control_entry.pack(fill="x", pady=(2, 0))
+
+    section_title(panel, "Cargo condition")
+    condition_var = tkinter.StringVar(value="")      # nothing chosen yet
+    condition_row = tb.Frame(panel)
+    condition_row.pack(fill="x")
+    condition_row.columnconfigure(0, weight=1, uniform="cond")
+    condition_row.columnconfigure(1, weight=1, uniform="cond")
+    good_button = tb.Button(condition_row, text=CONDITION_GOOD,
+                            command=lambda: choose_condition(CONDITION_GOOD))
+    good_button.grid(row=0, column=0, sticky="we", padx=(0, 3))
+    bad_button = tb.Button(condition_row, text=CONDITION_BAD,
+                           command=lambda: choose_condition(CONDITION_BAD))
+    bad_button.grid(row=0, column=1, sticky="we", padx=(3, 0))
+
+
+    condition_var.trace_add("write", refresh_condition_buttons)
+    refresh_condition_buttons()
+
+    # ---- the form stays locked until Good Order / Bad Order is chosen ----
+    # A cover sits over the pages (the Weekly Summary page is not covered).
+    lock_cover = tb.Frame(body, padding=30)
+    tb.Label(
+        lock_cover, text="Select the Cargo Condition to start",
+        font=title_font, bootstyle="info", anchor="center"
+    ).pack(pady=(80, 8))
+    tb.Label(
+        lock_cover,
+        text="Choose  Good Order  or  Bad Order  in the panel on the right "
+             "before you start writing the report.",
+        bootstyle="secondary", anchor="center", justify="center"
+    ).pack()
+
+
+    condition_var.trace_add("write", update_form_lock)
+    window.bind_all("<FocusIn>", keep_focus_out_of_locked_form, add="+")
+    update_form_lock()
+
+    section_title(panel, "Actions")
+    save_report_button = tb.Button(
+        panel, text="SAVE (Ctrl+S)", bootstyle="success",
+        command=lambda: save_report()
+    )
+    save_report_button.pack(fill="x", pady=3)
+    print_pdf_button = tb.Button(
+        panel, text="Print / PDF...  (Ctrl+P)", bootstyle="info-outline",
+        command=lambda: print_pdf_current_report()
+    )
+    print_pdf_button.pack(fill="x", pady=3)
+
+    section_title(panel, "Storage")
+    file_label = tb.Label(panel, text="", bootstyle="secondary",
+                          wraplength=PANEL_WIDTH - 40, justify="left")
+    file_label.pack(anchor="w", pady=(0, 4))
+    change_file_button = tb.Button(
+        panel, text="Change Excel File...", bootstyle="secondary-outline",
+        command=lambda: change_excel_file()
+    )
+    change_file_button.pack(fill="x", pady=3)
+    import_master_button = tb.Button(
+        panel, text="Import Master Data...", bootstyle="secondary-outline",
+        command=lambda: import_master_data_file()
+    )
+    if IS_OWNER_EDITION:        # the owner compiles the files of every site
+        import_master_button.pack(fill="x", pady=3)
+    export_master_button = tb.Button(
+        panel, text="Export Master Data...", bootstyle="secondary-outline",
+        command=lambda: export_master_data()
+    )
+    export_master_button.pack(fill="x", pady=3)
+
+    # MySQL: three circles. All three colours = MySQL works,
+    # three red circles = it does not. Click them to check again.
+    mysql_on = db_mysql is not None and db_mysql.is_enabled()
+    DOT_OK = ("#f6c945", "#3dbb93", "#ee5a4f")       # yellow, green, red
+    DOT_BAD = ("#e0392d",) * 3
+    DOT_WAIT = ("#6b7894",) * 3
+    mysql_state = {"text": "Checking MySQL..."}
+
+    if IS_OWNER_EDITION:    # the User edition never uses MySQL
+        section_title(panel, "MySQL")
+        mysql_label = tb.Label(mysql_box, text="Checking...",
+                               font=bold_font, bootstyle="secondary")
+        mysql_label.pack(side="right", padx=(8, 0))
+        dots_canvas = tkinter.Canvas(
+            mysql_box, width=104, height=32, highlightthickness=0, bd=0,
+            background=style.colors.bg, cursor="hand2"
+        )
+        dots_canvas.pack(side="right")
+        mysql_waiting_label = tb.Label(mysql_box, text="", bootstyle="warning")
+        mysql_waiting_label.pack(side="right", padx=(0, 8))
+        dot_items = [
+            dots_canvas.create_oval(4 + i * 34, 4, 4 + i * 34 + 26, 30,
+                                    fill=DOT_WAIT[i], outline="")
+            for i in range(3)
+        ]
+
+        def set_mysql_dots(state, message=""):
+            colors = {"ok": DOT_OK, "bad": DOT_BAD}.get(state, DOT_WAIT)
+            for item, color in zip(dot_items, colors):
+                dots_canvas.itemconfigure(item, fill=color)
+            mysql_label.configure(
+                text={"ok": "Server active", "bad": "Server inactive"}.get(
+                    state, "Checking..."),
+                bootstyle={"ok": "success", "bad": "danger"}.get(
+                    state, "secondary"))
+            mysql_state["text"] = message or {
+                "ok": "MySQL is working", "bad": "MySQL is not working",
+            }.get(state, "Checking MySQL...")
+
+        def check_mysql_status(show_error=False):
+            """Test the connection in the background (the window never freezes)."""
+            set_mysql_dots("wait")
+            result = {}
+
+            def worker():
+                try:
+                    if db_mysql is None or not db_mysql.is_enabled():
+                        result["value"] = (
+                            False, "MySQL is turned off. Open the account menu "
+                                   "(top right) > MySQL Settings to set it up.")
+                    else:
+                        check = getattr(db_mysql, "check_connection", None)
+                        if check is not None:
+                            ok, message, away = check()
+                            result["value"] = (ok, message)
+                            result["away"] = away
+                        else:
+                            result["value"] = db_mysql.test_connection()
+                except Exception as error:
+                    result["value"] = (False, str(error))
+
+            thread = threading.Thread(target=worker, daemon=True)
+            thread.start()
+
+            def poll():
+                if thread.is_alive():
+                    window.after(150, poll)
+                    return
+                ok, message = result.get("value", (False, "No answer"))
+                set_mysql_dots("ok" if ok else "bad", message)
+                if ok and "finish_unfinished_saves" in globals():
+                    # MySQL catches up, MySQL's numbers are read and (first
+                    # run) equal reports are adopted - all in the background.
+                    finish_unfinished_saves(mysql_ok=True, numbers=True,
+                                            adopt=True)
+                if show_error and not ok:
+                    if db_mysql is None or not db_mysql.is_enabled():
+                        open_mysql_settings()
+                    elif result.get("away"):
+                        notify("MySQL was not reached  -  reports are saved on "
+                               "this PC and sent when it is back",
+                               bootstyle="warning")
+                    else:
+                        messagebox.showerror("MySQL", message, parent=window)
+
+            window.after(150, poll)
+
+        dots_canvas.bind("<Button-1>", lambda e: check_mysql_status(True))
+        add_tip(dots_canvas, "Three colours: the MySQL server is active. "
+                             "Three red: inactive.\nClick to check again "
+                             "(or to set MySQL up).")
+
+        tb.Button(
+            panel, text="Sync to MySQL", bootstyle="secondary-outline",
+            command=lambda: sync_all_to_mysql()
+        ).pack(fill="x", pady=3)
+        tb.Button(
+            panel, text="Restore Excel from MySQL", bootstyle="secondary-outline",
+            command=lambda: restore_excel_from_mysql()
+        ).pack(fill="x", pady=3)
+
+
+    general_body = general_tab.body
+
+    general_information_frame = tb.Labelframe(
+        general_body, text="General Information", padding=12
+    )
+    general_information_frame.grid(row=1, column=0, pady=6, sticky="we")
+    for _col in range(4):
+        general_information_frame.columnconfigure(_col, weight=1, uniform="gi")
+
+    SO_number_entry = tb.Entry(general_information_frame)
+    add_field(general_information_frame, "SO Number", SO_number_entry, 0, 0)
+
+    inspection_date_entry = tb.DateEntry(
+        general_information_frame, dateformat=DATE_FORMAT, firstweekday=0,
+        bootstyle="primary"
+    )
+    add_field(general_information_frame, "Inspection Date",
+              inspection_date_entry, 0, 1)
+
+
+    # Choosing / typing an Inspection Date copies it to the Commenced Date
+    # (unless the user already typed a different Commenced Date).
+    date_sync = {"last": ""}
+
+
+    inspection_date_entry.bind("<<DateEntrySelected>>", sync_commenced_date,
+                               add="+")
+    inspection_date_entry.entry.bind("<FocusOut>", sync_commenced_date, add="+")
+    inspection_date_entry.entry.bind("<Return>", sync_commenced_date, add="+")
+
+
+    consignee_combobox = create_searchable_combobox(
+        general_information_frame, "consignee_list")
+    add_field(general_information_frame, "Consignee", consignee_combobox, 1, 0)
+
+    supplier_combobox = create_searchable_combobox(
+        general_information_frame, "supplier_list")
+    add_field(general_information_frame, "Supplier", supplier_combobox, 1, 1)
+
+    brokerage_combobox = create_searchable_combobox(
+        general_information_frame, "broker_list")
+    add_field(general_information_frame, "Brokerage", brokerage_combobox, 1, 2)
+
+    hauler_combobox = create_searchable_combobox(
+        general_information_frame, "hauler_list")
+    add_field(general_information_frame, "Hauler", hauler_combobox, 1, 3)
+
+    location_combobox = create_searchable_combobox(
+        general_information_frame, LOCATION_LIST_KEY)
+    add_field(general_information_frame, "Location", location_combobox, 2, 0)
+
+    destination_combobox = create_searchable_combobox(
+        general_information_frame, DESTINATION_LIST_KEY)
+    add_field(general_information_frame, "Destination", destination_combobox, 2, 1)
+
+    country_combobox = create_searchable_combobox(
+        general_information_frame, COUNTRY_LIST_KEY)
+    add_field(general_information_frame, "Country of Origin",
+              country_combobox, 2, 2)
+
+    # Inspection Schedule Summary
+    schedule_frame = tb.Labelframe(
+        general_body, text="Inspection Schedule Summary", padding=12
+    )
+    schedule_frame.grid(row=2, column=0, pady=6, sticky="we")
+    # Activity | Commenced Date | Commenced Time   (row 1)
+    #            Completion Date | Completion Time (row 2)
+    schedule_entries = build_field_row(
+        schedule_frame, SCHEDULE_FIELDS,
+        layout=[(0, 0), (0, 1), (0, 2), (1, 1), (1, 2)]
+    )
+
+    # Shipment / Transport Details
+    transport_frame = tb.Labelframe(
+        general_body, text="Shipment/Transport Details", padding=12
+    )
+    transport_frame.grid(row=3, column=0, pady=6, sticky="we")
+    transport_entries = build_field_row(transport_frame, TRANSPORT_FIELDS)
+
+    # =====================================================
+    # TAB 2 - DOCUMENTS USED, DECLARED GOODS, OTHER REMARKS
+    # =====================================================
+
+    documents_body = documents_tab.body
+
+    documents_used_frame = tb.Labelframe(
+        documents_body, text="Documents Used", padding=12
+    )
+    documents_used_frame.grid(row=0, column=0, pady=6, sticky="we")
+
+    # DOCUMENT_FIELDS (label text, JSON key) is in fsr_storage.py.
+
+    DOCUMENT_COLUMNS = 4
+    document_entries = {}
+
+    for _col in range(DOCUMENT_COLUMNS):
+        documents_used_frame.columnconfigure(_col, weight=1, uniform="doc")
+
+    for index, (label_text, key) in enumerate(DOCUMENT_FIELDS):
+        entry = tb.Entry(documents_used_frame)
+        add_field(documents_used_frame, label_text, entry,
+                  index // DOCUMENT_COLUMNS, index % DOCUMENT_COLUMNS)
+        document_entries[key] = entry
+
+    declared_goods_frame = tb.Labelframe(
+        documents_body, text="Declared Goods (up to 5 lines print on the form)",
+        padding=12
+    )
+    declared_goods_frame.grid(row=1, column=0, pady=1)
+    declared_goods_frame.columnconfigure(0, weight=1)
+
+    for _col, _text in enumerate(("Description", "Quantity", "Packaging")):
+        tb.Label(declared_goods_frame, text=_text).grid(
+            row=0, column=_col, padx=1, pady=(0, 2)
+        )
+
+    declared_goods_rows = []   # each item: (description, quantity, packaging)
+
+    for row in range(1, 6):
+        description_entry = tb.Entry(declared_goods_frame, width=40)
+        description_entry.grid(row=row, column=0, padx=1, pady=3)
+
+        quantity_entry = tb.Entry(declared_goods_frame, width=12)
+        quantity_entry.grid(row=row, column=1, padx=1, pady=3)
+
+        packaging_entry = tb.Entry(declared_goods_frame, width=18)
+        packaging_entry.grid(row=row, column=2, padx=1, pady=3)
+
+        declared_goods_rows.append(
+            (description_entry, quantity_entry, packaging_entry)
+        )
+
+    # Types of Goods: the six check boxes of the First Page form.
+    goods_types_frame = tb.Labelframe(
+        documents_body, text="Types of Goods (ticks the check boxes on the First Page)",
+        padding=12
+    )
+    goods_types_frame.grid(row=2, column=0, pady=6)
+
+    goods_type_vars = {key: tkinter.BooleanVar() for _, key in GOODS_TYPES}
+    others_var = tkinter.BooleanVar()
+
+    for _col, (_label, _key) in enumerate(GOODS_TYPES):
+        tb.Checkbutton(
+            goods_types_frame, text=_label, variable=goods_type_vars[_key],
+            command=mark_dirty
+        ).grid(row=0, column=_col, padx=(8, 18), pady=2, sticky="w")
+
+
+    others_check = tb.Checkbutton(
+        goods_types_frame, text="Others:", variable=others_var,
+        command=on_others_toggled
+    )
+    others_check.grid(row=0, column=len(GOODS_TYPES), padx=(8, 4), pady=2,
+                      sticky="w")
+    others_entry = tb.Entry(goods_types_frame, width=28, state="disabled")
+    others_entry.grid(row=0, column=len(GOODS_TYPES) + 1, padx=(0, 8), pady=2)
+    goods_types_frame.columnconfigure(len(GOODS_TYPES) + 1, weight=1)
+
+
+    OTHER_REMARKS_MAX = 12      # the First Page form has 12 remark lines
+
+    other_remarks_frame, other_remarks_entries = create_remarks_section(
+        documents_body,
+        title="Other Important Remarks",
+        entry_width=60,
+        initial_rows=5,
+        max_rows=OTHER_REMARKS_MAX
+    )
+    other_remarks_frame.grid(row=3, column=0, pady=6)
+
+    # =====================================================
+    # TAB 3 - ITEM LISTS
+    # =====================================================
+
+    MAX_ROWS = 30
+
+    # ITEM_HEADERS (the printed Item List columns) is in fsr_storage.py.
+    # The Default form shows them with UOM after Quantity, Weight Unit after
+    # Weights and Currency before the prices. Weight Unit is a form box only:
+    # it is saved together with the number in Weights ("1,250 KG").
+    # Cargo ID / Receiving Ref are not shown: values saved earlier
+    # (and the Receiving Ref given at save time) are kept with the line.
+    ITEM_FORM_HEADERS = [
+        "Description of Goods", "PO Number", "Packaging", "Quantity", "UOM",
+        "Dimensions", "Weights", "Weight Unit", "Currency", "Unit Price",
+        "Total Price", "Findings",
+    ]
+    ITEM_WIDTHS = [32, 12, 14, 9, 9, 12, 9, 7, 7, 11, 12, 28]
+    # Containerized / Loading forms (Containerized_Loading_Form.xlsx): the
+    # Container No. / Truck Plate No. first, no PO Number and no prices.
+    # Each form keeps its own lines (see set_item_form).
+    UNIT_FORM_HEADERS = [
+        UNIT_NO_HEADER, "Description of Goods", "Packaging", "Quantity", "UOM",
+        "Dimensions", "Weights", "Weight Unit", "Findings",
+    ]
+    UNIT_FORM_WIDTHS = [18, 32, 14, 9, 9, 12, 9, 7, 28]
+    UNIT_FORM_LABELS = {"Description of Goods": "Description",
+                        "Dimensions": "Dimension", "Weights": "Weight"}
+    ITEM_FORM_COLUMNS = {
+        ITEM_FORM_DEFAULT: (ITEM_FORM_HEADERS, ITEM_WIDTHS),
+        ITEM_FORM_CONTAINERIZED: (UNIT_FORM_HEADERS, UNIT_FORM_WIDTHS),
+        ITEM_FORM_LOADING: (UNIT_FORM_HEADERS, UNIT_FORM_WIDTHS),
+    }
+    # A line is saved when one of these has text (Cargo ID / Receiving Ref
+    # alone do not make a line).
+    SAVED_LINE_HEADERS = [h for h in ITEM_LINE_HEADERS
+                          if h not in ITEM_LINK_HEADERS]
+    ITEM_HEADER_TIPS = {
+        "Quantity": "The number only, e.g. 12. The unit goes in UOM.",
+        "Weights": "The number only, e.g. 1,250. The unit goes in Weight Unit.",
+        "Currency": "Currency of the Unit Price and Total Price.",
+    }
+
+    item_form_var = tkinter.StringVar(value=ITEM_FORM_DEFAULT)
+
+    items_body = items_tab.body
+
+    items_toolbar = tb.Frame(items_body)
+    items_toolbar.grid(row=0, column=0, sticky="w", pady=(0, 6))
+
+    item_lists_frame = tb.Frame(items_body)
+    item_lists_frame.grid(row=1, column=0)
+    item_lists_frame.columnconfigure(0, weight=1)
+
+
+    # Lines typed on the forms not shown: form -> [(lines, row count)] per
+    # Item List. Each form keeps its own lines; every form with lines is
+    # printed. The selected form is the one that counts as stock.
+    item_form_store = {}
+
+
+    ITEM_FORM_HINTS = {
+        ITEM_FORM_DEFAULT:
+            "Total Price = Quantity x Unit Price unless you type it yourself.  "
+            "Shift + mouse wheel scrolls sideways.",
+        ITEM_FORM_CONTAINERIZED:
+            "One line per cargo with its Container No.  Prints on the "
+            "Containerized form.",
+        ITEM_FORM_LOADING:
+            "One line per cargo with its Truck Plate No.  Prints on the "
+            "Loading form.",
+    }
+
+    form_row = tb.Frame(items_toolbar)
+    form_row.grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
+    tb.Label(form_row, text="Item List Form:", font=bold_font).pack(
+        side="left", padx=(0, 6))
+    for _form in ITEM_FORMS:
+        tb.Radiobutton(
+            form_row, text=_form, value=_form, variable=item_form_var,
+            bootstyle="info-outline-toolbutton", width=14,
+            command=choose_item_form
+        ).pack(side="left", padx=(0, 4))
+    add_tip(form_row,
+            "Default - the original columns.\n"
+            "Containerized - Container No. first (Containerized form).\n"
+            "Loading - Truck Plate No. first (Loading form).\n"
+            "Each form keeps its own lines, and every form with lines is\n"
+            "printed. The form selected when you save counts as stock.")
+
+    new_frame_button = tb.Button(
+        items_toolbar, text="Create New Item List", bootstyle="primary",
+        command=add_item_frame
+    )
+    new_frame_button.grid(row=1, column=0, padx=(0, 8))
+
+    remove_frame_button = tb.Button(
+        items_toolbar, text="Remove Last Item List",
+        bootstyle="secondary-outline", command=remove_item_frame
+    )
+    remove_frame_button.grid(row=1, column=1)
+
+    items_hint = tb.Label(
+        items_toolbar, text=ITEM_FORM_HINTS[ITEM_FORM_DEFAULT],
+        bootstyle="secondary"
+    )
+    items_hint.grid(row=1, column=2, padx=16)
+
+
+    withdrawal_panel = WithdrawalPanel(items_body, SimpleNamespace(
+        window=window, activity_entry=schedule_entries["activity"],
+        form_var=item_form_var,
+        main_path=lambda: Path(excel_state["path"]),
+        control_no=lambda: control_entry.get().strip(),
+        sections=lambda: item_frames,
+        stored_in_main=lambda: report_state["editing"],
+        header_po_entry=lambda: document_entries["po_number"],
+        mark_dirty=mark_dirty,
+    ), row=2)
+    for _event in ("<<ComboboxSelected>>", "<FocusOut>"):
+        schedule_entries["activity"].bind(
+            _event, lambda e: withdrawal_panel.context_changed(), add="+")
+
+    # =====================================================
+    # TAB 4 - ADDITIONAL DETAILS (free text; saved as the report's remark lines)
+    # Created ONCE (shared by all Item Lists).
+    # =====================================================
+
+    findings_frame, findings_entries = create_remarks_section(
+        findings_tab.body,
+        title="Additional Details",
+        entry_width=100,
+        initial_rows=5,
+        max_rows=60,
+        capacity_func=lambda: remark_capacity(total_item_rows())
+    )
+    findings_frame.grid(row=0, column=0, pady=6)
+
+    # =====================================================
+    # WEEKLY SUMMARY REPORT
+    # Month + year + week -> one line per item of every report inspected in
+    # that week, with the report's supplier / documents / vehicle / cargo
+    # condition. "Export" saves it as an Excel file.
+    # =====================================================
+
+    # A weekly row has 28 fields: the columns below, except that Quantity is
+    # split into Quantity + UOM and each price comes after a Currency field.
+    # The table / Excel show them together ("6 pcs", "jpy 460,000.00").
+    WEEKLY_COLUMNS = [               # (heading, width in pixels)
+        ("SO Number", 120), ("Date", 95), ("Activity", 85),
+        ("Shipment type", 95), ("Supplier", 160), ("Broker", 140),
+        ("Hauler", 140), ("Destination", 105), ("Origin", 100),
+        ("Invoice", 100), ("Purchase Order", 115), ("Job Order", 95),
+        ("Gatepass", 95), ("BL / AWB", 105), ("DR", 85),
+        ("Vehicle Type", 115), ("Plate #", 95),
+        ("Description", 230), ("PO", 95), ("Packaging", 95), ("Quantity", 85),
+        ("Dimension", 105), ("Weight", 85),
+        ("Unit Price", 115), ("Total Price", 125), ("Cargo Condition", 115),
+    ]
+    WEEKLY_NUMBER_COLUMNS = {"Unit Price", "Total Price"}
+    WEEKLY_QTY, WEEKLY_UOM, WEEKLY_CURRENCY = 20, 21, 24   # field positions
+    WEEKLY_ITEM_KEYS = ("Description of Goods", "PO Number", "Packaging",
+                        "Quantity", "UOM", "Dimensions", "Weights", "Currency",
+                        "Unit Price", "Total Price")
+    MONTH_LIST = [calendar.month_name[n] for n in range(1, 13)]
+    weekly_state = {"rows": [], "span": None}
+
+
+    # ---------- the page ----------
+    summary_tab = tb.Frame(notebook, padding=(14, 12))
+    notebook.add(summary_tab, text="  Weekly Summary  ")
+    summary_tab.columnconfigure(0, weight=1)
+    summary_tab.rowconfigure(3, weight=1)
+
+    _today = date.today()
+    month_var = tkinter.StringVar(value=calendar.month_name[_today.month])
+    year_var = tkinter.StringVar(value=str(_today.year))
+    week_var = tkinter.IntVar(value=min((_today.day - 1) // 7 + 1, 5))
+    source_var_weekly = tkinter.StringVar(
+        value="mysql" if db_mysql is not None and db_mysql.is_enabled()
+        else "excel")
+
+    pick_row = tb.Frame(summary_tab)
+    pick_row.grid(row=0, column=0, sticky="we")
+    tb.Label(pick_row, text="Month", font=bold_font).pack(side="left", padx=(0, 8))
+    month_combo = tb.Combobox(pick_row, textvariable=month_var, values=MONTH_LIST,
+                              state="readonly", width=14)
+    month_combo.pack(side="left")
+    year_combo = tb.Combobox(
+        pick_row, textvariable=year_var, state="readonly", width=7,
+        values=[str(y) for y in range(_today.year - 6, _today.year + 2)])
+    year_combo.pack(side="left", padx=8)
+    for _combo in (month_combo, year_combo):
+        _combo.no_dirty = True          # picking a month is not a report edit
+        scroll_instead_of_change(_combo)
+
+    export_weekly_button = tb.Button(
+        pick_row, text="Export", bootstyle="info", width=14,
+        command=lambda: export_weekly_summary()
+    )
+    export_weekly_button.pack(side="right")
+
+    if db_mysql is not None and db_mysql.is_enabled():
+        for _text, _value in (("MySQL database", "mysql"), ("Excel file", "excel")):
+            tb.Radiobutton(
+                pick_row, text=_text, value=_value, variable=source_var_weekly,
+                command=lambda: refresh_weekly()
+            ).pack(side="right", padx=(0, 12))
+        tb.Label(pick_row, text="Data from:").pack(side="right", padx=(0, 6))
+
+    week_row = tb.Frame(summary_tab)
+    week_row.grid(row=1, column=0, sticky="we", pady=(10, 2))
+    week_buttons = {}
+    for _week in (1, 2, 3, 4, 5, 0):
+        _button = tb.Button(
+            week_row, text="Week %d" % _week if _week else "Whole month",
+            bootstyle="secondary-outline", width=12,
+            command=lambda w=_week: choose_week(w)
+        )
+        _button.pack(side="left", padx=(0, 6))
+        week_buttons[_week] = _button
+    range_label = tb.Label(summary_tab, text="", bootstyle="secondary")
+    range_label.grid(row=2, column=0, sticky="w", pady=(2, 8))
+
+    tree_holder = tb.Frame(summary_tab)
+    tree_holder.grid(row=3, column=0, sticky="nsew")
+    tree_holder.columnconfigure(0, weight=1)
+    tree_holder.rowconfigure(0, weight=1)
+    summary_tree = ttk.Treeview(
+        tree_holder, columns=[f"c{i}" for i in range(len(WEEKLY_COLUMNS))],
+        show="headings", selectmode="browse"
+    )
+    for _index, (_heading, _width) in enumerate(WEEKLY_COLUMNS):
+        summary_tree.heading(f"c{_index}", text=_heading)
+        summary_tree.column(
+            f"c{_index}", width=_width, minwidth=60, stretch=False,
+            anchor="e" if _heading in WEEKLY_NUMBER_COLUMNS else "w")
+    _vsb = ttk.Scrollbar(tree_holder, orient="vertical",
+                         command=summary_tree.yview)
+    _hsb = ttk.Scrollbar(tree_holder, orient="horizontal",
+                         command=summary_tree.xview)
+    summary_tree.configure(yscrollcommand=_vsb.set, xscrollcommand=_hsb.set)
+    summary_tree.grid(row=0, column=0, sticky="nsew")
+    _vsb.grid(row=0, column=1, sticky="ns")
+    _hsb.grid(row=1, column=0, sticky="we")
+
+    summary_note = tb.Label(summary_tab, text="", bootstyle="secondary")
+    summary_note.grid(row=4, column=0, sticky="w", pady=(8, 0))
+
+
+    # =====================================================
+    # TAB 5 - INCIDENT REPORT (only shown for Bad Order)
+    # One card per Incident Report form (15 lines each). When a card is
+    # full, "+ Add Additional Incident Report" adds the next one.
+    # Saved to a JSON file - NOT to the Excel file.
+    # =====================================================
+
+    INCIDENT_TAB_TEXT = "  Incident Report  "
+
+    incident_tab = ScrollFrame(notebook)      # added to the notebook on demand
+    incident_body = incident_tab.body
+    incident_cards = []
+
+    incident_info = tb.Label(
+        incident_body,
+        text="Type what happened, one statement per line (about 110 characters "
+             "fit on a printed line). The header is filled from the report; "
+             "you can change it.",
+        bootstyle="secondary", justify="left"
+    )
+    incident_info.grid(row=0, column=0, sticky="w", pady=(0, 6))
+
+    incident_cards_frame = tb.Frame(incident_body)
+    incident_cards_frame.grid(row=1, column=0, sticky="we")
+    incident_cards_frame.columnconfigure(0, weight=1)
+
+    incident_actions = tb.Frame(incident_body)
+    incident_actions.grid(row=2, column=0, sticky="w", pady=(8, 0))
+
+
+    add_more_button = tb.Button(
+        incident_actions, text="+ Add Additional Incident Report",
+        bootstyle="primary", command=add_additional_incident
+    )
+    add_more_button.grid(row=0, column=0, padx=(0, 8))
+    remove_last_button = tb.Button(
+        incident_actions, text="Remove Last Incident Report",
+        bootstyle="secondary-outline", command=remove_last_incident
+    )
+    remove_last_button.grid(row=0, column=1)
+    incident_hint = tb.Label(incident_actions, text="", bootstyle="secondary")
+    incident_hint.grid(row=0, column=2, padx=14, sticky="w")
+
+
+    notebook.bind("<<NotebookTabChanged>>", on_tab_changed, add="+")
+
+
+    # ---- the sections menu (left column) ----
+    nav_buttons = []
+    for _text, _tab in (
+        ("General", general_tab), ("Documents & Goods", documents_tab),
+        ("Item Lists", items_tab), ("Additional Details", findings_tab),
+        (INCIDENT_TAB_TEXT.strip(), incident_tab),
+        ("Weekly Summary", summary_tab),
+    ):
+        nav_buttons.append((_tab, tb.Button(
+            nav_holder, text=_text, bootstyle="secondary-outline",
+            padding=(12, 8), command=lambda t=_tab: notebook.select(t)
+        )))
+
+
+    refresh_nav()
+    add_incident_card(copy_voyage=False, autofill=False)   # filled when shown
+
+
+    # Control #s MySQL holds, as last seen (filled when the server answers).
+    mysql_numbers = {"values": []}
+
+
+    # record id -> (what happened, detail), for a save that asked to be told
+    # at once (only when the sender runs inline, as in the automated tests)
+    mysql_feedback = {}
+    mysql_wait_state = {"busy": False}
+
+
+    mysql_sender = fsr_mysql_sender.Sender(
+        mysql_round, mysql_round_done,
+        inline=os.environ.get("FSR_MYSQL_INLINE", "").strip() == "1")
+
+
+    # ---------- PO_Master and Withdrawn_Item, also in the background ----------
+
+    lists_feedback = {}         # record id -> exception or None (inline only)
+    lists_state = {"warned": False}
+
+
+    lists_sender = fsr_mysql_sender.Sender(
+        lists_round, lists_round_done,
+        inline=os.environ.get("FSR_MYSQL_INLINE", "").strip() == "1")
+
+
+    unfinished_state = {"unreadable_shown": False}
+
+
+    # =====================================================
+    # MYSQL CONFLICTS  (a copy never overwrites what it does not own)
+    # =====================================================
+
+    conflict_state = {"dialog": None}
+
+
+    import_state = {"running": False}
+
+
+    for _key, _func in (("s", save_report),
+                        ("n", show_inspection_then(new_report)),
+                        ("o", show_inspection_then(open_saved_report_dialog)),
+                        ("p", print_pdf_current_report)):
+        window.bind(f"<Control-{_key}>", shortcut(_func))
+        window.bind(f"<Control-{_key.upper()}>", shortcut(_func))
+
+    window.protocol("WM_DELETE_WINDOW", on_close)
+
+    update_item_list_buttons()
+
+    # Start with a new report and its automatic Control #.
+    new_report(confirm=False)
+
+    # Saves that stopped halfway last time are finished now (this PC's files;
+    # MySQL follows when the check below finds the server).
+    window.after(300, finish_unfinished_saves)
+
+    if "check_mysql_status" in globals():
+        window.after(600, check_mysql_status)
+    window.after(250, poll_mysql_sender)
+
+
+    window.report_callback_exception = report_callback_exception
+
+
+    app_shell = None
+    if warehouse_ui is not None:
+        from types import SimpleNamespace
+        ui_context = SimpleNamespace(
+            window=window, sidebar=sidebar, inspection_frame=body, log=log,
+            log_file=LOG_FILE, user_name=USER_FULL_NAME, is_owner=IS_OWNER,
+            role_label=ROLE_LABEL,
+            owner_edition=IS_OWNER_EDITION, edition_label=fsr_edition.LABEL,
+            demo_mode=DEMO_MODE, data_dir=DATA_DIR, db_mysql=db_mysql,
+            master_data=master_data, save_master_lists=save_master_lists,
+            excel_path=lambda: Path(excel_state["path"]),
+            data_source=analytics_source, set_data_source=set_analytics_source,
+            source_text=lambda: ("MySQL database" if analytics_source() == "mysql"
+                                 else f"Excel - {Path(excel_state['path']).name}"),
+            mysql_enabled=lambda: db_mysql is not None and db_mysql.is_enabled(),
+            notify=notify, open_file=open_file,
+            run_with_progress=run_with_progress, reports_folder=reports_folder,
+            open_report=open_report_from_module, set_title=set_module_title,
+            change_excel_file=change_excel_file, toggle_theme=toggle_theme,
+            open_mysql_settings=open_mysql_settings,
+            after_sample_change=after_sample_change,
+        )
+        try:
+            app_shell = warehouse_ui.install(ui_context)
+            app_shell.show("dashboard")
+        except Exception:
+            log.exception("The navigation could not be built")
+            app_shell = None
+            sidebar.pack_forget()
+
+    window.deiconify()
+    window.lift()
+
+
+    window.after(600, tell_owner_about_requests)
+
+
+def main():
+    build_window()
+    window.mainloop()
+
+
+if __name__ == "__main__":
+    main()
+
