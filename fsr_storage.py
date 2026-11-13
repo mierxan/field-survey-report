@@ -42,11 +42,24 @@ def load_workbook(filename, *args, **kwargs):
     while the dashboards (or anything else) were reading it failed with
     "File In Use". Now the file is open only for the moment of copying."""
     if isinstance(filename, (str, os.PathLike)):
-        with open(filename, "rb") as file:
-            buffer = io.BytesIO(file.read())
+        buffer = io.BytesIO(_read_bytes(filename))
         buffer.name = str(filename)     # what openpyxl reports as the file
         filename = buffer
     return _openpyxl_load_workbook(filename, *args, **kwargs)
+
+
+def _read_bytes(path):
+    """The file's bytes. Opening it at the very moment a save replaces it
+    fails on Windows ("Permission denied"); it is tried again for about
+    two seconds, as replace_file() does for the write."""
+    for attempt in range(REPLACE_TRIES):
+        try:
+            with open(path, "rb") as file:
+                return file.read()
+        except PermissionError:
+            if attempt == REPLACE_TRIES - 1:
+                raise
+            time.sleep(REPLACE_PAUSE)
 
 
 REPLACE_TRIES = 10                      # x 0.2 s: about 2 seconds

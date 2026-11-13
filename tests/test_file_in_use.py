@@ -110,3 +110,25 @@ def test_a_save_while_the_dashboards_read_does_not_fail(book):
     assert errors == []
     assert s.read_report(book, "FSR-202611-0001")[
         "general_information"]["so_number"] == "SO-5"
+
+
+def test_reading_at_the_moment_of_a_replace_is_tried_again(book,
+                                                            monkeypatch):
+    """Opening the file while a save replaces it fails on Windows for a
+    moment; the read is tried again instead of failing (the dashboards
+    showed a load error)."""
+    real_open = open
+    calls = {"n": 0}
+
+    def busy_twice(path, mode="r", *args, **kwargs):
+        if str(path) == str(book) and "b" in mode:
+            calls["n"] += 1
+            if calls["n"] <= 2:
+                raise PermissionError(13, "Permission denied")
+        return real_open(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(s, "REPLACE_PAUSE", 0.01)
+    monkeypatch.setattr("builtins.open", busy_twice)
+    wb = s.load_workbook(book, data_only=True)
+    assert calls["n"] == 3 and "Reports" in wb.sheetnames
+
