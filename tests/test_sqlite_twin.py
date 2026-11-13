@@ -249,3 +249,21 @@ def test_cell_values_keep_their_kind():
     from decimal import Decimal
     assert sq.load_row(sq.dump_row([Decimal("2"), Decimal("2.5")])) == \
         (2, 2.5)
+
+
+def test_the_json_folder_of_a_workbook_follows_the_folders(tmp_path,
+                                                           monkeypatch):
+    """The folder lookup is kept per workbook AND per data folders: other
+    folders (another data folder, Demo Mode, a test) give their own."""
+    managed = tmp_path / "excel" / "sub" / "book.xlsx"
+    managed.parent.mkdir(parents=True)
+    monkeypatch.setattr(fsr_paths, "EXCEL_DIR", tmp_path / "excel")
+    monkeypatch.setattr(fsr_paths, "JSON_DIR", tmp_path / "json")
+    assert fsr_paths.json_dir_for_workbook(managed) == \
+        tmp_path / "json" / "sub"
+    monkeypatch.setattr(fsr_paths, "JSON_DIR", tmp_path / "other_json")
+    assert fsr_paths.json_dir_for_workbook(managed) == \
+        tmp_path / "other_json" / "sub"
+    outside = tmp_path / "elsewhere" / "book.xlsx"
+    outside.parent.mkdir()
+    assert fsr_paths.json_dir_for_workbook(outside) == outside.parent

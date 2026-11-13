@@ -1,5 +1,7 @@
 """Canonical project-data paths and managed workbook sidecar routing."""
 
+import os
+from functools import lru_cache
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -43,10 +45,21 @@ def configure_data_dirs(data_root, json_dir=None, excel_dir=None):
 
 def json_dir_for_workbook(workbook_path):
     """Use the matching JSON tree for managed workbooks, otherwise stay local."""
+    # Asked once per report when all reports are read (for its incident
+    # file): the answer for the same workbook and folders is kept, because
+    # resolving the two paths costs Windows a disk lookup each time (2 of
+    # every 5 seconds of reading 6,000 reports).
+    relative = "" if Path(workbook_path).is_absolute() else os.getcwd()
+    return _json_dir(str(workbook_path), str(EXCEL_DIR), str(JSON_DIR),
+                     relative)
+
+
+@lru_cache(maxsize=512)
+def _json_dir(workbook_path, excel_dir, json_dir, _cwd):
     workbook_parent = Path(workbook_path).resolve().parent
-    excel_root = EXCEL_DIR.resolve()
+    excel_root = Path(excel_dir).resolve()
     try:
         relative_parent = workbook_parent.relative_to(excel_root)
     except ValueError:
         return workbook_parent
-    return JSON_DIR / relative_parent
+    return Path(json_dir) / relative_parent
