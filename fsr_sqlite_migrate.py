@@ -356,7 +356,9 @@ def _read_once(paths):
 
     def load(filename, *args, **kwargs):
         key = str(Path(filename).resolve()).casefold()
-        if key not in wanted or args or kwargs.get("read_only"):
+        # Reads only (data_only=True): a write loads its own copy.
+        if key not in wanted or args or not kwargs.get("data_only") \
+                or kwargs.get("read_only"):
             return real(filename, *args, **kwargs)
         cache = (key, tuple(sorted(kwargs.items())))
         if cache not in loaded:
@@ -454,6 +456,7 @@ def migrate(excel_path, required_root=None, now=None, progress=None):
     except OSError as error:
         return keep(f"The backup copy could not be made, so nothing was "
                     f"changed: {error}")
+    read_stats = _stats([main, book])
     try:
         with _read_once([main, book]):
             progress("Reading the reports of the Excel file ...")
@@ -484,6 +487,12 @@ def migrate(excel_path, required_root=None, now=None, progress=None):
     if differences:
         return keep("The reports read from the database were not the same "
                     "as in the Excel file:", differences)
+    if _stats([main, book]) != read_stats:
+        # Saved in Excel (or by another copy of the program) meanwhile:
+        # the database would miss that. Not taken; tried again next start.
+        return keep("The Excel file was changed while the reports were "
+                    "being moved, so the move was not finished. It is tried "
+                    "again at the next start; nothing was changed.")
 
     _activate(temp, db_path, excel_path)
     store = sq.SqliteStore(excel_path, required_root)

@@ -460,3 +460,34 @@ def test_two_moves_in_the_same_second_keep_both_backups(book):
     assert result.status == "migrated", result.message
     assert result.details["backup"].endswith("before_sqlite_20261113_120000_2")
     assert len(list((book.parent / "Backups").glob("before_sqlite_*"))) == 2
+
+
+def test_a_save_in_excel_during_the_move_is_not_lost(book, monkeypatch):
+    """Someone saves the workbook in Excel while the reports are being
+    moved: the move is not finished, the workbook stays in use."""
+    real = migrate.compare_stores
+
+    def meanwhile(excel, sql):
+        found = real(excel, sql)
+        fsr_store.ExcelStore(book).write_report(
+            receiving("FSR-MIG-202611-0020", so="SO-DURING"), False, WHEN)
+        return found
+    monkeypatch.setattr(migrate, "compare_stores", meanwhile)
+    result = migrate.migrate(book)
+    assert result.status == "kept"
+    assert "changed while the reports were being moved" in result.message
+    assert fsr_store.open_store(book).kind == "excel"
+    assert "FSR-MIG-202611-0020" in fsr_store.open_store(
+        book).control_numbers()
+    monkeypatch.setattr(migrate, "compare_stores", real)
+    assert migrate.migrate(book).status == "migrated"      # next start
+    assert "FSR-MIG-202611-0020" in fsr_store.open_store(
+        book).control_numbers()
+
+
+def test_the_read_once_copy_is_never_handed_to_a_write(book):
+    with migrate._read_once([book]):
+        first = fsr_storage.load_workbook(book, data_only=True)
+        assert fsr_storage.load_workbook(book, data_only=True) is first
+        assert fsr_storage.load_workbook(book) is not first
+    assert fsr_storage.load_workbook(book, data_only=True) is not first
