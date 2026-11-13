@@ -450,7 +450,9 @@ def _open(path, **options):
 def _reports_from(path, wb):
     grouped = {name: {} for name in (LINE_SHEET, GOODS_SHEET, REMARK_SHEET)}
     for name, by_control in grouped.items():
-        for row in wb[name].iter_rows(min_row=2, values_only=True):
+        typed = storage.TYPED_COLUMNS["Declared Goods"] \
+            if name == GOODS_SHEET else ()
+        for row in storage.sheet_rows(wb[name], typed):
             if row and row[0] is not None:
                 by_control.setdefault(
                     str(row[0]).strip().casefold(), []).append(row)
@@ -646,7 +648,7 @@ def header_values(data, control_no, saved_at=None):
 def goods_and_remarks(data, control_no):
     """The Declared Goods and Remarks rows of one Withdrawal report."""
     goods = [[control_no, storage.text_or_none(row["description"]),
-              storage.to_number(row["quantity"]),
+              storage.typed_number(row["quantity"]),
               storage.text_or_none(row["packaging"])]
              for row in data["declared_goods"]]
     sections = [("Other Important Remarks", data["other_important_remarks"]),

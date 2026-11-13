@@ -394,3 +394,25 @@ def test_a_moved_workbook_chosen_again_finds_its_database(program,
     finally:
         live(g)["excel_state"]["path"] = before
         live(g)["settings"]["excel_path"] = str(before)
+
+
+# ---------- quantities as typed (item 5) ----------
+
+def test_a_reopened_report_shows_the_quantity_as_typed(program):
+    g, answers = program
+    control = fill(g, "SO-SQL-TYPED")
+    section = g["item_frames"][0]
+    cols = g["ITEM_FORM_HEADERS"]
+    g["set_entry"](section.rows[0][cols.index("Quantity")], "1,250.50")
+    assert g["save_report"]() is True
+    g["new_report"](confirm=False)
+    g["load_report_into_form"](control, "excel")
+    shown = g["item_frames"][0].rows[0][cols.index("Quantity")].get()
+    assert shown == "1,250.50"
+    # the Excel file holds the number, shown the same way
+    from openpyxl import load_workbook
+    ws = load_workbook(book(g))["Item List"]
+    headers = [c.value for c in ws[1]]
+    cells = [r[headers.index("Quantity")] for r in ws.iter_rows(min_row=2)
+             if r[0].value == control]
+    assert cells[0].value == 1250.5 and cells[0].number_format == "0,000.00"

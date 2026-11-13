@@ -98,9 +98,9 @@ EXPECTED_ROWS = [
      "Valve", "PO-7", "Box", "6 pcs", None, None, 460000, 2760000,
      "Good Order"],
     ["SO-W2", datetime(2031, 3, 9), "Receiving", *HEAD, "INV-SO-W2", *DOCS,
-     # The workbook keeps a Quantity as a number: "1,250.50" comes back
-     # as 1250.5 (today's behaviour, recorded here as it is).
-     "Gasket", "PO-8", "Box", "1250.5 Kg", "10x10", "1250", 2, 2501,
+     # A Quantity is shown as it was typed ("1,250.50"); the workbook
+     # keeps the number with a display format (tests/test_typed_quantities).
+     "Gasket", "PO-8", "Box", "1,250.50 Kg", "10x10", "1250", 2, 2501,
      "Good Order"],
     ["SO-W3", datetime(2031, 3, 14), "Withdrawal", *HEAD, "INV-SO-W3", *DOCS,
      None, None, None, None, None, None, None, None, "Bad Order"],

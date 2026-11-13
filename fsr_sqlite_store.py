@@ -107,6 +107,10 @@ def is_active(excel_path):
 # ---------- cell values <-> JSON ------------------------------
 
 def encode(value):
+    typed = getattr(value, "typed", None)
+    if typed:                       # a quantity, as it was typed
+        return {"$n": int(value) if isinstance(value, int) else float(value),
+                "$t": typed}
     if isinstance(value, Decimal):
         # As the workbook gives a number back: whole -> int, else float.
         return int(value) if value == value.to_integral_value()             else float(value)
@@ -121,6 +125,11 @@ def encode(value):
 
 def decode(value):
     if isinstance(value, dict):
+        if "$t" in value and "$n" in value:
+            number = value["$n"]
+            kind = storage.TypedInt if isinstance(number, int) \
+                else storage.TypedFloat
+            return kind(number, value["$t"])
         if "$dt" in value:
             return datetime.fromisoformat(value["$dt"])
         if "$d" in value:

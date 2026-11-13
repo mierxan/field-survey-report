@@ -133,10 +133,9 @@ def _all_none(row):
     return all(value is None for value in row)
 
 
-def _child_rows(ws, headers, label):
+def _child_rows(ws, headers, label, typed=()):
     rows = []
-    for number, row in enumerate(ws.iter_rows(min_row=2, values_only=True),
-                                 start=2):
+    for number, row in enumerate(storage.sheet_rows(ws, typed), start=2):
         if row is None or _all_none(row):
             continue
         beyond = [v for v in row[len(headers):] if v is not None]
@@ -231,7 +230,8 @@ def read_rows(excel_path, required_root=None):
         rows = {}
         for sheet in sq.MAIN_SHEETS:
             rows[sheet] = (_child_rows(wb[sheet], sq.HEADERS[sq.MAIN][sheet],
-                                       sheet)
+                                       sheet,
+                                       storage.TYPED_COLUMNS.get(sheet, ()))
                            if sheet in wb.sheetnames else [])
         found[sq.MAIN] = (headers, rows)
     if book.exists():
@@ -244,8 +244,10 @@ def read_rows(excel_path, required_root=None):
                 f"{', '.join(extra)}. The export would not keep them.")
         headers = _header_rows(wb[fsr_withdrawal.HEADER_SHEET],
                                fsr_withdrawal.HEADER_SHEET)
-        rows = {sheet: _child_rows(wb[sheet], sq.HEADERS[sq.BOOK][sheet],
-                                   sheet)
+        rows = {sheet: _child_rows(
+                    wb[sheet], sq.HEADERS[sq.BOOK][sheet], sheet,
+                    storage.TYPED_COLUMNS["Declared Goods"]
+                    if sheet == fsr_withdrawal.GOODS_SHEET else ())
                 for sheet in sq.BOOK_SHEETS}
         found[sq.BOOK] = (headers, rows)
 
@@ -364,8 +366,12 @@ def compare_export(sql, found, folder):
         headers = [v for v in storage.report_dicts(wb[header_sheet])
                    if not _all_none(v.values())]
         rows = {sheet: [tuple(r[:len(sq.HEADERS[book][sheet])])
-                        for r in wb[sheet].iter_rows(min_row=2,
-                                                     values_only=True)
+                        for r in storage.sheet_rows(
+                            wb[sheet],
+                            storage.TYPED_COLUMNS["Declared Goods"]
+                            if sheet == fsr_withdrawal.GOODS_SHEET else
+                            storage.TYPED_COLUMNS.get(sheet, ())
+                            if book == sq.MAIN else ())
                         if not _all_none(r)]
                 for sheet in found[book][1]}
         written[book] = (headers, rows)
@@ -397,7 +403,9 @@ def compare_export(sql, found, folder):
                 width = max(len(old), len(new))
                 old = tuple(old) + (None,) * (width - len(old))
                 new = tuple(new) + (None,) * (width - len(new))
-                if old != new:
+                # the same numbers - and shown the same way (as typed)
+                if old != new or [getattr(v, "typed", None) for v in old] \
+                        != [getattr(v, "typed", None) for v in new]:
                     out.append(f'the exported {label}, sheet "{sheet}", '
                                f"row {number}: {new!r}, the original "
                                f"{old!r}")

@@ -179,7 +179,7 @@ class _Rows:
     def append(self, values, formats=None):
         self.row_no += 1
         for col_index, value in enumerate(values, start=1):
-            self.ws.cell(row=self.row_no, column=col_index, value=value)
+            storage.put_cell(self.ws, self.row_no, col_index, value)
         storage.apply_formats(self.ws, self.row_no, formats)
 
 

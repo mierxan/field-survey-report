@@ -511,6 +511,12 @@ GOODS_HEADERS = ["Control #", "Description", "Quantity", "Packaging"]
 ITEM_SHEET_HEADERS = ["Control #", "Item List", "Line No"] + ITEM_LINE_HEADERS
 REMARK_HEADERS = ["Control #", "Section", "Line No", "Remark"]
 
+# The quantity columns, kept as typed (0-based columns of the sheet).
+TYPED_COLUMNS = {
+    "Item List": (ITEM_SHEET_HEADERS.index("Quantity"),),
+    "Declared Goods": (GOODS_HEADERS.index("Quantity"),),
+}
+
 # sheet name -> (table name, headers)
 EXCEL_SHEETS = {
     "Reports": ("ReportsTable", REPORT_HEADERS),
@@ -557,6 +563,135 @@ def to_number(text):
     return value
 
 
+# ---------- quantities shown as they were typed ----------------
+#
+# A quantity is stored as a number (Excel can add it up), and the program
+# shows it the way it was typed: "1,250.50", not "1250.5". The number keeps
+# its typed form (TypedInt / TypedFloat); in the workbook its cell gets a
+# display format that shows it the same way (for "1,250.50": 0,000.00), and
+# reading the cell back gives the typed form again.
+
+class TypedFloat(float):
+    """A number typed with a look of its own. Calculations use the number;
+    `typed` is what was typed."""
+
+    typed = ""
+
+    def __new__(cls, value, typed):
+        number = super().__new__(cls, value)
+        number.typed = typed
+        return number
+
+    def __reduce__(self):
+        return type(self), (float(self), self.typed)
+
+
+class TypedInt(int):
+    """A whole number typed with a look of its own ("1,000", "007")."""
+
+    typed = ""
+
+    def __new__(cls, value, typed):
+        number = super().__new__(cls, value)
+        number.typed = typed
+        return number
+
+    def __reduce__(self):
+        return type(self), (int(self), self.typed)
+
+
+# the display formats the program writes for typed quantities
+_TYPED_FORMAT = re.compile(r"^(?:0{1,3}(?:,000)+|0+)(?:\.0+)?$")
+
+
+def typed_format(typed):
+    """The Excel number format that shows the number as `typed`."""
+    whole, _, decimals = typed.lstrip("-").partition(".")
+    pattern = "".join("0" if ch.isdigit() else ch for ch in whole)
+    return pattern + ("." + "0" * len(decimals) if decimals else "")
+
+
+def _group(digits):
+    parts = []
+    while len(digits) > 3:
+        parts.insert(0, digits[-3:])
+        digits = digits[:-3]
+    parts.insert(0, digits)
+    return ",".join(parts)
+
+
+def text_in_format(value, number_format):
+    """The number as one of those formats shows it, or None for any other
+    format (General, dates, money ...)."""
+    if not isinstance(number_format, str) or \
+            not _TYPED_FORMAT.match(number_format):
+        return None
+    whole, _, decimals = number_format.partition(".")
+    text = f"{abs(value):.{len(decimals)}f}"
+    int_part, _, fraction = text.partition(".")
+    int_part = int_part.zfill(whole.count("0"))
+    if "," in whole:
+        int_part = _group(int_part)
+    sign = "-" if value < 0 else ""
+    return sign + int_part + ("." + fraction if fraction else "")
+
+
+def typed_number(text):
+    """to_number(), keeping how the number was typed when the program would
+    otherwise show it differently ("1,250.50", "12.50", "007")."""
+    number = to_number(text)
+    if not isinstance(number, (int, float)) or isinstance(number, bool):
+        return number
+    typed = (text or "").strip()
+    if cell_text(number) == typed or \
+            text_in_format(number, typed_format(typed)) != typed:
+        return number               # it shows as typed anyway (or cannot)
+    return (TypedInt if isinstance(number, int) else TypedFloat)(number, typed)
+
+
+def with_typed(value, number_format):
+    """A cell's number with its display format -> the typed number, when the
+    format is one the program writes for a typed quantity."""
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return value
+    typed = text_in_format(value, number_format)
+    if typed is None or typed == cell_text(value):
+        return value
+    return (TypedInt if isinstance(value, int) else TypedFloat)(value, typed)
+
+
+def put_cell(ws, row_no, col_index, value):
+    """Write one cell. A typed number is written as a plain number with the
+    display format that shows it as typed; a cell that had such a format
+    and gets another value goes back to General."""
+    typed = getattr(value, "typed", None)
+    if typed:
+        plain = int(value) if isinstance(value, int) else float(value)
+        cell = ws.cell(row=row_no, column=col_index, value=plain)
+        cell.number_format = typed_format(typed)
+        return cell
+    cell = ws.cell(row=row_no, column=col_index, value=value)
+    if _TYPED_FORMAT.match(cell.number_format or ""):
+        cell.number_format = "General"
+    return cell
+
+
+def sheet_rows(ws, typed_columns=()):
+    """The rows below the heading, as values. A number in one of the
+    `typed_columns` (0-based) that carries a typed display format comes
+    back as typed (TypedInt / TypedFloat)."""
+    rows = [list(row) for row in ws.iter_rows(min_row=2, values_only=True)]
+    for column in typed_columns:
+        cells = ws.iter_rows(min_row=2, min_col=column + 1,
+                             max_col=column + 1)
+        for index, (cell,) in enumerate(cells):
+            if index < len(rows) and column < len(rows[index]) and \
+                    cell.number_format != "General":
+                rows[index][column] = with_typed(rows[index][column],
+                                                 cell.number_format)
+    return [tuple(row) for row in rows]
+
+
 def parse_date(text, fmt=DATE_FORMAT):
     """Turn text into a real Excel date (falls back to text)."""
     for candidate in (fmt, DATE_FORMAT, LEGACY_DATE_FORMAT):
@@ -571,6 +706,10 @@ def cell_text(value, money=False, with_time=False, date_fmt=DATE_FORMAT):
     """Excel cell value -> text for an Entry box or a list."""
     if value is None:
         return ""
+
+    typed = getattr(value, "typed", None)
+    if typed and not money:
+        return typed                    # a quantity, as it was typed
 
     if isinstance(value, datetime):
         return value.strftime(f"{date_fmt} %H:%M" if with_time else date_fmt)
@@ -910,9 +1049,8 @@ def read_report(path, control_no):
         if sheet_name not in wb.sheetnames:
             return []
         return [
-            row for row in wb[sheet_name].iter_rows(
-                min_row=2, values_only=True
-            )
+            row for row in sheet_rows(wb[sheet_name],
+                                      TYPED_COLUMNS.get(sheet_name, ()))
             if same_key(row[0], control_no)
         ]
 
@@ -946,7 +1084,8 @@ def read_all_reports(path):
         by_control = grouped.setdefault(sheet_name, {})
         if sheet_name not in wb.sheetnames:
             continue
-        for row in wb[sheet_name].iter_rows(min_row=2, values_only=True):
+        for row in sheet_rows(wb[sheet_name],
+                              TYPED_COLUMNS.get(sheet_name, ())):
             if row and row[0] is not None:
                 key = str(row[0]).strip().casefold()
                 by_control.setdefault(key, []).append(row)
@@ -1080,14 +1219,14 @@ def append_row(ws, values, formats=None):
     """Write below the last row (does not rely on private openpyxl state)."""
     row_no = ws.max_row + 1
     for col_index, value in enumerate(values, start=1):
-        ws.cell(row=row_no, column=col_index, value=value)
+        put_cell(ws, row_no, col_index, value)
     apply_formats(ws, row_no, formats)
 
 
 def set_row(ws, row_no, values, formats=None):
     """Overwrite an existing row in place (used to update a report)."""
     for col_index, value in enumerate(values, start=1):
-        ws.cell(row=row_no, column=col_index).value = value
+        put_cell(ws, row_no, col_index, value)
     apply_formats(ws, row_no, formats)
 
 
@@ -1324,7 +1463,7 @@ def report_child_rows(data, control_no):
         [
             control_no,
             text_or_none(row["description"]),
-            to_number(row["quantity"]),
+            typed_number(row["quantity"]),
             text_or_none(row["packaging"]),
         ]
         for row in data["declared_goods"]
@@ -1341,7 +1480,9 @@ def report_child_rows(data, control_no):
                     control_no, list_no, line_no)
             values = [control_no, item_list["name"], line_no]
             for header in ITEM_LINE_HEADERS:
-                if header in NUMERIC_ITEM_HEADERS:
+                if header == "Quantity":
+                    values.append(typed_number(row.get(header, "")))
+                elif header in NUMERIC_ITEM_HEADERS:
                     values.append(to_number(row.get(header, "")))
                 else:
                     values.append(text_or_none(row.get(header, "")))

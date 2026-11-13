@@ -49,6 +49,24 @@ by the same program code as the workbook's, so every screen shows the same.
 A Control # is unique across both kinds of report (enforced by the
 database).
 
+**Quantities are shown as they were typed** - "1,250.50", "12.50", "007" -
+in the reopened form, the Excel file and the Weekly Summary (on screen and
+exported), as the MySQL copy already did. What is stored:
+
+* the **number** (1250.5): Excel can still add the column up, and every
+  calculation and total of the program (stock, PO lines, dashboards) uses
+  it;
+* when the typed form differs from the plain number, **how it was typed** -
+  in the database next to the number, and in the Excel file as the cell's
+  display format (for "1,250.50" the format `0,000.00`, so Excel shows
+  1,250.50 too). No sheet, column or MySQL table changed.
+
+It applies to the Quantity of the Item Lists and of the Declared Goods. A
+quantity that looks the same either way ("12") is stored exactly as before.
+Reports saved before this version show their quantities as before (for
+example 1250.5) until they are saved again from the form. The lines of a
+PO-linked Withdrawal keep the checked form the Withdrawal panel gives them.
+
 ## 2. Where the database is, and why
 
 * **Never in a synchronised folder, never on a network drive.** OneDrive,
