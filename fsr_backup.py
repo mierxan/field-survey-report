@@ -15,6 +15,7 @@ workbook's own name), start the program.
 
   python fsr_backup.py <workbook>       lists the backups of a workbook
 """
+import hashlib
 import logging
 import os
 import re
@@ -33,6 +34,33 @@ SETTING = "backup_keep"
 
 class BackupError(OSError):
     """The backup copy could not be made. The workbook is untouched."""
+
+
+def _digest(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as file:
+        for block in iter(lambda: file.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def verify_copy(source, copy):
+    """The check after a plain file copy: the copy holds exactly the bytes
+    of the source (SHA-256 of both). Raises BackupError otherwise - for
+    example when the source was being written while it was copied. (A
+    source that is itself damaged is still backed up as it is: the backup
+    is a faithful copy, not a judgement of the file.)"""
+    source, copy = Path(source), Path(copy)
+    if _digest(source) != _digest(copy):
+        raise BackupError(
+            f"The copy of {source.name} is not the same as the file itself "
+            "(was it being changed while it was copied?)")
+
+
+def verified_copy(source, target):
+    """shutil.copy2, then verify_copy()."""
+    shutil.copy2(source, target)
+    verify_copy(source, target)
 
 
 def keep_setting(settings):
@@ -90,10 +118,11 @@ def backup_before_save(workbook, keep=DEFAULT_KEEP, today=None, copy=None):
     removes this workbook's backups beyond the newest `keep`.
 
     Returns {"created": path or None, "removed": [paths], "kept": number}.
-    Raises BackupError when the copy could not be made (nothing else has
-    happened then); a backup that could not be REMOVED is only logged.
-    `copy(target)`: how to copy (the SQLite store uses SQLite's own
-    backup); default a plain file copy."""
+    Raises BackupError when the copy could not be made or did not pass its
+    check (nothing else has happened then); a backup that could not be
+    REMOVED is only logged. `copy(target)`: how to copy and check (the
+    SQLite store: SQLite's own backup, then its integrity check); default a
+    plain file copy checked by verify_copy()."""
     workbook = Path(workbook)
     today = today or date.today()
     result = {"created": None, "removed": [], "kept": 0}
@@ -106,7 +135,7 @@ def backup_before_save(workbook, keep=DEFAULT_KEEP, today=None, copy=None):
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
             if copy is None:
-                shutil.copy2(workbook, temp)
+                verified_copy(workbook, temp)
             else:
                 copy(temp)
             os.replace(temp, target)

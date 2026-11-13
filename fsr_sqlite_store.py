@@ -733,7 +733,10 @@ class SqliteStore:
                                              copy=self.copy_to)
 
     def copy_to(self, target):
-        """A consistent copy of the database into `target`."""
+        """A consistent copy of the database into `target`, made with
+        SQLite's own backup (correct even while another connection writes),
+        then checked with SQLite's integrity check. A copy that fails the
+        check is removed and sqlite3.DatabaseError is raised."""
         source = connect(self.db_path)
         try:
             copy = sqlite3.connect(str(target))
@@ -743,6 +746,30 @@ class SqliteStore:
                 copy.close()
         finally:
             source.close()
+        problem = integrity_problem(target)
+        if problem:
+            try:
+                Path(target).unlink()
+            except OSError:
+                pass
+            raise sqlite3.DatabaseError(
+                f"The backup copy failed its integrity check: {problem}")
+
+
+def integrity_problem(path):
+    """None when SQLite's integrity check of the database file `path`
+    passes; otherwise what it found (also: not a database at all)."""
+    try:
+        conn = sqlite3.connect(f"file:{Path(path).as_posix()}?mode=ro",
+                               uri=True)
+        try:
+            rows = conn.execute("PRAGMA integrity_check").fetchall()
+        finally:
+            conn.close()
+    except sqlite3.DatabaseError as error:
+        return str(error)
+    found = [str(row[0]) for row in rows]
+    return None if found == ["ok"] else "; ".join(found[:5])
 
 
 def new_store(excel_path, required_root=None):

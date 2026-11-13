@@ -31,7 +31,6 @@ How it is written (Phase 3)
 import copy
 import json
 import logging
-import shutil
 from datetime import datetime
 from pathlib import Path
 
@@ -248,7 +247,8 @@ def import_master_data(excel_path, data, on_saved=None, journal=None,
             stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             target = excel_path.with_name(
                 f"{excel_path.stem}_before_import_{stamp}{excel_path.suffix}")
-            shutil.copy2(excel_path, target)
+            import fsr_backup
+            fsr_backup.verified_copy(excel_path, target)    # checked copy
             summary["backup"] = str(target)
 
     total = len(data["reports"])

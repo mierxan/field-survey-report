@@ -102,10 +102,14 @@ def backup(excel_path, required_root=None, now=None):
         except FileExistsError:         # a second move in the same second
             number += 1
             folder = base.with_name(f"{base.name}_{number}")
+    import fsr_backup
+    # Each copy is checked after it is written: the same bytes as the file
+    # (and a complete zip archive for a workbook). There is no database yet
+    # at this point - only workbooks and JSON files are copied.
     for path in (main, book, main.with_name(fsr_paths.PO_MASTER_NAME),
                  main.with_name(fsr_paths.WITHDRAWN_ITEM_NAME)):
         if path.exists():
-            shutil.copy2(path, folder / path.name)
+            fsr_backup.verified_copy(path, folder / path.name)
     json_dir = fsr_paths.json_dir_for_workbook(main)
     if json_dir.exists():
         # The JSON files only - never a workbook, a database, the printed
@@ -115,6 +119,10 @@ def backup(excel_path, required_root=None, now=None):
             ignore=shutil.ignore_patterns(
                 BACKUP_FOLDER, "*.xlsx", "*.xls", "*.pdf", "*.tmp",
                 f"*{sq.DB_SUFFIX}*", "Report Forms"))
+        for copied in (folder / "json").rglob("*"):
+            if copied.is_file():
+                fsr_backup.verify_copy(
+                    json_dir / copied.relative_to(folder / "json"), copied)
     return folder
 
 
@@ -507,8 +515,8 @@ def migrate(excel_path, required_root=None, now=None, progress=None):
     try:
         folder = backup(excel_path, required_root, now)
     except OSError as error:
-        return keep(f"The backup copy could not be made, so nothing was "
-                    f"changed: {error}")
+        return keep(f"The backup copy could not be made or did not pass "
+                    f"its check, so nothing was changed: {error}")
     read_stats = _stats([main, book])
     try:
         with _read_once([main, book]):
@@ -540,9 +548,10 @@ def migrate(excel_path, required_root=None, now=None, progress=None):
     if differences:
         return keep("The reports read from the database were not the same "
                     "as in the Excel file:", differences)
-    if _stats([main, book]) != read_stats:
-        # Saved in Excel (or by another copy of the program) meanwhile:
-        # the database would miss that. Not taken; tried again next start.
+    if _stats([main, book]) != stats or read_stats != stats:
+        # Saved in Excel (or by another copy of the program) since before
+        # the backup: the database would miss that. Not taken; tried again
+        # at the next start.
         return keep("The Excel file was changed while the reports were "
                     "being moved, so the move was not finished. It is tried "
                     "again at the next start; nothing was changed.")
