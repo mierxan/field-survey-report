@@ -59,6 +59,14 @@ How often the record is written (Phase 3)
   shown as open that were in fact done; repair() does them again, which
   changes nothing.
 
+PO_Master and Withdrawn_Item in the background (Phase 3)
+  They are derived from the workbook, so a save may leave its
+  "item_lists" step open (run(..., lists=False)); rebuild_lists() then
+  rebuilds both lists ONCE for every save waiting for it and ticks them
+  off - only the saves that were in the workbook when it was read. A
+  rebuild cut off midway changes nothing (each list file is replaced as a
+  whole) and its saves stay open: the next start rebuilds again.
+
 MySQL in the background (Phase 3)
   The program does the local steps itself and leaves the "mysql" step open
   in the record; fsr_mysql_sender then sends every report waiting for
@@ -470,7 +478,7 @@ def local_complete(record):
     return _settled(record, LOCAL_STEPS)
 
 
-def run(journal, record, stores, mysql=True):
+def run(journal, record, stores, mysql=True, lists=True):
     """Do every pending step of `record`, in order, ticking each off.
 
     The workbook comes first: its failure is raised to the caller and
@@ -503,7 +511,8 @@ def run(journal, record, stores, mysql=True):
     for step in ("incidents", "item_forms", "import_ledger", "item_lists",
                  "mysql"):
         if steps.get(step) != PENDING or (step == "mysql" and (
-                not mysql or record.get("_mysql_wait"))):
+                not mysql or record.get("_mysql_wait"))) or (
+                step == "item_lists" and not lists):
             continue
         changed = True
         try:
@@ -664,7 +673,7 @@ def _exact_check(journal, record, now_stamp, planned):
     return True
 
 
-def repair(journal, stores, mysql=True, skip=()):
+def repair(journal, stores, mysql=True, skip=(), lists=True):
     """Finish every unfinished save on record.
 
     mysql=False leaves the MySQL steps waiting (the server is not
@@ -697,7 +706,7 @@ def repair(journal, stores, mysql=True, skip=()):
                  "started": record.get("started"), "failed": {}, "state": ""}
         try:
             entry["state"] = _check_against_workbook(journal, record, stores)
-            outcome = run(journal, record, stores, mysql=mysql)
+            outcome = run(journal, record, stores, mysql=mysql, lists=lists)
             entry["failed"] = {s: str(e) for s, e in
                                outcome["failed"].items()}
         except Exception as error:      # the workbook step itself
@@ -728,6 +737,44 @@ def repair(journal, stores, mysql=True, skip=()):
 # ---------------------------------------------------------------------
 # MySQL conflicts: the waiting list and the three decisions
 # ---------------------------------------------------------------------
+
+def waiting_for_lists(journal):
+    """The records whose PO_Master / Withdrawn_Item step is open and whose
+    report is in the workbook already."""
+    return [r for r in journal.pending()
+            if r["steps"].get("item_lists") == PENDING
+            and r["steps"].get("workbook", DONE) in SETTLED]
+
+
+def rebuild_lists(journal, stores):
+    """One background rebuild of PO_Master and Withdrawn_Item for every
+    save waiting for it. Returns {"waiting": n, "rebuilt": bool,
+    "error": exception or None}."""
+    waiting = waiting_for_lists(journal)
+    result = {"waiting": len(waiting), "rebuilt": False, "error": None,
+              "ids": [r["id"] for r in waiting]}
+    if not waiting:
+        return result
+    try:
+        stores.item_lists(waiting[0])   # reads the workbook as it is now
+    except Exception as error:
+        log.info("PO_Master / Withdrawn_Item not rebuilt: %s", error)
+        result["error"] = failure = error
+
+        def noted(record):
+            record["errors"]["item_lists"] = str(failure)
+        for record in waiting:
+            journal.change(record["id"], noted)
+        return result
+
+    def done(record):
+        record["steps"]["item_lists"] = DONE
+        record["errors"].pop("item_lists", None)
+    for record in waiting:
+        journal.change(record["id"], done)
+    result["rebuilt"] = True
+    return result
+
 
 def waiting_for_mysql(journal, with_conflicts=False):
     """The records whose MySQL step is open and whose report is in the

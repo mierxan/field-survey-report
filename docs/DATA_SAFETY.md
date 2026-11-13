@@ -93,6 +93,8 @@ the workbook.
 | Excel file open in Excel | "File In Use" - nothing was saved, click Save again (as before). |
 | Report saved, but one of the other files could not be written | "Report Saved - Note" names the file and adds "It will also be finished automatically at the next save or the next start." |
 | Report saved (owner's PC) | Green notice "Report … saved on this PC … Sending it to MySQL...", then, a moment later, "Report … is now in MySQL". Beside the MySQL circles: "Sending 1 to MySQL..." while it is on its way. The window does not wait (Phase 3). |
+| PO_Master / Withdrawn_Item (Receiving and PO-linked reports) | Rebuilt in the background a moment after the save (Phase 3). When done, the status bar says "PO_Master and Withdrawn_Item are up to date (HH:MM)". |
+| PO_Master or Withdrawn_Item open in Excel | One box "PO_Master - Not Updated: … open in another program (Excel?). Close it; both lists are updated at the next save or the next start." Not repeated after every save; the lists are rebuilt as soon as they can be. |
 | Report saved, MySQL not reachable | No message box. An orange notice: "MySQL was not reached - N report(s) saved on this PC wait; they are sent at the next save or start". Beside the circles: "N waiting for MySQL". The status shows "Server inactive". |
 | MySQL refused the login, a table is missing, ... | "MySQL - Not Updated": the reports are saved on this PC but not in MySQL, with the reason. |
 | An import was cut off before the Excel file was written | "Unfinished Save": "The import of N report(s) ... was cut off before the Excel file was changed. NOTHING was imported; import the file again." |
@@ -134,6 +136,12 @@ the workbook.
   window, "Sending N report(s) to MySQL...", which closes by itself when the
   send is done (at most 8 seconds) and has a button "Close now; it will be
   sent at the next start". The program keeps responding meanwhile.
+* PO_Master and Withdrawn_Item are rebuilt in the background (Phase 3):
+  once for every save waiting for it, and only those saves whose report
+  was in the workbook when the rebuild read it are ticked off. Each list
+  file is replaced as a whole, so a rebuild cut off midway (program
+  closed, power cut) leaves the previous lists and its saves open; the
+  next start rebuilds them. Closing the program does not wait for it.
 * An import is written into the workbook in ONE write for the whole file
   (Phase 3). The file is replaced as a whole, so it holds either every
   report of the import or none, and the note says which.

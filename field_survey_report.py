@@ -6257,6 +6257,59 @@ mysql_sender = fsr_mysql_sender.Sender(
     inline=os.environ.get("FSR_MYSQL_INLINE", "").strip() == "1")
 
 
+# ---------- PO_Master and Withdrawn_Item, also in the background ----------
+
+lists_feedback = {}         # record id -> exception or None (inline only)
+lists_state = {"warned": False}
+
+
+def lists_round(path, root=None, compose=False, save_id=None):
+    """Background thread: rebuild PO_Master and Withdrawn_Item once for
+    every save waiting for it (no window calls here)."""
+    journal = fsr_save_journal.Journal(path)
+    stores = fsr_save_journal.Stores(path, required_root=root)
+    return fsr_save_journal.rebuild_lists(journal, stores)
+
+
+def lists_round_done(item):
+    """On the window's thread: what the rebuild did."""
+    request = item["request"]
+    result = item["result"] or {}
+    error = item["error"] or result.get("error")
+    compose = request.get("save_id") if request.get("compose") else None
+    if compose and compose in result.get("ids", []):
+        lists_feedback[compose] = error
+        return
+    if error is None:
+        lists_state["warned"] = False
+        if result.get("rebuilt"):
+            status_var.set("PO_Master and Withdrawn_Item are up to date ("
+                           + datetime.now().strftime("%H:%M") + ")")
+        return
+    if lists_state["warned"]:
+        return                      # said once until they are up to date
+    lists_state["warned"] = True
+    if isinstance(error, PermissionError):
+        text = ("PO_Master or Withdrawn_Item could not be updated because "
+                "it is open in another program (Excel?).\nClose it; both "
+                "lists are updated at the next save or the next start.")
+    else:
+        text = ("PO_Master and Withdrawn_Item could not be updated:\n"
+                f"{error}\n\nThey are tried again at the next save or "
+                "the next start.")
+    messagebox.showwarning("PO_Master - Not Updated", text, parent=window)
+
+
+lists_sender = fsr_mysql_sender.Sender(
+    lists_round, lists_round_done,
+    inline=os.environ.get("FSR_MYSQL_INLINE", "").strip() == "1")
+
+
+def request_lists_round(**flags):
+    lists_sender.request(path=excel_state["path"],
+                         root=DATA_DIR if DEMO_MODE else None, **flags)
+
+
 def refresh_mysql_waiting():
     """The note beside the MySQL circles: reports not in MySQL yet."""
     label = globals().get("mysql_waiting_label")
@@ -6283,6 +6336,7 @@ def poll_mysql_sender():
     """Hand finished rounds to mysql_round_done(); runs every 1/4 s."""
     try:
         mysql_sender.poll()
+        lists_sender.poll()
         busy_now = not mysql_sender.idle()
         if busy_now != mysql_wait_state["busy"]:
             mysql_wait_state["busy"] = busy_now
@@ -6795,7 +6849,7 @@ def save_report():
         # stops the save. MySQL follows in the background (its step stays
         # open in the record) - unless there is no record to hold it.
         outcome = busy(fsr_save_journal.run, journal, record, stores,
-                       journal is None)
+                       journal is None, journal is None)
         result = outcome["result"]
 
     except PermissionError:
@@ -6852,7 +6906,19 @@ def save_report():
             f"{failed['item_forms']}\n\nClick Save again to retry."
             + later)) if t)
 
-    # PO_Master and Withdrawn_Item follow the saved reports.
+    # PO_Master and Withdrawn_Item follow the saved reports, in the
+    # background (at once in the automated tests, which then say it here).
+    if journal is not None and "item_lists" in record["steps"]:
+        lists_feedback.pop(record["id"], None)
+        request_lists_round(save_id=record["id"], compose=lists_sender.inline)
+        if record["id"] in lists_feedback:
+            lists_error = lists_feedback.pop(record["id"])
+            if lists_error is not None:
+                failed["item_lists"] = lists_error
+        elif "item_lists" in earlier_open:
+            earlier_open.remove("item_lists")   # said by the rebuild
+    elif journal is not None:
+        request_lists_round()       # earlier saves may still wait for them
     if "item_lists" in failed:
         if isinstance(failed["item_lists"], PermissionError):
             incident_note = "\n\n".join(t for t in (incident_note, (
@@ -7029,7 +7095,8 @@ def finish_unfinished_saves(mysql_ok=False, skip=(), numbers=False,
             path, mysql=db_mysql if use_guard else None,
             required_root=DATA_DIR if DEMO_MODE else None, guard=guard)
         report = busy(fsr_save_journal.repair, journal, stores, False,
-                      skip)
+                      skip, False)
+        request_lists_round()       # PO_Master / Withdrawn_Item, if waiting
     except fsr_save_journal.JournalError as error:
         log.exception("The record of unfinished saves cannot be read")
         if not unfinished_state["unreadable_shown"]:
