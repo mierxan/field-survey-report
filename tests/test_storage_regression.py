@@ -47,7 +47,7 @@ def test_control_numbers(tmp_path, inspector):
         f"FSR-JDC-{YEAR}-0010"
     # other months, other inspectors and the older formats do not count
     assert s.next_control_number(
-        [f"FSR-JDC-190001-0042", f"FSR-AB-{YEAR}-0050", f"FSR-{YEAR}-0042",
+        ["FSR-JDC-190001-0042", f"FSR-AB-{YEAR}-0050", f"FSR-{YEAR}-0042",
          "FSR-2026-0042"]) == f"FSR-JDC-{YEAR}-0001"
 
 

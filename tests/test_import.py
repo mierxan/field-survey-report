@@ -210,7 +210,7 @@ def test_renumbering_does_not_change_the_imported_data(book):
     assert len(set(new_numbers)) == 2
     assert not {"FSR-202610-0001", "FSR-202610-0002"} & set(new_numbers)
     assert [r["control_no"] for r in summary["saved_reports"]] == new_numbers
-    for (old, new), so in zip(pairs, ("PH-1", "PH-2")):
+    for (_old, new), so in zip(pairs, ("PH-1", "PH-2")):
         moved = s.read_report(book, new)
         assert moved["general_information"]["so_number"] == so
         assert moved["item_lists"][0]["rows"][0]["Receiving Ref"] == f"RCV-{new}-1-01"

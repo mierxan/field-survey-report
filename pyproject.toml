@@ -1,0 +1,37 @@
+[project]
+name = "field-survey-report"
+description = "Field Survey Report: inspection reports, warehouse monitoring, MySQL copy"
+requires-python = ">=3.14"
+# The packages and their versions: requirements.txt (exact set:
+# requirements-lock.txt). This file only holds the settings of the tools.
+
+# pytest's settings stay in pytest.ini.
+
+[tool.coverage.run]
+source = ["."]
+omit = ["tests/*", "tools/*", ".venv/*", "build/*", "dist/*"]
+
+[tool.coverage.report]
+skip_empty = true
+
+[tool.ruff]
+line-length = 79
+extend-exclude = [".venv", "build", "dist", "Installer"]
+
+[tool.ruff.lint]
+# F  pyflakes (real mistakes), E/W pycodestyle, B bugbear (likely bugs),
+# S110 an exception swallowed without a word.
+select = ["E", "F", "W", "B", "S110"]
+ignore = [
+    # Left on purpose (Phase 4, 13 November 2026):
+    "E501",   # long lines: 258, nearly all user-facing message texts;
+              # breaking them up changes nothing and makes the texts
+              # harder to find. Kept for a later tidy-up.
+    "E741",   # the variable name `l` (line) in loops: 23, cosmetic.
+    "E731",   # a lambda given a name: 2, cosmetic.
+    "B904",   # `raise ... from` inside except: 3; adding it changes only
+              # the traceback text, not what the program does - later.
+    "B905",   # zip() without strict=: 49. strict=True would RAISE where
+              # the lists differ in length - a change of behaviour, not a
+              # tidy-up. Each needs checking on its own.
+]

@@ -5,7 +5,6 @@ incident report) plus the new warehouse links. Everything happens in a
 temporary FSR_HOME folder; the real files are not touched."""
 
 import time
-from datetime import date
 from pathlib import Path
 
 import pytest

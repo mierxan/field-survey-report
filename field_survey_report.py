@@ -15,7 +15,7 @@ Files created in data/:
 import html
 import json
 import logging
-import math
+import calendar
 import copy
 import os
 import posixpath
@@ -29,7 +29,7 @@ import threading
 import time
 import tkinter
 import zipfile
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from tkinter import ttk, PhotoImage, messagebox, filedialog
@@ -67,9 +67,7 @@ except ImportError:
 
 # Excel support: pip install openpyxl
 try:
-    from openpyxl import Workbook, load_workbook
-    from openpyxl.utils import get_column_letter
-    from openpyxl.worksheet.table import Table, TableStyleInfo
+    from openpyxl import Workbook
 except ImportError:
     Workbook = None
 
@@ -97,7 +95,7 @@ from fsr_withdrawal_ui import WithdrawalPanel
 from fsr_storage import (          # plain data layer
     Workbook,
     CHOICE_VALUES, clean_incident_reports, CONDITION_BAD, CONDITION_GOOD,
-    DATE_FORMAT, delete_incident_data, DOCUMENT_FIELDS, empty_goods_types,
+    DATE_FORMAT, DOCUMENT_FIELDS, empty_goods_types,
     generate_control_number, GOODS_TYPES, INCIDENT_HEADER_FIELDS,
     INCIDENT_MAX_LINES, incident_title, ITEM_HEADERS, ITEM_LINE_HEADERS,
     ITEM_FORM_CONTAINERIZED, ITEM_FORM_DEFAULT, ITEM_FORM_LOADING,
@@ -106,8 +104,7 @@ from fsr_storage import (          # plain data layer
     CURRENCIES, LEGACY_DATE_FORMAT, split_quantity_unit, UOM_CHOICES,
     WEIGHT_UNIT_CHOICES,
     list_saved_reports, normalize_field, parse_date, read_report,
-    load_other_item_forms, save_other_item_forms,
-    recent_date_options, safe_filename, save_incident_data, SCHEDULE_FIELDS,
+    load_other_item_forms, recent_date_options, safe_filename, save_incident_data, SCHEDULE_FIELDS,
     set_control_initials,
     search_index_excel, to_number, TRANSPORT_FIELDS, TYPEABLE_CHOICES,
     write_json_atomic, write_report_to_excel, withdrawal_control_numbers,
@@ -1282,7 +1279,7 @@ def build_field_row(parent, fields, layout=None):
     for col in range(FIELD_COLUMNS):
         parent.columnconfigure(col, weight=1, uniform="field")
 
-    for index, (label_text, key, width, kind, _) in enumerate(fields):
+    for index, (label_text, key, _width, kind, _) in enumerate(fields):
         row, col = (layout[index] if layout
                     else divmod(index, FIELD_COLUMNS))
         tb.Label(parent, text=label_text.replace("\n", " ")).grid(
@@ -2749,8 +2746,6 @@ findings_frame.grid(row=0, column=0, pady=6)
 # that week, with the report's supplier / documents / vehicle / cargo
 # condition. "Export" saves it as an Excel file.
 # =====================================================
-
-import calendar
 
 # A weekly row has 28 fields: the columns below, except that Quantity is
 # split into Quantity + UOM and each price comes after a Currency field.
@@ -5243,10 +5238,10 @@ def merge_workbooks(paths, output_path, first_name=None):
                 # --- styles + selection of this sheet
                 sheet_xml = re.sub(
                     r"<(?:c|row)\b[^>]*>",
-                    lambda m: _shift_attr(m.group(0), "s", offset), sheet_xml)
+                    lambda m: _shift_attr(m.group(0), "s", offset), sheet_xml)  # noqa: B023 - used in this same pass
                 sheet_xml = re.sub(
                     r"<col\b[^>]*>",
-                    lambda m: _shift_attr(m.group(0), "style", offset),
+                    lambda m: _shift_attr(m.group(0), "style", offset),  # noqa: B023 - used in this same pass
                     sheet_xml)
                 sheet_xml = sheet_xml.replace(' tabSelected="1"', "")
                 sheet_xml = re.sub(r'(<pageSetup\b[^>]*?)\s+r:id="[^"]*"',
@@ -5273,9 +5268,9 @@ def merge_workbooks(paths, output_path, first_name=None):
 
                         def move_media(m):
                             base_name = posixpath.basename(m.group(2))
-                            key = (source_no, base_name)
+                            key = (source_no, base_name)  # noqa: B023 - used in this same pass
                             if key not in media_done:
-                                new_media = f"merged{source_no}_{base_name}"
+                                new_media = f"merged{source_no}_{base_name}"  # noqa: B023 - used in this same pass
                                 parts[f"xl/media/{new_media}"] = source.read(
                                     posixpath.normpath(posixpath.join(
                                         "xl/drawings", m.group(2))))
@@ -6227,7 +6222,7 @@ def mysql_round_done(item):
             mysql_feedback[compose] = ("conflict", conflict)
         elif new:
             new_conflicts.append((record, conflict))
-    for record_id, control, failure in result.get("errors", []):
+    for record_id, _control, failure in result.get("errors", []):
         if record_id == compose:
             mysql_feedback[compose] = ("error", failure)
     if handed_on:
@@ -6632,7 +6627,7 @@ def open_saved_report_dialog(initial_search=""):
                 text = " ".join(parts.get(key, []))
             if query in text.casefold():
                 def joined(name):
-                    return ", ".join(dict.fromkeys(parts.get(name, [])))
+                    return ", ".join(dict.fromkeys(parts.get(name, [])))  # noqa: B023 - used in this same pass
                 tree.insert("", "end", iid=row[0], values=(
                     label, row[1], row[2], row[3], joined("bl"),
                     joined("po"), joined("dr"), joined("gatepass"),

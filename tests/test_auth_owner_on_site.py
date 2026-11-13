@@ -224,8 +224,8 @@ def test_there_is_no_way_to_change_a_role(with_admin):
     for email in ("owner@example.invalid", "admin@example.invalid",
                   "site@example.invalid"):
         role = store.find(email)["role"]
-        for action in (lambda: store.set_status(email, "approved"),
-                       lambda: store.set_password(email, "some-password-9")):
+        for action in (lambda: store.set_status(email, "approved"),  # noqa: B023 - used in this same pass
+                       lambda: store.set_password(email, "some-password-9")):  # noqa: B023 - used in this same pass
             try:
                 action()
             except app_auth.AuthError:

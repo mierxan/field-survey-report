@@ -19,7 +19,7 @@ USER_PASS = "correct-horse-1"
 def root():
     import ttkbootstrap as tb
     window = None
-    for attempt in (1, 2, 3):           # Windows sometimes refuses once
+    for _attempt in (1, 2, 3):           # Windows sometimes refuses once
         try:
             window = tb.Window(themename="flatly")
             break

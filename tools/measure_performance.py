@@ -167,7 +167,7 @@ def build_workbook(storage, path, count):
             storage.append_row(sheets["Declared Goods"], [
                 control, row["description"],
                 storage.to_number(row["quantity"]), row["packaging"]])
-        for list_no, item_list in enumerate(data["item_lists"], start=1):
+        for _list_no, item_list in enumerate(data["item_lists"], start=1):
             for line_no, row in enumerate(item_list["rows"], start=1):
                 values = [control, item_list["name"], line_no]
                 for header in storage.ITEM_LINE_HEADERS:

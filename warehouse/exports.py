@@ -379,7 +379,7 @@ def write_excel(doc, path):
         if section.note:
             sheet.cell(row=start - 1, column=1, value=section.note).font = \
                 Font(italic=True, color="666666")
-        for col, (heading, kind, width) in enumerate(section.columns, 1):
+        for col, (heading, _kind, width) in enumerate(section.columns, 1):
             cell = sheet.cell(row=start, column=col, value=heading)
             cell.font = Font(bold=True, color="FFFFFF")
             cell.fill = head_fill
@@ -548,23 +548,23 @@ def write_pdf(doc, path):
             def append_row(values, bold=False):
                 identifier_index = next((
                     index for index, (heading, _, _) in
-                    enumerate(section.columns)
+                    enumerate(section.columns)  # noqa: B023 - used in this same pass
                     if heading in ("Report Control #", "Control #",
                                    "SO Number")
                 ), 0)
                 identifier = tb.cell_text(
                     values[identifier_index],
-                    section.columns[identifier_index][1])
+                    section.columns[identifier_index][1])  # noqa: B023 - used in this same pass
                 cells = []
-                for index, width in zip(indices, widths):
-                    column = section.columns[index]
+                for index, width in zip(indices, widths):  # noqa: B023 - used in this same pass
+                    column = section.columns[index]  # noqa: B023 - used in this same pass
                     text = tb.cell_text(values[index], column[1])
                     characters_per_line = max(
                         1, int(width / (small.fontSize * 0.5)))
                     chunk_width = max(
                         32, min(500, characters_per_line * max_cell_lines))
                     if len(text) > chunk_width:
-                        detail = (section.title, identifier, column[0], text)
+                        detail = (section.title, identifier, column[0], text)  # noqa: B023 - used in this same pass
                         if detail not in seen_long_details:
                             seen_long_details.add(detail)
                             long_details.append(detail)
@@ -572,7 +572,7 @@ def write_pdf(doc, path):
                     text = esc(text)
                     cells.append(Paragraph(
                         f"<b>{text}</b>" if bold else text, small))
-                data.append(cells)
+                data.append(cells)  # noqa: B023 - used in this same pass
 
             for values in section.rows:
                 append_row(values)
