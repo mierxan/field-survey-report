@@ -77,6 +77,7 @@ except ImportError:
 # Field definitions + Excel storage (fsr_storage.py beside this script).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fsr_paths
+import fsr_backup                  # the daily backups (shown in Account)
 import fsr_edition                 # Owner app (Excel + MySQL) or User app
 import fsr_import                  # Master Data files from the sites/phones
 import fsr_master_export           # one Master Data file for the owner
@@ -84,6 +85,7 @@ import fsr_mysql_guard             # never overwrite another copy's report
 import fsr_mysql_sender            # MySQL in the background
 import fsr_save_journal            # finishes a save that stopped halfway
 import fsr_store                   # the ONE storage interface
+import fsr_db_location             # where the reports database lives
 import fsr_sqlite_export           # the Excel export of the database
 import fsr_sqlite_migrate          # the move into the database, once
 import fsr_sqlite_store            # the reports database (Phase 5)
@@ -1114,6 +1116,8 @@ def rebuild_account_menu():
             label="MySQL Conflicts..." + (
                 f"  ({waiting_now} waiting)" if waiting_now else ""),
             command=lambda: open_mysql_conflicts())
+    account_menu.add_command(
+        label="Reports Database...", command=lambda: open_database_info())
     account_menu.add_command(
         label="Change Password...",
         command=lambda: app_auth.open_change_password(
@@ -3069,7 +3073,7 @@ def start_on_database(then=None):
                 "Reports Database",
                 "The reports stay in the Excel file, as before; nothing "
                 f"was changed.\n\n{error}", parent=window)
-        elif result.status == "migrated":
+        elif result.status in ("migrated", "moved", "relinked"):
             messagebox.showinfo("Reports Database", result.message,
                                 parent=window)
         elif result.status == "kept":
@@ -3077,16 +3081,25 @@ def start_on_database(then=None):
                 "Reports Database",
                 "The reports stay in the Excel file, as before; nothing "
                 "was changed.\n\n" + result.message, parent=window)
+        elif result.status in ("kept_legacy", "returned"):
+            messagebox.showwarning("Reports Database", result.message,
+                                   parent=window)
         if fsr_sqlite_store.is_active(path):
             settle_changed_export(path)
-        if result is not None and result.status == "migrated" and \
+        if result is not None and result.status in (
+                "migrated", "moved", "relinked", "returned") and \
                 globals().get("app_shell") is not None:
             app_shell.service.invalidate()
         then()
         for options in db_move_state.pop("pending", []):
             finish_unfinished_saves(**options)
 
-    if fsr_sqlite_store.is_active(path):
+    # Settled already: its database is in Local AppData, in a safe folder.
+    # (One still next to the workbook, one in a synchronised folder, or a
+    # workbook in a new place goes through migrate() below.)
+    found = fsr_db_location.find_db(path)
+    if found is not None and \
+            fsr_db_location.folder_problem(found.parent) is None:
         done(fsr_sqlite_migrate.Result("active"), None)
         return
     db_move_state["running"] = True
@@ -3094,6 +3107,86 @@ def start_on_database(then=None):
         window, "Moving the reports into the database (this is done once) "
         "...", lambda progress: fsr_sqlite_migrate.migrate(
             path, root, progress=progress), done, with_progress=True)
+
+
+def database_info_lines():
+    """What Account > Reports Database... says: where the reports are kept,
+    the Excel file, and the backups (each a full copy)."""
+    path = Path(excel_state["path"])
+    store = data_store()
+    if store.kind == "sqlite":
+        try:
+            size = store.db_path.stat().st_size / 1024 / 1024
+        except OSError:
+            size = 0
+        changed = fsr_sqlite_export.changed_outside(store)
+        state = ("was changed outside the program - it is settled at the "
+                 "next save or start" if changed else
+                 "up to date" if fsr_sqlite_export.is_current(store)
+                 else "being brought up to date")
+        lines = [
+            "The reports are kept in this database file:",
+            f"    {store.db_path}",
+            f"    {size:.1f} MB - {len(store.list_reports())} report(s), "
+            f"{len(store.withdrawal_numbers())} PO-linked Withdrawal "
+            "report(s)",
+            "It is in this PC's Local AppData: OneDrive and similar "
+            "services do not synchronise it, and uninstalling or "
+            "reinstalling the program leaves it in place.",
+            "",
+            "The Excel file - a copy the program keeps up to date:",
+            f"    {path}",
+            f"    {state}",
+            ""]
+        named = store.backup_name
+    else:
+        lines = ["The reports are kept in the Excel file:", f"    {path}",
+                 "(no reports database is used)", ""]
+        named = path
+    backups = fsr_backup.list_backups(named)
+    lines += ["Daily backups - each one is a FULL copy of the reports:",
+              f"    {fsr_backup.backup_folder(named)}",
+              (f"    {len(backups)} kept; the newest is from "
+               f"{backups[0][0]:%d-%b-%Y}" if backups else
+               "    none yet (one is made before the first save of a day)")]
+    return lines, store
+
+
+def open_database_info():
+    """Account > Reports Database...: where the reports are kept."""
+    try:
+        lines, store = busy(database_info_lines)
+    except Exception as error:
+        log.exception("The database details could not be read")
+        messagebox.showerror("Reports Database", str(error), parent=window)
+        return
+    dialog = tb.Toplevel(window)
+    dialog.title("Reports Database")
+    dialog.transient(window)
+    dialog.resizable(False, False)
+    body = tb.Frame(dialog, padding=20)
+    body.pack(fill="both", expand=True)
+    tb.Label(body, text="\n".join(lines), justify="left",
+             wraplength=640).pack(anchor="w")
+    row = tb.Frame(body)
+    row.pack(fill="x", pady=(16, 0))
+    if store.kind == "sqlite":
+        tb.Button(row, text="Open the database folder",
+                  bootstyle="secondary-outline",
+                  command=lambda: open_file(store.db_path.parent)).pack(
+            side="left")
+        named = store.backup_name
+    else:
+        named = Path(excel_state["path"])
+    tb.Button(row, text="Open the backups folder",
+              bootstyle="secondary-outline",
+              command=lambda: open_file(fsr_backup.backup_folder(named))
+              ).pack(side="left", padx=8)
+    tb.Button(row, text="Close", bootstyle="secondary",
+              command=dialog.destroy, width=10).pack(side="right")
+    dialog.bind("<Escape>", lambda e: dialog.destroy())
+    center_over_window(dialog, 120)
+    return dialog
 
 
 def request_lists_round(**flags):

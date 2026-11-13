@@ -104,7 +104,9 @@ def test_the_first_start_moved_the_reports_and_said_so(app):
     g, answers = app
     said = [m for kind, title, m in answers.calls
             if title == "Reports Database"]
-    assert said and "were moved into the database" in said[0]
+    assert said and "were moved into the reports database" in said[0]
+    import fsr_db_location
+    assert str(fsr_db_location.database_dir()) in said[0]   # where it is
     assert store(g).kind == "sqlite"
     assert len(store(g).list_reports()) == 84
     backups = list((book(g).parent / "Backups").glob("before_sqlite_*"))
@@ -123,7 +125,7 @@ def test_a_save_goes_into_the_database_and_the_export(program):
     assert export.is_current(store(g))
     assert live(g)["fsr_save_journal"].Journal(book(g)).pending() == []
     # the daily backup is a copy of the database
-    copy = fsr_backup.backup_path(sq.db_path_for(book(g)), date.today())
+    copy = fsr_backup.backup_path(store(g).backup_name, date.today())
     assert copy.exists()
     assert not [m for k, t, m in answers.calls if k == "showwarning"]
 
@@ -319,3 +321,76 @@ def test_import_master_data_into_the_database(program, monkeypatch,
     assert store(g).read_report("FSR-IMP-202611-0001")[
         "general_information"]["so_number"] == "SO-IMPORTED"
     assert in_workbook(g, "FSR-IMP-202611-0001") == ["FSR-IMP-202611-0001"]
+
+
+# ---------- where the database is (item 2) ----------
+
+def test_the_account_menu_shows_where_the_database_is(program):
+    g, answers = program
+    menu = live(g)["account_menu"]
+    live(g)["rebuild_account_menu"]()
+    labels = [menu.entrycget(i, "label")
+              for i in range(menu.index("end") + 1)
+              if menu.type(i) == "command"]
+    assert "Reports Database..." in labels
+    dialog = live(g)["open_database_info"]()
+    try:
+        def texts(widget):
+            for child in widget.winfo_children():
+                if child.winfo_class() in ("TLabel", "TButton"):
+                    yield str(child.cget("text"))
+                yield from texts(child)
+        shown = "\n".join(texts(dialog))
+        db = live(g)["data_store"]().db_path
+        assert str(db) in shown
+        import fsr_db_location
+        assert db.parent == fsr_db_location.database_dir()
+        assert "Local AppData" in shown
+        assert "uninstalling or reinstalling the program leaves it in place" \
+            in shown
+        assert "each one is a FULL copy of the reports" in shown
+        assert str(book(g).parent / "Backups") in shown
+        assert "Open the database folder" in shown
+    finally:
+        dialog.destroy()
+
+
+def test_a_moved_workbook_chosen_again_finds_its_database(program,
+                                                          monkeypatch,
+                                                          tmp_path):
+    g, answers = program
+    first = tmp_path / "first" / "Moving_Reports.xlsx"
+    first.parent.mkdir()
+    fsr_store.ExcelStore(first).write_report(
+        report("FSR-MOV-202611-0001", "Receiving", date(2026, 11, 5),
+               so="SO-MOVING"), False)
+    before = book(g)
+    try:
+        monkeypatch.setitem(live(g), "choose_excel_path", lambda: first)
+        g["change_excel_file"]()
+        assert pump(g, lambda: sq.is_active(first)
+                    and not live(g)["db_move_state"]["running"])
+        database_id = store(g).database_id
+        store(g).write_report(report("FSR-MOV-202611-0002", "Receiving",
+                                     date(2026, 11, 6), so="SO-SAVED"), True)
+        assert pump(g, lambda: live(g)["export_sender"].idle())
+        # back to the usual workbook; the folder is moved meanwhile
+        monkeypatch.setitem(live(g), "choose_excel_path", lambda: before)
+        g["change_excel_file"]()
+        moved = tmp_path / "moved_here"
+        (tmp_path / "first").rename(moved)
+        again = moved / first.name
+        answers.calls.clear()
+        monkeypatch.setitem(live(g), "choose_excel_path", lambda: again)
+        g["change_excel_file"]()
+        assert pump(g, lambda: sq.is_active(again)
+                    and not live(g)["db_move_state"]["running"])
+        said = [m for kind, title, m in answers.calls
+                if title == "Reports Database"]
+        assert said and "is in a new place" in said[-1]
+        assert store(g).database_id == database_id
+        assert sorted(r[0] for r in store(g).list_reports()) == [
+            "FSR-MOV-202611-0001", "FSR-MOV-202611-0002"]
+    finally:
+        live(g)["excel_state"]["path"] = before
+        live(g)["settings"]["excel_path"] = str(before)

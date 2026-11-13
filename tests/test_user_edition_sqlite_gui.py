@@ -71,7 +71,8 @@ def test_the_site_workbook_moved_in_like_the_owners(app):
     assert g["IS_OWNER_EDITION"] is False
     said = [m for kind, title, m in answers.calls
             if title == "Reports Database"]
-    assert said and "2 report(s) were moved into the database" in said[0]
+    assert said and \
+        "2 report(s) were moved into the reports database" in said[0]
     store = live(g)["data_store"]()
     assert store.kind == "sqlite"
     assert [r[0] for r in store.list_reports()] == ["FSR-STE-202611-0002",
