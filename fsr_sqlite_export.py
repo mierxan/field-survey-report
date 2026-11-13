@@ -146,6 +146,24 @@ def _save(wb, path):
                 pass
 
 
+class _Rows:
+    """Writes rows one below the other, as fsr_storage.append_row() does -
+    the same cells and number formats - but counts the rows itself:
+    append_row() asks the sheet for its last row each time, which costs
+    more with every row (fine for one save, far too slow for 100,000 rows
+    of an export)."""
+
+    def __init__(self, ws):
+        self.ws = ws
+        self.row_no = 1                 # the heading row
+
+    def append(self, values, formats=None):
+        self.row_no += 1
+        for col_index, value in enumerate(values, start=1):
+            self.ws.cell(row=self.row_no, column=col_index, value=value)
+        storage.apply_formats(self.ws, self.row_no, formats)
+
+
 def main_workbook(headers, rows):
     """Field_Survey_Reports.xlsx as fsr_storage.write_reports_to_excel()
     makes it."""
@@ -158,14 +176,15 @@ def main_workbook(headers, rows):
     for name, (table_name, columns) in storage.EXCEL_SHEETS.items():
         ws = wb.create_sheet(name)
         ws.append(columns)
+        out = _Rows(ws)
         if name == "Reports":
             for values in headers:
-                storage.append_row(ws, [values.get(c) for c in columns],
-                                   storage.REPORT_FORMATS)
+                out.append([values.get(c) for c in columns],
+                           storage.REPORT_FORMATS)
         else:
             formats = price_formats if name == "Item List" else None
             for row in rows[name]:
-                storage.append_row(ws, list(row), formats)
+                out.append(list(row), formats)
         storage.finalize_sheet(ws, table_name, columns)
     return wb
 
@@ -178,13 +197,14 @@ def withdrawal_workbook(headers, rows):
     for name, (table_name, columns) in fsr_withdrawal.WITHDRAWAL_SHEETS.items():
         ws = wb.create_sheet(name)
         ws.append(columns)
+        out = _Rows(ws)
         if name == fsr_withdrawal.HEADER_SHEET:
             for values in headers:
-                storage.append_row(ws, [values.get(c) for c in columns],
-                                   storage.REPORT_FORMATS)
+                out.append([values.get(c) for c in columns],
+                           storage.REPORT_FORMATS)
         else:
             for row in rows[name]:
-                storage.append_row(ws, list(row))
+                out.append(list(row))
         storage.finalize_sheet(ws, table_name, columns)
     return wb
 
