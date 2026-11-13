@@ -69,14 +69,17 @@ def replace_file(temp_path, path):
 
 
 def write_json_atomic(path, data):
-    """Write JSON to a temp file first, so a crash can never corrupt `path`."""
+    """Write JSON to a temp file first, so a crash can never corrupt `path`.
+    The file is replaced with replace_file(): the window and the background
+    sender read and write the save record and the ledger at the same time,
+    and Windows does not replace a file that is being read."""
     path = Path(path)
     temp_path = path.with_name(path.stem + ".saving.tmp")
 
     try:
         with open(temp_path, "w", encoding="utf-8") as file:
             json.dump(data, file, indent=4, ensure_ascii=False)
-        os.replace(temp_path, path)
+        replace_file(temp_path, path)
     finally:
         if temp_path.exists():
             try:

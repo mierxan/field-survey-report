@@ -278,3 +278,32 @@ def test_window_and_sender_share_the_ledger_without_false_conflicts(env):
         stop.set()
         thread.join()
     assert problems == []
+
+
+def test_record_is_read_by_the_window_while_the_sender_writes_it(env):
+    """Found in Phase 3: on Windows the sender's write of the save record
+    failed with "Access is denied" while the window was reading the record
+    (for the "waiting for MySQL" count), and the whole round was lost."""
+    book, server = env
+    for number in range(1, 31):
+        save_locally(book, server.client(), make(f"FSR-MPR-202611-{number:04d}"))
+    stop = threading.Event()
+    errors = []
+
+    def window_reading():
+        while not stop.is_set():
+            try:
+                j.waiting_for_mysql(j.Journal(book))
+            except Exception as error:      # recorded
+                errors.append(error)
+
+    thread = threading.Thread(target=window_reading, daemon=True)
+    thread.start()
+    try:
+        result = round_(book, server.client())
+    finally:
+        stop.set()
+        thread.join()
+    assert errors == []
+    assert len(result["sent"]) == 30 and j.Journal(book).pending() == []
+

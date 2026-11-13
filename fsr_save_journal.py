@@ -178,9 +178,12 @@ class Journal:
         self._now = clock or datetime.now
 
     def load(self):
-        """[records], oldest first. [] when there is no file."""
+        """[records], oldest first. [] when there is no file. Read under
+        the same lock as every write: on Windows a file that is being read
+        cannot be replaced, so the window's reading must never overlap the
+        background sender's writing (or the other way round)."""
         try:
-            with open(self.path, "r", encoding="utf-8") as file:
+            with _LOCK, open(self.path, "r", encoding="utf-8") as file:
                 document = json.load(file)
         except FileNotFoundError:
             return []
