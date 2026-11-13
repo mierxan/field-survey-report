@@ -16,6 +16,7 @@ Rules this helper keeps:
 """
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import db_mysql
@@ -24,8 +25,12 @@ import fsr_secrets
 TEST_DATABASE = "field_survey_test"
 PREFIX = "FSR-ZZT-2099"
 SKIP_PREFIX = "the real test database field_survey_test is not available"
-CONFIG_FILE = (Path(__file__).resolve().parent.parent / "data" / "json"
-               / "private" / "db_config.json")
+# The test copy's settings. FSR_TEST_DB_CONFIG may name that file when the
+# tests run in another checkout of the code (a git worktree): the password
+# is then still read from the test copy's own Credential Manager entry.
+CONFIG_FILE = Path(os.environ.get("FSR_TEST_DB_CONFIG") or (
+    Path(__file__).resolve().parent.parent / "data" / "json" / "private"
+    / "db_config.json"))
 TABLES = ("incident_reports", "remarks", "item_lines", "declared_goods",
           "reports")           # children first
 
