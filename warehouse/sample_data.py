@@ -6,7 +6,7 @@ Every sample record is fictional and recognisable:
     names       "Test Supplier ...", "TEST Warehouse ..."
 
 The reports are written with the program's own storage code
-(fsr_storage.write_report_to_excel / save_incident_data), so the sample
+(the storage interface fsr_store.ExcelStore), so the sample
 data goes through exactly the same path as a report saved from the form.
 
 Safety:
@@ -71,8 +71,10 @@ class UnsafeTargetError(RuntimeError):
 # ---------- safety ----------
 
 def workbook_controls(path):
+    import fsr_store
     try:
-        return [r["control_no"] for r in fsr_storage.read_all_reports(path)]
+        return [r["control_no"]
+                for r in fsr_store.ExcelStore(path).read_all_reports()]
     except FileNotFoundError:
         return []
 
@@ -414,15 +416,16 @@ def generate(folder=DEMO_FOLDER, anchor=None, workbook_name=DEMO_WORKBOOK):
     folder = mark_test_folder(folder)
     path = check_target(folder / workbook_name)
     sample = build_sample_set(anchor)
+    import fsr_store
+    store = fsr_store.ExcelStore(path)
     for spec in sample.reports:
         data = report_data(spec)
-        fsr_storage.write_report_to_excel(path, data, editing=True)
+        store.write_report(data, True)
         if spec.condition == "Bad Order":
-            fsr_storage.save_incident_data(path, spec.control_no,
-                                           spec.so_number,
-                                           data["incident_reports"])
+            store.save_incidents(spec.control_no, spec.so_number,
+                                 data["incident_reports"])
         else:
-            fsr_storage.delete_incident_data(path, spec.control_no)
+            store.delete_incidents(spec.control_no)
     return path, sample
 
 
@@ -445,7 +448,11 @@ def reset(folder=DEMO_FOLDER, workbook_name=DEMO_WORKBOOK):
     path = folder / workbook_name
     tests = [c for c in workbook_controls(path)
              if str(c).upper().startswith(TEST_PREFIX)] if path.exists() else []
-    removed = fsr_storage.delete_reports_from_excel(path, tests) if tests else 0
+    import fsr_store
+    # The store itself refuses anything but TEST-... reports in a marked
+    # folder (fsr_store.ExcelStore.delete_reports).
+    removed = (fsr_store.ExcelStore(path).delete_reports(tests)
+               if tests else 0)
     files = 0
     json_folder = fsr_paths.json_dir_for_workbook(path)
     test_file_folders = (
