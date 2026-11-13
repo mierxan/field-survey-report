@@ -11,6 +11,7 @@ from tkinter import messagebox, ttk
 import ttkbootstrap as tb
 
 import fsr_storage as storage
+import fsr_store
 import fsr_withdrawal as wd
 from warehouse.transactions import WITHDRAWAL, normalize_activity
 
@@ -206,7 +207,7 @@ class WithdrawalPanel:
                 if po else "Please enter a PO Number.", parent=window)
             return
         try:
-            found = wd.find_po(self.host.main_path(), po)
+            found = fsr_store.ExcelStore(self.host.main_path()).find_po(po)
         except wd.PoSourceMissing as error:
             messagebox.showinfo(
                 "No Receiving Data",
@@ -348,8 +349,8 @@ class WithdrawalPanel:
         try:
             number = wd.validate_quantity(
                 quantity.get(), row["UOM"], row[wd.RECEIVED_HEADER],
-                wd.remaining_quantity(self.host.main_path(), row,
-                                      self.host.control_no()))
+                fsr_store.ExcelStore(self.host.main_path())
+                .remaining_quantity(row, self.host.control_no()))
         except wd.WithdrawalError as error:
             quantity.delete(0, "end")
             quantity.insert(0, old_text)
