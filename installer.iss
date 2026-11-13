@@ -46,6 +46,11 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 [InstallDelete]
 ; remove files left over from the previous version of the program
 Type: filesandordirs; Name: "{app}\_internal"
+; Nothing outside {app} is ever removed - neither by Setup nor by the
+; uninstaller: the reports database (%LOCALAPPDATA%\FieldSurveyReport\
+; Databases), the accounts and settings (%APPDATA%\FieldSurveyReport) and
+; the data in Documents\Field Survey Report stay. (Tested on a scratch
+; install on 14 November 2026: install, reinstall, uninstall - docs\SQLITE.md.)
 
 [Files]
 Source: "dist\{#Edition}\FieldSurveyReport\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion createallsubdirs
