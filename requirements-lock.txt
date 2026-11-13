@@ -1,8 +1,10 @@
 # Every package of the build and test environment, pinned (pip freeze,
 # 13 November 2026). Install exactly this set with:
 #   python -m pip install -r requirements-lock.txt
-# Left out: tk, section (unrelated packages installed by mistake),
-# tkcalendar and babel (not used).
+# Removed from the environment on 13 November 2026 after checking them:
+# tk and section (unrelated packages, installed on 25 October; their
+# code and install files were read and are harmless), tkcalendar and
+# babel (not used). The environment now matches this list exactly.
 altgraph==0.17.5
 charset-normalizer==3.5.2
 colorama==0.4.6
