@@ -252,3 +252,74 @@ reports (about six months at 2,000 a year).**
   4 seconds up to 1,000 reports.
 
 Nothing of this is built. It needs your decision first.
+
+## 10. The storage interface (Phase 4)
+
+Written before any code is moved onto it, for the owner's review.
+
+### Where report data is read and written today
+
+| Module | Reads / writes | Through |
+|---|---|---|
+| field_survey_report.py (the window) | list, read, write reports (main and Withdrawal workbook), Control #s, incident and item-form files, the save record (13 places), the MySQL ledger (2), renumbering, the backup, the import, the inspector of an imported report | about 20 functions of fsr_storage, fsr_withdrawal, fsr_save_journal, fsr_mysql_guard, fsr_renumber, fsr_backup, fsr_import - never a workbook directly. The one workbook it opens itself is the Weekly Summary **export** (a new file, not report data). |
+| fsr_withdrawal_ui.py (PO-linked Withdrawal panel) | the Receiving lines of a PO, the quantity still in stock | fsr_withdrawal.find_po, remaining_quantity |
+| fsr_save_journal.py (save record) | every write of a save, the record file | Stores (workbook, incidents, item forms, import record, PO lists, MySQL), Journal |
+| fsr_import.py | one read, one batch write, side files, the import record | fsr_storage |
+| fsr_renumber.py | the workbooks, JSON files, PO lists | openpyxl directly (it rewrites cells in place) |
+| fsr_mysql_guard.py | the MySQL ledger file | its own JSON file |
+| warehouse/store.py (dashboards) | all reports of both workbooks | fsr_storage.read_all_reports, fsr_withdrawal.read_all_reports |
+| fsr_master_export.py | all reports, the Reports sheet | fsr_storage, and openpyxl for one sheet |
+| warehouse/sample_data.py (Demo Mode) | writes and deletes the sample reports | fsr_storage |
+| fsr_backup.py | copies the workbook | file copy |
+
+### The interface: `fsr_store.ExcelStore(excel_path, required_root=None)`
+
+One object per data folder. Today's implementation only hands each call
+on to the function listed above; nothing is done differently.
+
+| Group | Methods |
+|---|---|
+| Reports | `list_reports`, `read_report`, `read_all_reports`, `search_index`, `write_report(data, editing, saved_at)`, `write_reports(items)` (one write, all or none), `delete_reports` (Demo Mode only) |
+| PO-linked Withdrawal reports | `owns_withdrawal`, `withdrawal_numbers`, `list_withdrawal_reports`, `read_withdrawal_report`, `read_all_withdrawal_reports`, `withdrawal_search_index`, `write_withdrawal_report` |
+| PO lines | `find_po`, `remaining_quantity` |
+| Control #s | `next_control_number`, `control_numbers`, `next_free_number`, `renumber(old, new)` |
+| Beside a report | `save_incidents`, `load_incidents`, `delete_incidents`, `save_item_forms`, `load_item_forms` |
+| Derived lists | `rebuild_item_lists` (PO_Master, Withdrawn_Item) |
+| Records | `save_record()` (the save record), `save_steps()` (the writes of one save), `mysql_guard(db)` (the ownership ledger), `imported_inspector`, `import_master_data`, `backup_before_save` |
+
+MySQL stays outside: it is the shared copy, written only through the
+guard.
+
+### What a SQLite implementation must provide (checklist)
+
+- [ ] Every method above, with the same arguments and the same results
+      (the same report dictionaries, the same Control # rules - unique
+      across both kinds of report, case-insensitive).
+- [ ] `write_report` / `write_reports` in one transaction each: all or
+      nothing, as the workbook replace is today.
+- [ ] The "Last Saved" time a save chose in advance is stored exactly (to
+      the millisecond): the save record recognises a save by it.
+- [ ] Incident texts, other Item List forms, the import record, the MySQL
+      ledger and the save record as tables in the same database - then a
+      save of a report and its side data is one transaction, and the save
+      record is only needed for MySQL and the exports.
+- [ ] The MySQL ledger's "is it current?" answered by a change counter in
+      the database instead of file times.
+- [ ] PO_Master and Withdrawn_Item still written as Excel files (people
+      open them), from the database, in the background.
+- [ ] An Excel export of all reports in today's workbook layout (the way
+      back and the file people read), written in the background.
+- [ ] `renumber` as one transaction.
+- [ ] Backups: SQLite's backup function into the Backups folder.
+- [ ] The migration of section 5: copy, read every report once, write,
+      compare every report field by field, keep the original.
+- [ ] Every existing test run against both implementations (the tests
+      take the store as a parameter).
+
+### What the SQLite phase will then involve
+
+With the interface in place, the SQLite phase is one new class
+(`SqliteStore`) plus the migration and the export - the window, the save
+record and the import do not change. Rough size: about half of section
+7's estimate, because the "dashboards, search, saved list" row and most of
+the "database layer" row become calls that already exist.
