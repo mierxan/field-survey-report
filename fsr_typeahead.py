@@ -58,6 +58,9 @@ class Picker:
     def __init__(self, combo):
         self.combo = combo
         self.fixed = str(combo.cget('state')) == 'readonly'
+        # Tk uses Mod1 (0x8) for Num Lock on Windows, not Alt. The
+        # extended-key bit is also unrelated to modifiers we act on.
+        self.alt_mask = 0x20000 if combo.tk.call('tk', 'windowingsystem') == 'win32' else 8
         self.index = PrefixIndex(combo.cget('values'))
         self.query = ''
         self.items = ()
@@ -119,14 +122,15 @@ class Picker:
         self.show(self.combo.get())
 
     def key(self, event):
+        key = {'KP_Up': 'Up', 'KP_Down': 'Down',
+               'KP_Enter': 'Return'}.get(event.keysym, event.keysym)
         if self.blocked:
             # A PO-linked editable box becomes readonly at runtime. Native
             # ttk bindings would still let Down/F4 select a different value.
-            navigation = event.keysym in ('Tab', 'ISO_Left_Tab') or (
-                event.keysym in ('Up', 'Down') and event.state & 4)
+            navigation = key in ('Tab', 'ISO_Left_Tab') or (
+                key in ('Up', 'Down') and event.state & 4)
             return None if navigation else 'break'
-        key = event.keysym
-        if key == 'F4' or (key == 'Down' and event.state & 8):
+        if key == 'F4' or (key == 'Down' and event.state & self.alt_mask):
             if self.opened:
                 self.close()
             else:
@@ -157,7 +161,7 @@ class Picker:
             if key == 'BackSpace':
                 self.show(self.query[:-1])
                 return 'break'
-            if event.char and event.char.isprintable() and not event.state & 12:
+            if event.char and event.char.isprintable() and not event.state & (4 | self.alt_mask):
                 self.show((self.query if self.opened or self.query else '') + event.char)
                 return 'break'
         elif key in ('BackSpace', 'Delete') or (event.char and event.char.isprintable()):
@@ -167,7 +171,8 @@ class Picker:
     def released(self, event):
         # Readonly search is not a report edit (including the application's
         # global dirty handler and field-level KeyRelease callbacks).
-        if self.fixed or self.blocked:
+        if self.fixed or self.blocked or event.keysym in (
+                'Up', 'Down', 'KP_Up', 'KP_Down', 'Return', 'KP_Enter'):
             return 'break'
 
     def click_arrow(self, event):

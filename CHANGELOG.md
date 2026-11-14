@@ -2,6 +2,9 @@
 
 ## Phase 6 - dropdown type-ahead (unreleased, 14 November 2026)
 
+- Correct Windows Num Lock handling so Up/Down move the highlighted result
+  and list-only fields remain searchable with Num Lock enabled. Preserve
+  real Alt+Down and support keypad arrow names.
 - Use one shared prefix picker for every non-date list dropdown in both
   editions, including Item Lists, Withdrawal lines, filters and settings.
 - Keep typing focus, update on each edit, and commit the highlighted filtered

@@ -2,6 +2,7 @@
 import ast
 from pathlib import Path
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -66,9 +67,11 @@ def combo(app):
     app['window'].update()
 
 
-def key(widget, keysym):
-    widget.event_generate('<KeyPress>', keysym=keysym)
-    widget.event_generate('<KeyRelease>', keysym=keysym)
+def key(widget, keysym, state=None):
+    flags = {} if state is None else {
+        'state': state | (1 if len(keysym) == 1 and keysym.isupper() else 0)}
+    widget.event_generate('<KeyPress>', keysym=keysym, **flags)
+    widget.event_generate('<KeyRelease>', keysym=keysym, **flags)
     widget.update()
 
 
@@ -105,6 +108,69 @@ def test_backspace_navigation_and_enter(combo):
     key(combo, 'Up')
     key(combo, 'Return')
     assert combo.get() == 'Super A'
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize('state', [0, 8, 0x40000, 0x40008])
+def test_windows_lock_and_extended_flags_preserve_arrow_selection(combo, state):
+    if combo.tk.call('tk', 'windowingsystem') != 'win32':
+        return  # These are Windows event flags, not portable modifier masks.
+    type_text(combo, 'Su')
+    key(combo, 'Down', state)
+    assert combo.typeahead.opened
+    assert combo.typeahead.items == ('Sun', 'Super A', 'Super B')
+    assert combo.typeahead.selected == 1
+    key(combo, 'Down', state)
+    key(combo, 'Up', state)
+    assert combo.typeahead.selected == 1
+    key(combo, 'Return', state)
+    assert combo.get() == 'Super A'
+
+
+@pytest.mark.gui
+def test_keypad_arrows_keep_filtered_results_and_query(combo):
+    type_text(combo, 'Su')
+    # Win32 Tk emits Up/Down for physical keypad arrows (covered above),
+    # and cannot generate KP_Down. Exercise the alternative Tk keysyms too.
+    def keypad(name):
+        assert combo.typeahead.key(SimpleNamespace(
+            keysym=name, state=0, char='')) == 'break'
+        combo.update()
+    keypad('KP_Down')
+    assert combo.typeahead.selected == 1
+    keypad('KP_Down')
+    keypad('KP_Up')
+    assert combo.typeahead.selected == 1
+    assert combo.get() == 'Su'
+    keypad('KP_Enter')
+    assert combo.get() == 'Super A'
+
+
+@pytest.mark.gui
+def test_windows_numlock_fixed_list_query_and_real_alt_shortcut(app):
+    combo = Combobox(app['window'], state='readonly', values=['Sun', 'Super'])
+    combo.place(x=20, y=50)
+    combo.set('Sun')
+    combo.update()
+    combo.focus_force()
+    combo.update()
+    windows = combo.tk.call('tk', 'windowingsystem') == 'win32'
+    try:
+        state = 8 if windows else 0
+        for letter in 'Sup':
+            key(combo, letter, state)
+        assert combo.typeahead.items == ('Super',)
+        assert combo.typeahead.query == 'Sup'
+        key(combo, 'Return', state)
+        assert combo.get() == 'Super'
+        alt = 0x20000 if windows else 8
+        key(combo, 'Down', alt)
+        assert combo.typeahead.items == ('Sun', 'Super')
+        assert combo.typeahead.opened
+        key(combo, 'Down', alt)
+        assert not combo.typeahead.opened
+    finally:
+        combo.destroy()
 
 
 @pytest.mark.gui

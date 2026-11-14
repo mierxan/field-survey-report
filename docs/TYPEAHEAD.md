@@ -52,7 +52,8 @@ Do not run these checks against real data.
 2. Add invented suppliers `Sun Test`, `Super Test A` and `Super Test B`.
    Type `S`, then `u`, then `per`; press Backspace. Expect prefix-only results
    on each edit. Use Down/Up and Enter; repeat with a mouse click. Focus
-   must stay in the field while typing.
+   must stay in the field while typing. Repeat with Num Lock on and off;
+   Down must move the highlight rather than close or reset the list.
 3. Type an unmatched name, then Escape: the text stays and no unrelated
    name is selected. Click the arrow: the full list appears. Check a UOM,
    Weight Unit and Currency field in an Item List too.
@@ -83,3 +84,16 @@ large-list lookup and bounded popup rendering, live source refresh, callback
 cleanup, draft capture/restore, and unchanged date dropdowns. The full run
 also passed the existing drafts, export, save-safety and Withdrawal checks.
 Ruff and `git diff --check` passed. No installer was built or installed.
+
+### Windows arrow-key follow-up
+
+The original modifier check treated Windows Num Lock (0x8) as Alt. This
+could toggle the list on Down and block fixed-list queries while Num Lock
+was enabled. The shared handler now uses Tk's platform-specific Alt mask,
+ignores lock/extended flags for ordinary arrows, and recognizes keypad
+arrow aliases. Added tests reproduce Windows key flags with Num Lock on
+and off, extended-key combinations, fixed-list typing and real Alt+Down.
+
+Follow-up serial `RUN_TESTS.bat`: **1204 passed, 0 skipped**, in 1359.11
+seconds (22 minutes 39 seconds). The 39 focused dropdown checks passed in
+both editions. Ruff and `git diff --check` also passed.
