@@ -367,3 +367,13 @@ in Excel only, so a PO-linked report always opens from the Withdrawal workbook.
 
 **Printing:** the existing Default Cargo Details form, with the withdrawal
 quantity in Quantity. It has no columns for PO Line No or Received Quantity.
+
+
+## Unfinished work and drafts (Phase 6, unreleased)
+
+Both editions checkpoint unfinished forms locally and offer recovery after
+sign-in. Only unsaved changes prompt Save / Keep as draft / Discard / Cancel.
+Successful autosaves show a small status-bar time, not a notice. Drafts never
+reserve report numbers or enter MySQL/exports. See [DRAFTS.md](docs/DRAFTS.md)
+for recovery, account isolation, limitations, and five sandbox hand checks.
+`START_DRAFT_CHECKS.bat` starts the isolated hand-check profile.

@@ -787,6 +787,7 @@ class UserStore:
             "role": "owner",
             "status": "approved",
             "created": datetime.now().strftime("%d-%b-%Y %H:%M"),
+            "draft_identity": secrets.token_hex(16),
         })
         self._write(users)
 
@@ -861,6 +862,7 @@ class UserStore:
             "initials": initials, "email": email,
             **new_password_fields(password), "role": role, "status": status,
             "created": datetime.now().strftime("%d-%b-%Y %H:%M"),
+            "draft_identity": secrets.token_hex(16),
         })
         self._write(users)
 

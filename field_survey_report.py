@@ -93,6 +93,9 @@ import fsr_save_ui
 import fsr_open_dialog
 import fsr_weekly
 import fsr_item_lists_ui
+import fsr_drafts_ui
+import fsr_draft_form
+
 from fsr_forms import (  # the official report forms (moved)
     convert_form_to_pdf,  # noqa: F401 - tests reach it as g["convert_form_to_pdf"]
     print_name,
@@ -132,6 +135,9 @@ try:
 except ImportError:
     app_auth = None
 
+
+draft_controller = None
+draft_item_cache = {}
 
 # write_json_atomic() is in fsr_storage.py
 
@@ -534,7 +540,12 @@ def set_dirty(flag):
 
 
 def mark_dirty(*_):
+    controller = globals().get("draft_controller")
+    if controller is not None and controller.muted:
+        return
     set_dirty(True)
+    if controller is not None:
+        controller.changed()
 
 
 def on_any_key(event):
@@ -1116,6 +1127,8 @@ def rebuild_account_menu():
             label="MySQL Conflicts..." + (
                 f"  ({waiting_now} waiting)" if waiting_now else ""),
             command=lambda: open_mysql_conflicts())
+    account_menu.add_command(label="Unfinished work...",
+        command=lambda: draft_controller.show() if draft_controller else None)
     account_menu.add_command(
         label="Reports Database...", command=lambda: open_database_info())
     account_menu.add_command(
@@ -1131,6 +1144,8 @@ def rebuild_account_menu():
 
 
 def restart_program():
+    if draft_controller:
+        draft_controller.stop()
     save_settings()
     try:
         subprocess.Popen([sys.executable] if FROZEN
@@ -1473,6 +1488,7 @@ def set_item_form(form):
         return
 
     if item_frames:
+        draft_item_cache[item_frames[0].form] = fsr_draft_form.item_sections(globals())
         item_form_store[item_frames[0].form] = [
             (section.values(), len(section.rows)) for section in item_frames]
     for section in item_frames:
@@ -1484,6 +1500,8 @@ def set_item_form(form):
         item_frames[-1].set_values(lines)
         item_frames[-1].set_row_count(max(row_count, len(lines)))
 
+    if form in draft_item_cache:
+        fsr_draft_form.restore_items(globals(), draft_item_cache[form])
     update_item_list_buttons()
     refresh_findings_counter()
 
@@ -2137,6 +2155,7 @@ def clear_form():
     set_goods_types(None)
     set_condition("")                   # also clears + hides the incident tab
     withdrawal_panel.reset()
+    draft_item_cache.clear()
 
     other_remarks_frame.refresh_counter()
     findings_frame.refresh_counter()
@@ -2205,6 +2224,7 @@ def populate_form(data):
 
     other_remarks_frame.refresh_counter()
     findings_frame.refresh_counter()
+    draft_item_cache.clear()
 
 
 def busy(func, *args):
@@ -2583,14 +2603,18 @@ def excel_missing_message():
 
 
 def confirm_discard(title, question):
-    """True when there is nothing unsaved, or the user agrees to lose it."""
+    """Only actual unsaved changes ask the four-way question."""
     if not report_state["dirty"]:
         return True
-    return messagebox.askyesno(
-        title,
-        f"{question}\n\nAnything on the form that is not saved will be lost.",
-        parent=window
-    )
+    if draft_controller:
+        return draft_controller.leave(title)
+    answer = fsr_drafts_ui.ask_choice(window, title)
+    if answer == "save":
+        return save_report()
+    if answer == "keep":
+        messagebox.showwarning("Drafts unavailable", "The draft cannot be kept because draft storage is unavailable. Save normally or cancel.", parent=window)
+        return False
+    return answer == "discard"
 
 
 def mysql_guard():
@@ -2798,6 +2822,8 @@ def hand_on_number(record, numbers):
         dirty = report_state["dirty"]
         set_control_number(new)
         report_state["dirty"] = dirty
+        if draft_controller:
+            draft_controller.retarget(old, new, moved["data"], moved.get("stamp"))
         update_status()
     try:
         busy(create_report_forms, path, moved["data"])
@@ -3252,12 +3278,16 @@ def new_report(confirm=True):
     if confirm and not confirm_discard("New Report", "Start a new report?"):
         return
 
+    if draft_controller:
+        draft_controller.muted = True
     clear_form()
     report_state["editing"] = False
     set_control_number(next_new_control_number())
     report_state["dirty"] = False
     update_status()
     SO_number_entry.focus_set()
+    if draft_controller:
+        draft_controller.reset()
 
 
 def load_report_into_form(control_no, source="excel"):
@@ -3313,6 +3343,8 @@ def load_report_into_form(control_no, source="excel"):
         log.exception("Item form file could not be read")
         item_forms_error = str(error)
 
+    if draft_controller:
+        draft_controller.muted = True
     populate_form(data)
     withdrawal_panel.load(po_linked)
 
@@ -3350,6 +3382,8 @@ def load_report_into_form(control_no, source="excel"):
     report_state["editing"] = True
     report_state["dirty"] = False
     update_status()
+    if draft_controller:
+        draft_controller.reset(data, source)
     notify(f"Opened {data['control_no']}", "info")
 
 
@@ -4205,21 +4239,17 @@ def test_mysql_connection():
 
 
 def on_close():
-    if report_state["dirty"]:
-        answer = messagebox.askyesnocancel(
-            "Unsaved Changes",
-            "This report has unsaved changes.\n\nSave before closing?",
-            parent=window
-        )
-        if answer is None:
-            return
-        if answer and not save_report():
-            return
-
+    if not confirm_discard("Unsaved Changes", "Close the program?"):
+        return
     close_when_sent(close_program)
 
 
 def close_program():
+    if draft_controller:
+        if not draft_controller.shutdown(seconds=4.):
+            draft_controller.failed(OSError("The final draft checkpoint could not finish. The program stays open."))
+            return
+        draft_controller.stop()
     save_settings()
     window.destroy()
 
@@ -4336,6 +4366,8 @@ def show_inspection_then(func):
 
 def report_callback_exception(exc_type, exc_value, exc_traceback):
     """Any unexpected error: write it to the log and tell the user where."""
+    if draft_controller:
+        draft_controller.shutdown()
     log.error("Unexpected error", exc_info=(exc_type, exc_value,
                                             exc_traceback))
     try:
@@ -4429,6 +4461,9 @@ def build_window():
     global BASE_DIR, CONFIG_DIR, COUNTRY_LIST_KEY, DATA_DIR, DATA_ROOT
     global DEFAULT_EXCEL_NAME, DEMO_MODE, DESTINATION_LIST_KEY
     global DOCUMENT_COLUMNS, DOT_BAD, DOT_OK, DOT_WAIT, EXCEL_ROOT
+    global draft_controller, draft_item_cache
+    draft_controller = None
+    draft_item_cache = {}
     global FIELD_CLASSES, FIELD_COLUMNS, FROZEN, IGNORED_KEYS
     global INCIDENT_TAB_TEXT, IS_OWNER, IS_OWNER_EDITION, ITEM_FORM_COLUMNS
     global ITEM_FORM_HEADERS, ITEM_FORM_HINTS, ITEM_HEADER_TIPS, ITEM_WIDTHS
@@ -5703,7 +5738,17 @@ def build_window():
     # The reports move into the database (once); then the saves that stopped
     # halfway last time are finished (this PC's files; MySQL follows when
     # the check below finds the server).
-    window.after(300, start_on_database)
+    try:
+        draft_controller = fsr_drafts_ui.Controller(globals())
+    except (OSError, ValueError) as error:
+        log.exception("Draft storage is unavailable")
+        messagebox.showwarning("Drafts unavailable", str(error), parent=window)
+        draft_controller = None
+    def recover_then_offer_drafts():
+        finish_unfinished_saves()
+        if draft_controller:
+            draft_controller.show()
+    window.after(300, lambda: start_on_database(then=recover_then_offer_drafts))
 
     if "check_mysql_status" in globals():
         window.after(600, check_mysql_status)

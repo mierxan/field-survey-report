@@ -22,6 +22,7 @@ fsr_db_location finds it (it is put there only after a migration passed its
 comparison - fsr_sqlite_migrate). A database still next to the workbook
 (where the first Phase 5 builds put it) is used until it is moved.
 """
+import fsr_drafts
 import json
 import sqlite3
 import threading
@@ -298,13 +299,25 @@ class SqliteStore:
         finally:
             conn.close()
 
-    def _write(self, work):
+    def _write(self, work, expected=None):
         """work(conn) inside ONE transaction: all of it or nothing."""
         with self._lock:
             conn = connect(self.db_path)
             try:
                 conn.execute("BEGIN IMMEDIATE")
                 try:
+                    if expected is not None:
+                        book, control, stamp, revision = expected
+                        if revision is not fsr_drafts._UNSET:
+                            current_revision = int(conn.execute("SELECT value FROM meta WHERE key='changes'").fetchone()[0])
+                            fsr_drafts.check_stamp(current_revision, revision)
+                        found = conn.execute("SELECT header FROM reports WHERE book=? AND key=?", (book, key_of(control))).fetchone()
+                        actual = load_header(found[0]).get("Last Saved") if found else None
+                        if isinstance(actual, datetime):
+                            actual = actual.isoformat(timespec="milliseconds")
+                        elif actual is not None:
+                            actual = str(actual)
+                        fsr_drafts.check_stamp(actual, stamp)
                     result = work(conn)
                     conn.execute(
                         "UPDATE meta SET value = CAST(value AS INTEGER) + 1 "
@@ -449,7 +462,10 @@ class SqliteStore:
                     add(item, "po", values.get("PO Number"))
         return index
 
-    def write_report(self, data, editing, saved_at=None):
+    def write_report(self, data, editing, saved_at=None, expected_stamp=fsr_drafts._UNSET, expected_revision=fsr_drafts._UNSET):
+        if expected_stamp is not fsr_drafts._UNSET:
+            return self._write(lambda conn: self._apply_report(conn, data, editing, saved_at),
+                               (MAIN, data["control_no"], expected_stamp, expected_revision))
         return self.write_reports([(data, editing, saved_at)])[0]
 
     def write_reports(self, items):
@@ -597,7 +613,7 @@ class SqliteStore:
     def withdrawal_last_saved_times(self):
         return self._last_saved(BOOK)
 
-    def write_withdrawal_report(self, data, editing, saved_at=None):
+    def write_withdrawal_report(self, data, editing, saved_at=None, expected_stamp=fsr_drafts._UNSET, expected_revision=fsr_drafts._UNSET):
         """The same rules as fsr_withdrawal.write_withdrawal_report()."""
         rows = [row for section in data["item_lists"]
                 for row in section["rows"]]
@@ -684,7 +700,8 @@ class SqliteStore:
                 "items": len(rows),
                 "remarks": len(remarks),
             }
-        return self._write(work)
+        expected = None if expected_stamp is fsr_drafts._UNSET else (BOOK, data["control_no"], expected_stamp, expected_revision)
+        return self._write(work, expected)
 
     # ---- Control #s ----
     def next_control_number(self):

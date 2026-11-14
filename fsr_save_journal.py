@@ -215,13 +215,15 @@ class Journal:
         storage.write_json_atomic(
             self.path, {"version": VERSION, "saves": records})
 
-    def begin(self, data, editing, linked, steps, stamp_before=None):
+    def begin(self, data, editing, linked, steps, stamp_before=None, draft=None):
         """Write the record of a save that is about to start. An older
         record of the same report is replaced: this save supersedes it.
         `stamp_before` is the report's Last Saved time in the workbook
         right now (None for a report that is not there yet)."""
         record = new_record(data, editing, linked, steps, stamp_before,
                             self._now())
+        if draft:
+            record["draft"] = copy.deepcopy(draft)
         key = storage.control_key(record["control"])
         with _LOCK:
             records = [r for r in self.load()
@@ -354,6 +356,11 @@ class Stores:
         planned = _time(record.get("stamp_planned"))
         if planned is not None:
             extra["saved_at"] = planned
+        if "expected_stamp" in (record.get("draft") or {}):
+            extra["expected_stamp"] = record["draft"]["expected_stamp"]
+            for name in ("expected_revision", "expected_file"):
+                if name in record["draft"]:
+                    extra[name] = record["draft"][name]
         # The MySQL ledger must belong to the workbook as THIS write leaves
         # it, before the MySQL step of the same save looks at the ledger.
         with _local_write(self.guard):
@@ -432,8 +439,9 @@ def open_save(journal, stores, data, editing, linked, mysql):
     """Put a save on record before its first write. Returns the record.
     Nothing is read from the workbook for this: the save's own time
     ("stamp_planned") is all the repair needs."""
+    extra = {"draft": stores.draft_ref} if getattr(stores, "draft_ref", None) else {}
     return journal.begin(data, editing, linked,
-                         steps_for(data, linked, mysql))
+                         steps_for(data, linked, mysql), **extra)
 
 
 def open_local_steps(journal, control_no):
@@ -522,6 +530,15 @@ def run(journal, record, stores, mysql=True, lists=True):
             record.pop("conflict", None)
             record.pop("decision", None)
 
+    # Draft retirement is local: MySQL/export/list work may still be pending.
+    if record.get("draft") and all(steps.get(k) == DONE for k in ("workbook", "incidents", "item_forms")):
+        try:
+            import fsr_drafts
+            fsr_drafts.retire(record["draft"])
+        except (OSError, ValueError, KeyError):
+            log.exception("The committed draft could not be retired; its save record is kept")
+            _note(journal, record)
+            return outcome
     # One write for all the steps above (see the module text).
     if _settled(record):
         _forget(journal, record)
@@ -546,6 +563,9 @@ def _forget(journal, record):
     if journal is None:
         return
     try:
+        if record.get("draft") and record["steps"].get("workbook") == DONE:
+            import fsr_drafts
+            fsr_drafts.retire(record["draft"])
         journal.remove(record)
     except (OSError, ValueError, TypeError):
         log.exception("The save record could not be cleared")

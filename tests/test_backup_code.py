@@ -86,7 +86,8 @@ def test_the_newest_ten_are_kept_and_nothing_else_is_touched(repo, tmp_path):
 @pytest.mark.parametrize("name", [
     "data/json/private/settings.json", "users.json", "db_config.json",
     "data/excel/Field_Survey_Reports.xlsx", ".venv/lib/x.py",
-    "Field_Survey_Reports.sqlite3", "field_survey_report.log"])
+    "Field_Survey_Reports.sqlite3", "field_survey_report.log",
+    "private/unfinished.draft.json", "Drafts/unfinished.json"])
 def test_no_bundle_when_data_or_passwords_were_ever_committed(repo, tmp_path,
                                                               name):
     path = repo / name

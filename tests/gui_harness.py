@@ -32,6 +32,9 @@ class AutoAnswers:
         self._saved = {}
 
     def install(self):
+        import fsr_drafts_ui
+        self._draft_choice = fsr_drafts_ui.ask_choice
+        fsr_drafts_ui.ask_choice = lambda *a: "discard" if self.yes else "cancel"
         for name in ("showinfo", "showwarning", "showerror"):
             self._saved[name] = getattr(messagebox, name)
             setattr(messagebox, name, self._show(name))
@@ -41,6 +44,8 @@ class AutoAnswers:
             setattr(messagebox, name, self._ask(name))
 
     def uninstall(self):
+        import fsr_drafts_ui
+        fsr_drafts_ui.ask_choice = self._draft_choice
         for name, func in self._saved.items():
             setattr(messagebox, name, func)
 
@@ -95,6 +100,16 @@ def start_app(home, extra_env=None):
                                 run_name="fsr_under_test")
         app = loaded["build_window"].__globals__
         app["build_window"]()
+    except BaseException:
+        answers.uninstall()
+        # Failed Tk initialization can leave a default root alive.
+        root = getattr(tkinter, "_default_root", None)
+        if root is not None:
+            try:
+                root.destroy()
+            except tkinter.TclError:
+                pass
+        raise
     finally:
         app_auth.run_login = saved_login
         tkinter.Misc.mainloop = saved_mainloop
@@ -127,6 +142,8 @@ def _stray_root(window):
 
 
 def stop_app(app, answers):
+    if app.get("draft_controller"):
+        app["draft_controller"].stop()
     try:
         app["window"].destroy()
     except tkinter.TclError:

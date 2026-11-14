@@ -9,6 +9,7 @@ automated tests can use the real storage code without opening a window.
 field_survey_report.py imports everything from this module.
 """
 
+import fsr_drafts
 import io
 import json
 import logging
@@ -1345,13 +1346,15 @@ def write_report_to_excel(path, data, editing, saved_at=None):
     return write_reports_to_excel(path, [(data, editing, saved_at)])[0]
 
 
-def write_reports_to_excel(path, items):
+@fsr_drafts.report_write_lock
+def write_reports_to_excel(path, items, expected=None, expected_file=fsr_drafts._UNSET):
     """Save several reports with ONE load and ONE save of the workbook
     (Import Master Data). `items`: [(data, editing, saved_at), ...], applied
     in this order exactly as write_report_to_excel() would apply them one
     by one. The file is replaced as a whole at the end, so either all of
     them are in it or none. Returns one result per item."""
     path = Path(path)
+    fsr_drafts.check_stamp(fsr_drafts.file_version(path), expected_file)
 
     if path.exists():
         wb = load_workbook(path)
@@ -1360,6 +1363,8 @@ def write_reports_to_excel(path, items):
         wb = Workbook()
         wb.remove(wb.active)
 
+    if expected is not None:
+        fsr_drafts.check_stamp(fsr_drafts.workbook_stamp(wb, "Reports", expected[0]), expected[1])
     sheets = {
         name: get_or_create_sheet(wb, name, headers)
         for name, (_, headers) in EXCEL_SHEETS.items()
@@ -1386,6 +1391,7 @@ def write_reports_to_excel(path, items):
 
     try:
         wb.save(temp_path)
+        fsr_drafts.check_stamp(fsr_drafts.file_version(path), expected_file)
         replace_file(temp_path, path)
     finally:
         if temp_path.exists():

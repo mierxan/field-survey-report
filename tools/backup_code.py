@@ -37,6 +37,8 @@ REMEMBER = "fsr_backup_code.json"         # inside .git: never committed
 
 # Paths that must never be in a commit (data, accounts, passwords, .venv).
 FORBIDDEN = [re.compile(p, re.IGNORECASE) for p in (
+    r"(^|/)Drafts/",
+    r"\.draft\.",
     r"(^|/)\.venv/",
     r"\.sqlite3",
     r"(^|/)users[^/]*\.json$",

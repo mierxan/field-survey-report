@@ -49,3 +49,8 @@ build/
 dist/
 Installer/
 *.zip
+
+# Unfinished report data must never be committed
+*.draft.json
+*.draft.*
+Drafts/

@@ -1,5 +1,21 @@
 # Field Survey Report changelog
 
+## Phase 6 ? drafts (unreleased, 14 November 2026)
+
+- Autosave unfinished raw form input locally after 3 idle seconds or by
+  30 seconds during editing, without creating a report or reserving a number.
+- Recover account-owned drafts after sign-in; review stale saved reports
+  before restoring/saving, and preserve damaged or old drafts for review.
+- Add Save / Keep as draft / Discard / Cancel only for unsaved changes;
+  success uses a small status label, while failures get a warning.
+- Allow administrators to discard removed-account drafts without restoring
+  them into their own account. New accounts get a non-secret signed draft
+  identity so deletion/recreation cannot reuse an earlier account's drafts.
+- Coordinate draft retirement with explicit Save and the existing save
+  record; checkpoint during Windows session end and recover abrupt exits.
+- Add isolated test-copy hand checks, including second-account creation,
+  approval and removal: [DRAFTS.md](docs/DRAFTS.md).
+
 ## Unreleased — release housekeeping
 
 - Installer builds now receive a timestamp and UUID per invocation, shared

@@ -34,6 +34,7 @@ so an edited report corrects them by itself:
 Quantities are Decimal here, so the limits are exact.
 """
 
+import fsr_drafts
 import os  # noqa: F401 - os.replace, via fsr_storage.replace_file
 import re
 import zipfile
@@ -659,12 +660,14 @@ def goods_and_remarks(data, control_no):
     return goods, remarks
 
 
+@fsr_drafts.report_write_lock
 def write_withdrawal_report(path, data, editing, main_path,
-                            saved_at=None):
+                            saved_at=None, expected_stamp=fsr_drafts._UNSET, expected_file=fsr_drafts._UNSET):
     """Save one PO-linked report here and nowhere else. Same result as
     fsr_storage.write_report_to_excel(). A new report takes the next free number
     when its Control # is used in either workbook."""
     path = Path(path)
+    fsr_drafts.check_stamp(fsr_drafts.file_version(path), expected_file)
     rows = [row for section in data["item_lists"] for row in section["rows"]]
 
     if path.exists():
@@ -676,6 +679,7 @@ def write_withdrawal_report(path, data, editing, main_path,
             wb.create_sheet(name).append(headers)
 
     header_ws = wb[HEADER_SHEET]
+    fsr_drafts.check_stamp(fsr_drafts.workbook_stamp(wb, HEADER_SHEET, data["control_no"]), expected_stamp)
     control_no = data["control_no"]
     existing_row = storage.find_row(header_ws, control_no)
     main_numbers = [entry[0] for entry in storage.list_saved_reports(main_path)]
@@ -717,6 +721,7 @@ def write_withdrawal_report(path, data, editing, main_path,
     temp_path = path.with_name(path.stem + ".saving.tmp")
     try:
         wb.save(temp_path)
+        fsr_drafts.check_stamp(fsr_drafts.file_version(path), expected_file)
         storage.replace_file(temp_path, path)
     finally:
         if temp_path.exists():

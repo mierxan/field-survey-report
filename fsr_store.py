@@ -25,6 +25,7 @@ import fsr_mysql_guard
 import fsr_paths
 import fsr_renumber
 import fsr_save_journal
+import fsr_drafts
 import fsr_storage
 import fsr_withdrawal
 
@@ -116,7 +117,9 @@ class ExcelStore:
     def search_index(self):
         return fsr_storage.search_index_excel(self.excel_path)
 
-    def write_report(self, data, editing, saved_at=None):
+    def write_report(self, data, editing, saved_at=None, expected_stamp=fsr_drafts._UNSET, expected_file=fsr_drafts._UNSET):
+        if expected_stamp is not fsr_drafts._UNSET:
+            return fsr_storage.write_reports_to_excel(self.excel_path, [(data, editing, saved_at)], expected=(data["control_no"], expected_stamp), expected_file=expected_file)[0]
         return fsr_storage.write_report_to_excel(self.excel_path, data,
                                                  editing, saved_at)
 
@@ -195,8 +198,11 @@ class ExcelStore:
     def withdrawal_last_saved_times(self):
         return _last_saved(self.withdrawal_path, fsr_withdrawal.HEADER_SHEET)
 
-    def write_withdrawal_report(self, data, editing, saved_at=None):
+    def write_withdrawal_report(self, data, editing, saved_at=None, expected_stamp=fsr_drafts._UNSET, expected_file=fsr_drafts._UNSET):
         extra = {} if saved_at is None else {"saved_at": saved_at}
+        if expected_stamp is not fsr_drafts._UNSET:
+            extra["expected_stamp"] = expected_stamp
+            extra["expected_file"] = expected_file
         return fsr_withdrawal.write_withdrawal_report(
             self.withdrawal_path, data, editing, self.excel_path, **extra)
 

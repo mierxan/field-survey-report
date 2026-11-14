@@ -92,6 +92,12 @@ def save_report():
     if not host.withdrawal_panel.context_changed():
         return False
 
+    controller = host_globals().get("draft_controller")
+    draft_ref = None
+    if controller is not None and (host.report_state["dirty"] or controller.draft_id):
+        draft_ref = controller.before_save()
+        if draft_ref is False:
+            return False
     path = host.excel_state["path"]
     data = host.collect_report_data()
     target = path
@@ -101,6 +107,7 @@ def save_report():
     guard = host.mysql_guard() if mysql_on else None
     stores = host.data_store(path).save_steps(
         mysql=host.db_mysql if mysql_on else None, guard=guard)
+    stores.draft_ref = draft_ref
     journal = record = None
     earlier_open = []
     if mysql_on and not host.report_state["editing"]:
@@ -145,6 +152,8 @@ def save_report():
                 data, host.report_state["editing"], linked,
                 fsr_save_journal.steps_for(data, linked, mysql_on))
 
+        if draft_ref:
+            record["draft"] = draft_ref
         # Excel first, then the incident file, the other Item List forms
         # and PO_Master / Withdrawn_Item. Only a failure of the Excel write
         # stops the save. MySQL follows in the background (its step stays
@@ -179,10 +188,21 @@ def save_report():
              "or the next start." if journal is not None else "")
 
     # The report now exists in the file, so further saves update it.
-    host.set_control_number(result["control"])
-    host.report_state["editing"] = True
-    host.report_state["dirty"] = False
-    host.withdrawal_panel.saved(data)
+    if controller is not None:
+        controller.muted = True
+    try:
+        host.set_control_number(result["control"])
+        host.report_state["editing"] = True
+        host.report_state["dirty"] = False
+        host.withdrawal_panel.saved(data)
+    finally:
+        if controller is not None:
+            controller.muted = False
+    if controller is not None:
+        try:
+            controller.saved(data, record, failed, journal)
+        except (OSError, ValueError) as error:
+            controller.failed(error)
     host.update_status()
 
     # remember SO Number + Consignee for the next report / next start

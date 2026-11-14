@@ -19,6 +19,13 @@ if not os.environ.get("FSR_DATABASE_DIR"):
         prefix="fsr_test_databases_")
     atexit.register(shutil.rmtree, os.environ["FSR_DATABASE_DIR"], True)
 
+if not os.environ.get("FSR_DRAFT_DIR"):
+    import atexit
+    import shutil
+    import tempfile
+    os.environ["FSR_DRAFT_DIR"] = tempfile.mkdtemp(prefix="fsr_test_drafts_")
+    atexit.register(shutil.rmtree, os.environ["FSR_DRAFT_DIR"], True)
+
 # Counts skipped tests out loud; --fail-on-gui-skip (tests/skip_report.py).
 pytest_plugins = ["skip_report"]
 
