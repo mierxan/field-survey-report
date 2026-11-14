@@ -13,6 +13,7 @@ Files created in data/:
 """
 
 from fsr_typeahead import Combobox as TypeaheadCombobox
+import fsr_text_flow
 
 import json
 import logging
@@ -844,6 +845,9 @@ def create_remarks_section(parent, title, entry_width,
         entry.bind("<KeyRelease>", update_buttons, add="+")
         entries.append(entry)
 
+        if hasattr(section_frame, 'text_flow'):
+            section_frame.text_flow.watch()
+
         place_buttons()
         update_buttons()
         mark_dirty()
@@ -886,6 +890,14 @@ def create_remarks_section(parent, title, entry_width,
 
     for _ in range(initial_rows):
         add_row()
+
+    flow = fsr_text_flow.Flow(
+        section_frame, lambda: [(entry,) for entry in entries], set_row_count,
+        'details' if capacity_func else 'remarks', title, max_rows,
+        lambda: (update_buttons(), mark_dirty()))
+    tb.Label(buttons_frame, textvariable=flow.warning, bootstyle="danger",
+             wraplength=700, justify="left").grid(
+                 row=1, column=0, columnspan=3, sticky="w", pady=(4, 0))
 
     return section_frame, entries
 
@@ -1725,6 +1737,13 @@ class IncidentSection:
         for _ in range(5):
             self.add_line(notify_change=False)
         self.refresh()
+        self.text_flow = fsr_text_flow.Flow(
+            self.frame, lambda: [(entry,) for entry in self.rows],
+            self.set_line_count, 'incident', 'Incident Report', INCIDENT_MAX_LINES,
+            lambda: (self.refresh(), mark_dirty()))
+        tb.Label(self.toolbar, textvariable=self.text_flow.warning,
+                 bootstyle="danger", wraplength=800, justify="left").grid(
+                     row=1, column=0, columnspan=3, sticky="w", pady=(4, 0))
 
     # ---- header ----
     def _touch(self, key):
@@ -1775,6 +1794,8 @@ class IncidentSection:
         entry.grid(row=len(self.rows), column=0, padx=4, pady=3, sticky="we")
         entry.bind("<KeyRelease>", self.refresh, add="+")
         self.rows.append(entry)
+        if hasattr(self, 'text_flow'):
+            self.text_flow.watch()
         if notify_change:
             self.refresh()
             mark_dirty()
@@ -2092,6 +2113,9 @@ def update_status():
 
 def clear_form():
     """Empty every field and reset the dynamic sections."""
+
+    for flow in fsr_text_flow.flows(globals()):
+        flow.cancel()
 
     for entry in [SO_number_entry, *document_entries.values()]:
         entry.delete(0, "end")
@@ -5291,6 +5315,13 @@ def build_window():
         declared_goods_rows.append(
             (description_entry, quantity_entry, packaging_entry)
         )
+
+    goods_flow = fsr_text_flow.Flow(
+        declared_goods_frame, lambda: declared_goods_rows, lambda count: None,
+        'goods', 'Declared Goods', 5, mark_dirty)
+    tb.Label(declared_goods_frame, textvariable=goods_flow.warning,
+             bootstyle="danger", wraplength=520, justify="left").grid(
+                 row=6, column=0, columnspan=3, sticky="w", pady=(4, 0))
 
     # Types of Goods: the six check boxes of the First Page form.
     goods_types_frame = tb.Labelframe(

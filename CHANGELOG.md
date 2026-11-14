@@ -1,5 +1,16 @@
 # Field Survey Report changelog
 
+## Phase 6 - automatic text continuation (unreleased, 14 November 2026)
+
+- Continue typed and pasted text onto the next row in Declared Goods,
+  Other Important Remarks, Additional Details and Incident Reports.
+- Measure against the official printed line widths and fonts; keep goods
+  Quantity/Packaging on the original row and preserve occupied rows below.
+- Retain excess text and drafts at the row limit, with an inline warning
+  and a check before normal Save. Official templates and layouts are unchanged.
+- Approved after the owner's hands-on test. Full suite: 1243 passed,
+  0 skipped. See [text-flow checks](docs/TEXT_FLOW_TRIAL.md).
+
 ## Phase 6 - dropdown type-ahead (unreleased, 14 November 2026)
 
 - Correct Windows Num Lock handling so Up/Down move the highlighted result

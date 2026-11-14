@@ -10,6 +10,7 @@ from tkinter import messagebox
 import fsr_backup
 import fsr_mysql_guard
 import fsr_save_journal
+import fsr_text_flow
 
 
 class _Host:
@@ -73,6 +74,9 @@ def save_report():
         return False
 
     if not host.validate_format_fields():
+        return False
+
+    if not fsr_text_flow.validate(host_globals()):
         return False
 
     if host.condition_var.get() == CONDITION_BAD and not host.incidents_have_content():
