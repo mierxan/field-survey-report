@@ -5,8 +5,13 @@
 - Installer builds now receive a timestamp and UUID per invocation, shared
   by the Owner and User editions. A second build gets new filenames, even
   on the same day. Windows' numeric file version is kept separately.
-- Recorded the completed improvement phases below and the pending cleanup
-  review in [HOUSEKEEPING_REVIEW.md](docs/HOUSEKEEPING_REVIEW.md).
+- Recorded the completed improvement phases below and the original cleanup
+  proposal in [HOUSEKEEPING_REVIEW.md](docs/HOUSEKEEPING_REVIEW.md).
+- Approved cleanup removed unused tracked packaging/setup/probe files, the
+  superseded schema proposal, and the legacy root Demo marker. Unused
+  untracked artifacts were moved aside rather than deleted; actively
+  referenced output folders were kept. The per-item dependency findings
+  are in [CLEANUP_REFERENCE_AUDIT.md](docs/CLEANUP_REFERENCE_AUDIT.md).
 - No installers have been rebuilt for these phases as part of housekeeping.
   The retained 11 November 2026 installers contain Phase 1 only.
 

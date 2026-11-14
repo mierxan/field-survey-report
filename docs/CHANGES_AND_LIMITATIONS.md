@@ -47,7 +47,7 @@ The existing program was enhanced incrementally, not rebuilt:
 | `db_mysql.py` | Link columns written / read only when the table has them; `missing_link_columns`, `upgrade_schema`, `load_all_reports`; `save_report` returns notes |
 | `data/schema/field_survey_schema.sql` | `cargo_id`, `receiving_ref` and an index on `item_lines` (new installations) |
 | `requirements.txt` | + matplotlib, reportlab |
-| `build_installer.bat`, `FieldSurveyReport.spec` | Include `warehouse`, `warehouse_ui` and the Matplotlib Tk backend |
+| `build_installer.bat` and its generated `build/FieldSurveyReport.spec` | Include `warehouse`, `warehouse_ui` and the Matplotlib Tk backend; the unused root spec was removed in the 14 November 2026 cleanup |
 
 ## New files
 

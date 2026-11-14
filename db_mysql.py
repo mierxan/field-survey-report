@@ -293,7 +293,7 @@ def check_connection(config=None):
 
 
 def test_connection(config=None):
-    """(ok, message) - used by the 'Test MySQL' button and test_mysql.py."""
+    """(ok, message) - used by the 'Test MySQL' button."""
     return check_connection(config)[:2]
 
 

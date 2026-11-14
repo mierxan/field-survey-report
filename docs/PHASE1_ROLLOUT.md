@@ -110,8 +110,13 @@ On the owner's PC / project folder:
 * `data\json\private\users.before_update_<time>.json` and
   `%APPDATA%\FieldSurveyReport\users.before_update_<time>.json`, once you
   have signed in successfully (they hold the old hashes)
-* `FieldSurveyReport.spec` in the project root is not used by the build and
-  still lists `auth_seed.json`; do not build with it.
+* The unused project-root PyInstaller spec was removed in the approved
+  14 November 2026 cleanup. Build with `build_installer.bat`, which writes
+  its own edition-specific spec under `build`.
+
+Project cleanup note (14 November 2026): the empty `Installer/Archive`
+folder was moved to `D:\FSR_Cleanup_2026-11-14`; no old installer was deleted.
+The removal instructions above still apply to old installers kept elsewhere.
 
 On every site PC, once the checks pass:
 

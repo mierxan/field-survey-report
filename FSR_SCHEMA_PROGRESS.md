@@ -20,8 +20,9 @@ templates remain unchanged.
 
 The earlier partial `field_inventory.csv` was removed and replaced with the
 source-checked Markdown inventory; do not use that partial copy.
-[`data/schema/fsr_schema_v2_PROPOSED.sql`](data/schema/fsr_schema_v2_PROPOSED.sql)
-is an earlier draft marked superseded and must not be applied.
+The earlier superseded SQL draft was removed during the approved
+14 November 2026 cleanup; it remains in Git history. Use the proposal
+linked in Deliverables above, which has not been applied.
 
 ## Architecture and safety decisions
 

@@ -1,5 +1,14 @@
 # Field Survey Report file organization
 
+This is the historical file-move inventory. Approved cleanup on
+14 November 2026 removed the superseded SQL proposal from the working tree
+(retained in Git history), removed the legacy root Demo marker, and moved
+the root Demo folder's untracked log/empty directory to
+`D:\FSR_Cleanup_2026-11-14\demo_data`. The empty root `migration_output`,
+`data/json/migration_output`, and `data/schema/private` directories were
+also moved there, with their relative paths preserved. Current managed
+Demo folders under `data/excel` and `data/json` remain in use and unchanged.
+
 ## Plan and safeguards
 
 The project was scanned for `.sql`, `.json`, and Excel workbooks before any
@@ -25,7 +34,7 @@ folders.
 | `migrations/002_add_item_uom_currency.sql` | `data/schema/migrations/002_add_item_uom_currency.sql` | Optional MySQL migration for item UOM/currency fields. | Manual database upgrade. |
 | `migrations/003_add_item_list_form.sql` | `data/schema/migrations/003_add_item_list_form.sql` | Optional MySQL migration for item form/list fields. | Manual database upgrade. |
 | `docs/schema/field_survey_schema_v2_proposed.sql` | `data/schema/field_survey_schema_v2_proposed.sql` | Proposal-only normalized schema; not applied. | Design documentation only. |
-| `docs/schema/fsr_schema_v2_PROPOSED.sql` | `data/schema/fsr_schema_v2_PROPOSED.sql` | Superseded proposal; not applied. | Design documentation only. |
+| Earlier superseded SQL draft | Removed in the approved 14 November 2026 cleanup; retained in Git history | Superseded proposal; never applied by cleanup. | No active consumers. |
 | `allow_network_access.sql` | `data/schema/private/allow_network_access.sql` | Local database administration script; ignored and not packaged. | Manual/local use only. |
 | `set_password.sql` | `data/schema/private/set_password.sql` | Local database credential administration script; ignored and not packaged. | Manual/local use only. |
 | `First_Page.xlsx` | `data/excel/First_Page.xlsx` | Unchanged first-page report template. | `field_survey_report.py` report form generator. |
@@ -119,8 +128,8 @@ data/
 * README/setup instructions, schema SQL links, and the GUI test's isolated
   workbook path were updated.
 * The existing Demo Mode safety marker was copied (not moved) to
-  `data/excel/demo_data/.fsr_test_data`; its original remains in the legacy
-  folder. The copy was verified by SHA-256.
+  `data/excel/demo_data/.fsr_test_data`. The copy was verified by SHA-256.
+  The unused original root marker was later removed in the approved cleanup.
 * Existing saved workbook locations are retained, even if they are outside
   the project. The saved setting referenced a missing workbook named
   `Field_Survey_Reports.xlsx`; it was not rewritten or redirected because
@@ -131,10 +140,10 @@ data/
 * `dist/` and `build/` contain generated packaging artifacts, including
   bundled copies of templates and third-party dependency JSON assets. These
   are not authoritative project data and were left unchanged.
-* The old root `demo_data/` directory still contains a test marker and an
-  empty runtime log/directory. These non-JSON, non-workbook runtime artifacts
-  were intentionally left untouched; the application and demo generator no
-  longer use that path. The old `migrations/` directory is empty.
+* At the original file move, the root `demo_data/` marker and empty runtime
+  artifacts were left untouched. The application and demo generator no
+  longer used that path. The later approved cleanup removed the tracked
+  marker and moved the untracked remainder to the quarantine folder above.
 * Compiled distributions, installer archives, and third-party libraries keep
   their internal SQL/JSON resources in place.
 * Python source, documentation (apart from the two proposal SQL files),
@@ -165,9 +174,9 @@ data/
   `.venv\Scripts\python.exe -m pytest -q` — **240 passed, 0 skipped** in
   230.23 seconds. All 24 GUI tests ran, including application startup and
   report-form generation through the test harness.
-* No automated test wrote to the old root paths. The old `migrations/`
-  directory contains no files; the old `demo_data/` retains only the
-  previously existing safety marker and runtime log.
+* No automated test wrote to the old root paths. The root Demo marker and
+  runtime artifacts present at that time were subsequently handled by the
+  approved cleanup described above.
 * The GUI test harness used its test account; no real user credentials were
   used. Interactive PDF printing and installer creation were not run.
   MySQL was not contacted and no SQL was applied.

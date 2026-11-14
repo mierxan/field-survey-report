@@ -1,6 +1,10 @@
 # Housekeeping review — 14 November 2026
 
-No items below have been deleted. Removal requires the owner's approval.
+This was the proposal reviewed by the owner. Cleanup was subsequently
+approved with dependency checks and quarantine instead of deletion for
+untracked items. The per-item decisions and current outcome are recorded
+in [CLEANUP_REFERENCE_AUDIT.md](CLEANUP_REFERENCE_AUDIT.md); the tables below
+preserve the original proposal, rather than instructions to delete more.
 Paths are relative to the project folder. Logs and account/configuration
 contents were not displayed, and no SQL script or old executable was run.
 

@@ -9,9 +9,9 @@ It has not been applied to a database. The current Windows application and
 its Excel-first storage behavior remain unchanged; MySQL remains an optional
 mirror. PDF/Excel templates are unchanged.
 
-The older [`fsr_schema_v2_PROPOSED.sql`](../../data/schema/fsr_schema_v2_PROPOSED.sql) is
-explicitly marked superseded; it contains the earlier centralized-account
-design and must not be used for this proposal.
+The older centralized-account draft was superseded and removed during the
+approved 14 November 2026 cleanup. It remains in Git history; the proposal
+linked above is the retained design.
 
 ## Entity relationship diagram
 
