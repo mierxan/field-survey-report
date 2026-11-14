@@ -1,5 +1,15 @@
 # Field Survey Report changelog
 
+## Phase 6 - dropdown type-ahead (unreleased, 14 November 2026)
+
+- Use one shared prefix picker for every non-date list dropdown in both
+  editions, including Item Lists, Withdrawal lines, filters and settings.
+- Keep typing focus, update on each edit, and commit the highlighted filtered
+  value on Enter or click; fix Kokusai incorrectly becoming ABB.
+- Preserve free-text rules, fixed-list choices, PO locks and drafts autosave.
+  Date dropdowns and calendar pickers are unchanged.
+- Add isolated checks and the field inventory: [TYPEAHEAD.md](docs/TYPEAHEAD.md).
+
 ## Phase 6 ? drafts (unreleased, 14 November 2026)
 
 - Autosave unfinished raw form input locally after 3 idle seconds or by

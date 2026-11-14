@@ -12,6 +12,8 @@ Files created in data/:
     json/private/settings.json, json/private/users.json, excel/*.xlsx
 """
 
+from fsr_typeahead import Combobox as TypeaheadCombobox
+
 import json
 import logging
 import calendar
@@ -661,7 +663,7 @@ def create_searchable_combobox(parent, list_key, width=30):
     """
     Searchable combobox:
     1. Allows users to type any characters.
-    2. Filters existing names while typing (open the arrow to see them).
+    2. Opens the shared prefix picker while typing.
     3. Asks for confirmation before adding a new name (on Enter, and
        again when the report is saved).
     4. Prevents duplicate names (case-insensitive).
@@ -670,36 +672,12 @@ def create_searchable_combobox(parent, list_key, width=30):
 
     master_list = master_data[list_key]
 
-    combo = tb.Combobox(
-        parent, values=master_list, width=width, state="normal"
+    combo = TypeaheadCombobox(
+        parent, values=master_list, width=width, state="normal",
+        values_provider=lambda: master_data[list_key]
     )
     scroll_instead_of_change(combo)
     declined = set()
-    # The drop-down is rebuilt every time it opens, and when the box is
-    # left, so a filtered list can never stay behind.
-    combo.configure(postcommand=lambda: combo.configure(values=shown_values()))
-
-    def filter_list(event=None):
-        if event and event.keysym in NAV_KEYS:
-            return
-
-        combo["values"] = shown_values()
-
-    def shown_values():
-        """The whole list, or the names that contain what was typed.
-        Never an empty list (a new name that matches nothing, or a box
-        that was cleared, must not make the list look lost)."""
-        typed_text = combo.get().strip()
-        if not typed_text or any(
-                item.casefold() == typed_text.casefold()
-                for item in master_list):
-            return list(master_list)      # empty, or a complete name
-        found = [
-            item for item in master_list
-            if typed_text.casefold() in item.casefold()
-        ]
-        return found or list(master_list)
-
     def commit(event=None):
         new_value = combo.get().strip()
         if not new_value:
@@ -744,7 +722,6 @@ def create_searchable_combobox(parent, list_key, width=30):
         commit()
         return "break"
 
-    combo.bind("<KeyRelease>", filter_list)
     combo.bind("<FocusOut>",
                lambda e: combo.configure(values=list(master_list)), add="+")
     combo.bind("<Return>", on_return)
@@ -984,7 +961,7 @@ def build_field_row(parent, fields, layout=None):
             scroll_instead_of_change(entry)
         elif kind == "choice":
             # Fixed drop-down list (for example Activity).
-            entry = tb.Combobox(
+            entry = TypeaheadCombobox(
                 parent,
                 state="normal" if key in TYPEABLE_CHOICES else "readonly",
                 values=[""] + CHOICE_VALUES[key]
@@ -1709,7 +1686,7 @@ class IncidentSection:
                             lambda e, k=key: (self._touch(k), mark_dirty()),
                             add="+")
             elif key == "operation":
-                widget = tb.Combobox(
+                widget = TypeaheadCombobox(
                     head, state="normal",
                     values=[""] + CHOICE_VALUES["activity"]
                 )
@@ -5539,10 +5516,10 @@ def build_window():
     pick_row = tb.Frame(summary_tab)
     pick_row.grid(row=0, column=0, sticky="we")
     tb.Label(pick_row, text="Month", font=bold_font).pack(side="left", padx=(0, 8))
-    month_combo = tb.Combobox(pick_row, textvariable=month_var, values=MONTH_LIST,
+    month_combo = TypeaheadCombobox(pick_row, textvariable=month_var, values=MONTH_LIST,
                               state="readonly", width=14)
     month_combo.pack(side="left")
-    year_combo = tb.Combobox(
+    year_combo = TypeaheadCombobox(
         pick_row, textvariable=year_var, state="readonly", width=7,
         values=[str(y) for y in range(_today.year - 6, _today.year + 2)])
     year_combo.pack(side="left", padx=8)

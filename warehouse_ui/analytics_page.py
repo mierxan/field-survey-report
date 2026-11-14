@@ -1,6 +1,8 @@
 """Analytics and Reports: trend charts, the management summary and the
 report centre (Excel / PDF reports)."""
 
+from fsr_typeahead import Combobox as TypeaheadCombobox
+
 from datetime import date, datetime, timedelta
 from tkinter import messagebox, ttk
 
@@ -69,7 +71,7 @@ class AnalyticsPage(Page):
         c = card.content
         ttk.Label(c, text="Report", style="CardMuted.TLabel").grid(
             row=0, column=0, sticky="w")
-        self.report = tb.Combobox(c, state="readonly", width=36,
+        self.report = TypeaheadCombobox(c, state="readonly", width=36,
                                   values=[t for _, t in exports.REPORT_TYPES])
         self.report.set(exports.REPORT_TYPES[-1][1])
         self.report.no_dirty = True
@@ -82,7 +84,7 @@ class AnalyticsPage(Page):
         self.report_day.grid(row=1, column=1, sticky="w", padx=(0, 10))
         ttk.Label(c, text="Cargo item (transaction history)",
                   style="CardMuted.TLabel").grid(row=0, column=2, sticky="w")
-        self.report_item = tb.Combobox(c, state="readonly", width=52)
+        self.report_item = TypeaheadCombobox(c, state="readonly", width=52)
         self.report_item.no_dirty = True
         self.report_item.grid(row=1, column=2, sticky="w", padx=(0, 10))
         tb.Button(c, text="Export Excel", bootstyle="success",

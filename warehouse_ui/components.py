@@ -8,6 +8,8 @@
     DataService      loads the records in the background, caches them
 """
 
+from fsr_typeahead import Combobox as TypeaheadCombobox
+
 import threading
 import tkinter
 from datetime import date, datetime
@@ -249,7 +251,7 @@ class PeriodBar(ttk.Frame):
         self.bind("<Configure>", self._reflow)
 
         field = self._field("Reporting period")
-        self.period_combo = tb.Combobox(
+        self.period_combo = TypeaheadCombobox(
             field, textvariable=self.period_var, state="readonly", width=17,
             values=[label for _, label in pr.PERIOD_CHOICES])
         self.period_combo.no_dirty = True
@@ -273,7 +275,7 @@ class PeriodBar(ttk.Frame):
                   "case_status": "Case Status"}
         for name in filters:
             field = self._field(labels[name])
-            combo = tb.Combobox(field, state="readonly", width=24 if name in (
+            combo = TypeaheadCombobox(field, state="readonly", width=24 if name in (
                 "warehouse", "supplier", "consignee") else 15,
                 values=["All"])
             combo.set("All")

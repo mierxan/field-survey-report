@@ -4,6 +4,8 @@ Moved here from field_survey_report.py (Phase 4). The code is unchanged
 except that the names it takes from the program's window module are
 read as `host.<name>`, at the moment they are used (bind() is called
 by the window module)."""
+
+from fsr_typeahead import Combobox as TypeaheadCombobox
 from fsr_storage import CURRENCIES
 from fsr_storage import ITEM_FORM_DEFAULT
 from fsr_storage import ITEM_LINE_HEADERS
@@ -131,15 +133,15 @@ class ItemListSection:
         for col_index, (header, width) in enumerate(
                 zip(self.headers, self.widths)):
             if header == "UOM":
-                entry = host.tb.Combobox(self.frame, width=width,
+                entry = TypeaheadCombobox(self.frame, width=width,
                                     values=UOM_CHOICES)
                 host.scroll_instead_of_change(entry)
             elif header == "Weight Unit":
-                entry = host.tb.Combobox(self.frame, width=width,
+                entry = TypeaheadCombobox(self.frame, width=width,
                                     values=WEIGHT_UNIT_CHOICES)
                 host.scroll_instead_of_change(entry)
             elif header == "Currency":
-                entry = host.tb.Combobox(self.frame, width=width,
+                entry = TypeaheadCombobox(self.frame, width=width,
                                     values=[""] + CURRENCIES)
                 entry.bind(
                     "<<ComboboxSelected>>",

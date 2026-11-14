@@ -1,5 +1,7 @@
 """Master Lists and Settings."""
 
+from fsr_typeahead import Combobox as TypeaheadCombobox
+
 import tkinter
 from tkinter import messagebox, simpledialog, ttk
 
@@ -231,7 +233,7 @@ class SettingsPage(ScrollPage):
         c = card.content
         c.columnconfigure(0, weight=0)
         c.columnconfigure(2, weight=1)
-        self.list_choice = tb.Combobox(c, state="readonly", width=28,
+        self.list_choice = TypeaheadCombobox(c, state="readonly", width=28,
                                        values=[t for _, t in LIST_TITLES])
         self.list_choice.set(LIST_TITLES[0][1])
         self.list_choice.no_dirty = True

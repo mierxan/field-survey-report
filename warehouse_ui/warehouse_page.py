@@ -1,5 +1,7 @@
 """Inventory browsing and reconciliation actions."""
 
+from fsr_typeahead import Combobox as TypeaheadCombobox
+
 import tkinter
 from tkinter import messagebox, simpledialog, ttk
 
@@ -31,7 +33,7 @@ class WarehousePage(Page):
         ttk.Label(filters, text="Warehouse",
                   style="PageMuted.TLabel").pack(side="left")
         self.warehouse_filter = tkinter.StringVar(value="All Warehouses")
-        self.warehouse_combo = ttk.Combobox(
+        self.warehouse_combo = TypeaheadCombobox(
             filters, textvariable=self.warehouse_filter, state="readonly",
             width=24)
         self.warehouse_combo.pack(side="left", padx=(6, 18))
@@ -40,7 +42,7 @@ class WarehousePage(Page):
         ttk.Label(filters, text="Inventory status",
                   style="PageMuted.TLabel").pack(side="left")
         self.inventory_status_filter = tkinter.StringVar(value="All")
-        self.inventory_status_combo = ttk.Combobox(
+        self.inventory_status_combo = TypeaheadCombobox(
             filters, textvariable=self.inventory_status_filter,
             values=["All", *inv.STATUSES], state="readonly", width=25)
         self.inventory_status_combo.pack(side="left", padx=6)
@@ -74,7 +76,7 @@ class WarehousePage(Page):
         ttk.Label(issue_filters, text="Issue state",
                   style="CardMuted.TLabel").pack(side="left")
         self.issue_state_filter = tkinter.StringVar(value="All")
-        self.issue_state_combo = ttk.Combobox(
+        self.issue_state_combo = TypeaheadCombobox(
             issue_filters, textvariable=self.issue_state_filter,
             values=["All", inv.OPEN, inv.PROPOSED, inv.CONFIRMED,
                     inv.REJECTED, inv.EXCLUDED, inv.ACCEPTED],

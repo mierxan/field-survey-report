@@ -4,6 +4,8 @@ Moved here from field_survey_report.py (Phase 4). The code is unchanged
 except that the names it takes from the program's window module are
 read as `host.<name>`, at the moment they are used (bind() is called
 by the window module)."""
+
+from fsr_typeahead import Combobox as TypeaheadCombobox
 from fsr_storage import Workbook
 from tkinter import messagebox
 from tkinter import ttk
@@ -143,7 +145,7 @@ def open_saved_report_dialog(initial_search=""):
         ("Description", "description"),
     ]
     field_var = tkinter.StringVar(value="All")
-    field_combo = host.tb.Combobox(
+    field_combo = TypeaheadCombobox(
         top, textvariable=field_var, state="readonly", width=14,
         values=[name for name, _ in SEARCH_FIELDS]
     )
