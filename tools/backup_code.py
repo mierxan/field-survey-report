@@ -54,6 +54,8 @@ FORBIDDEN = [re.compile(p, re.IGNORECASE) for p in (
     r"_mysql_ledger\.json$",
     r"_pending_saves\.json$",
     r"_imported_reports\.json$",
+    r"_import_review\.json$",
+    r"_import_history\.jsonl$",
     r"(^|/)Backups/",
     r"(^|/)(Incident Reports|Item Forms|Report Forms|MySQL Replaced)/",
     r"(^|/)(set_password|allow_network_access)\.sql$",

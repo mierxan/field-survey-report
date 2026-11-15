@@ -572,3 +572,109 @@ def test_import_master_data_button(app, tmp_path):
     # A report made on this PC still prints this PC's user.
     g["create_report_forms"](path, dict(saved, control_no="FSR-209901-9999"))
     assert g["print_name"]["value"] == g["USER_FULL_NAME"]
+
+
+def _phone_report_with_identity(revision, so):
+    return {
+        "control_no": "FSR-209901-0002", "last_saved": f"r{revision}",
+        "report_id": "gui-report-1", "revision": revision,
+        "cargo_condition": "Good Order", "item_form": "Default",
+        "goods_types": {"new": True},
+        "general_information": {
+            "so_number": so, "inspection_date": "06-Oct-2026",
+            "consignee": "EDC", "supplier": "", "brokerage": "",
+            "hauler": "", "location": "", "destination": "",
+            "country_of_origin": ""},
+        "inspection_schedule": {
+            "activity": "", "commenced_date": "", "commenced_time": "",
+            "completion_date": "", "completion_time": ""},
+        "transport_details": {
+            "shipment_type": "", "container_type": "", "vessel_carrier": "",
+            "vehicle_type": "", "vehicle_plate_number": ""},
+        "documents_used": {
+            "invoice_number": "", "po_number": "", "jo_number": "",
+            "gatepass_number": "", "bl_awb_number": "", "dr_number": "",
+            "other_documents": ""},
+        "declared_goods": [], "other_important_remarks": [],
+        "item_lists": [{"name": "Item List 1", "rows": []}],
+        "findings_and_remarks": [], "incident_reports": [],
+        "other_item_forms": {},
+    }
+
+
+def _import_through_button(g, tmp_path, name, reports):
+    import json
+    import fsr_import
+    source = tmp_path / name
+    source.write_text(json.dumps({
+        "format": fsr_import.FORMAT, "version": 1, "device_id": "gui-phone-2",
+        "location_id": "gui-location", "location_name": "GUI Test Yard",
+        "inspector": "Review Inspector", "master_lists": {},
+        "reports": reports}), encoding="utf-8")
+    dialog = g["filedialog"]
+    original = dialog.askopenfilename
+    dialog.askopenfilename = lambda **_: str(source)
+    try:
+        g["import_master_button"].invoke()
+        wait_until_not_running(g)
+    finally:
+        dialog.askopenfilename = original
+
+
+def wait_until_not_running(g):
+    state = g["save_report"].__globals__["import_state"]
+    deadline = time.monotonic() + 60
+    while state["running"] and time.monotonic() < deadline:
+        g["window"].update()
+        time.sleep(0.02)
+    assert not state["running"]
+
+
+def _buttons(widget):
+    for child in widget.winfo_children():
+        if child.winfo_class() == "TButton":
+            yield child
+        yield from _buttons(child)
+
+
+def test_import_review_window_accepts_a_newer_revision(app, tmp_path):
+    """A user's newer revision waits in Import Review until accepted."""
+    import fsr_import
+    g, answers = app
+    path = g["excel_state"]["path"]
+    _import_through_button(g, tmp_path, "first.json",
+                           [_phone_report_with_identity(1, "SO-REV-1")])
+    assert fsr_storage.read_report(path, "FSR-209901-0002")[
+        "general_information"]["so_number"] == "SO-REV-1"
+
+    answers.calls.clear()
+    _import_through_button(g, tmp_path, "second.json",
+                           [_phone_report_with_identity(2, "SO-REV-2")])
+    assert any("Waiting for your review" in str(call[2])
+               for call in answers.calls)
+    # not applied yet
+    assert fsr_storage.read_report(path, "FSR-209901-0002")[
+        "general_information"]["so_number"] == "SO-REV-1"
+    review = g["import_review_state"]["dialog"]
+    assert review is not None and review.winfo_exists()
+    assert "1 waiting" in g["import_review_button"].cget("text")
+
+    (waiting,) = fsr_import.pending_reviews(path)
+    text = g["import_review_text"](
+        waiting, fsr_import.review_comparison(path, waiting["key"]))
+    assert "CHANGED BY THE USER" in text
+    assert "User:   SO-REV-2" in text and "Before: SO-REV-1" in text
+    assert "GUI Test Yard" in text
+
+    (accept,) = [b for b in _buttons(review)
+                 if b.cget("text") == "Accept User Changes"]
+    accept.invoke()
+    wait_until_not_running(g)
+    g["window"].update()
+    assert fsr_storage.read_report(path, "FSR-209901-0002")[
+        "general_information"]["so_number"] == "SO-REV-2"
+    assert fsr_import.pending_reviews(path) == []
+    assert fsr_import.load_import_history(path)[-1]["result"] == "accepted"
+    assert g["import_review_button"].cget("text") == "Import Review..."
+    assert not errors_shown(answers)
+    review.destroy()

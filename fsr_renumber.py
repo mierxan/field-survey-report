@@ -176,6 +176,10 @@ def renumber_report(excel_path, old, new, required_root=None, store=None):
     import fsr_import
     if _rewrite_json(fsr_import.ledger_path(excel_path), old, new):
         touched["files"].append("import ledger")
+    # accepted and waiting revisions follow the number; the import history
+    # is never rewritten (its events keep the number they had then)
+    if _rewrite_json(fsr_import.review_path(excel_path), old, new):
+        touched["files"].append("import review")
     from warehouse import store
     if _rewrite_json(store.side_file_path(excel_path), old, new):
         touched["files"].append("warehouse side file")

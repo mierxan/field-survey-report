@@ -400,7 +400,9 @@ class Stores:
         if not info.get("key"):
             return
         entry = dict(info.get("entry") or {}, control=record["control"])
-        fsr_import.record_imports(self.excel_path, {info["key"]: entry})
+        # the ledger entry, the accepted revision and the history event
+        fsr_import.repair_import_record(self.excel_path, info["key"], entry,
+                                        info, record["data"])
 
     def mysql(self, record, data):
         if self.guard is None:

@@ -1116,6 +1116,12 @@ def rebuild_account_menu():
             label="MySQL Conflicts..." + (
                 f"  ({waiting_now} waiting)" if waiting_now else ""),
             command=lambda: open_mysql_conflicts())
+        reviews_now = len(waiting_import_reviews())
+        account_menu.add_command(
+            label="Import Review..." + (
+                f"  ({reviews_now} waiting)" if reviews_now else ""),
+            command=lambda: open_import_review())
+        refresh_import_review_count()
     account_menu.add_command(label="Unfinished work...",
         command=lambda: draft_controller.show() if draft_controller else None)
     account_menu.add_command(
@@ -4032,6 +4038,285 @@ def show_import_changes(changes):
     return dialog
 
 
+import_review_state = {"dialog": None}
+
+_REVIEW_GROUPS = (
+    ("user", "CHANGED BY THE USER  (applied when you accept)"),
+    ("owner", "CHANGED ON THIS PC SINCE THE LAST ACCEPTED REVISION  "
+              "(kept when you accept)"),
+    ("conflict", "CHANGED BY BOTH  (the user's value is used when you "
+                 "accept)"),
+)
+
+
+def waiting_import_reviews():
+    """Revisions sent by users that wait for the Owner ([] if unreadable)."""
+    path = (globals().get("excel_state") or {}).get("path")
+    if not path:
+        return []
+    try:
+        return fsr_import.pending_reviews(path)
+    except Exception:
+        log.exception("The import review record could not be read")
+        return []
+
+
+def refresh_import_review_count():
+    """Show on the Storage button how many revisions wait for review."""
+    button = globals().get("import_review_button")
+    if button is None:
+        return
+    waiting = len(waiting_import_reviews())
+    try:
+        button.configure(
+            text="Import Review..." + (f"  ({waiting} waiting)"
+                                       if waiting else ""),
+            bootstyle="warning" if waiting else "secondary-outline")
+    except tkinter.TclError:
+        pass
+
+
+def _review_location(item):
+    return item["location_name"] or item["location_id"] or "(no location)"
+
+
+def import_review_text(item, comparison):
+    """What the Owner reads before accepting or keeping a revision."""
+    previous = item.get("previous_revision")
+    lines = [
+        f"CONTROL #: {item['control']}",
+        f"Location: {_review_location(item)}",
+        f"Inspector: {item.get('inspector') or '(not given)'}",
+        f"Sent as: {item.get('source_control') or item['control']}"
+        f"   Revision {previous if previous is not None else '?'} -> "
+        f"{item['revision'] if item['revision'] is not None else '?'}",
+        f"Received: {item.get('received') or ''}",
+    ]
+    if comparison is None:
+        lines += ["", "This report is no longer in this file, so the "
+                      "changes cannot be applied. Keep My Version closes "
+                      "the review."]
+        return "\n".join(lines)
+    if not comparison.has_base:
+        lines += ["", "The revision you last accepted is not on record, so "
+                      "nobody can tell who changed what: every difference "
+                      "below is listed for you to decide."]
+    if not comparison.fields:
+        lines += ["", "No report details differ from your copy."]
+    for kind, title in _REVIEW_GROUPS:
+        fields = [f for f in comparison.fields if f["kind"] == kind]
+        if not fields:
+            continue
+        lines += ["", title, "-" * len(title)]
+        for field in fields:
+            lines += ["", _import_change_label(field["path"]),
+                      f"  Before: {field['base']}"]
+            if kind != "owner":
+                lines.append(f"  User:   {field['user']}")
+            if kind != "user":
+                lines.append(f"  Yours:  {field['owner']}")
+    return "\n".join(lines)
+
+
+def open_import_review(select=None):
+    """Completed reports a user changed after they were imported. The
+    Owner's copy is changed only by Accept; closing changes nothing."""
+    old = import_review_state["dialog"]
+    if old is not None:
+        try:
+            old.destroy()
+        except tkinter.TclError:
+            pass
+    path = excel_state["path"]
+    dialog = tb.Toplevel(window)
+    import_review_state["dialog"] = dialog
+    dialog.title("Import Review")
+    dialog.transient(window)
+    dialog.geometry("1000x660")
+    dialog.minsize(760, 460)
+
+    body = tb.Frame(dialog, padding=16)
+    body.pack(fill="both", expand=True)
+    tb.Label(
+        body, wraplength=940, justify="left", bootstyle="secondary",
+        text="These completed reports were changed by a user after you "
+             "imported them. Your copy is NOT changed until you accept. "
+             "Closing this window changes nothing."
+    ).pack(anchor="w")
+
+    top = tb.Frame(body)
+    top.pack(fill="x", pady=(10, 6))
+    tb.Label(top, text="Location:").pack(side="left")
+    location_var = tkinter.StringVar(value="All locations")
+    location_box = TypeaheadCombobox(top, textvariable=location_var,
+                                     width=34, state="readonly")
+    location_box.pack(side="left", padx=(6, 0))
+
+    middle = tb.Frame(body)
+    middle.pack(fill="both", expand=True, pady=(0, 8))
+    tree = tb.Treeview(middle, columns=("control", "location", "revision"),
+                       show="headings", height=16, selectmode="browse")
+    for column, heading, width in (("control", "Control #", 170),
+                                   ("location", "Location", 150),
+                                   ("revision", "Revision", 70)):
+        tree.heading(column, text=heading)
+        tree.column(column, width=width, stretch=False)
+    tree.pack(side="left", fill="y")
+    details = tkinter.Text(middle, wrap="word", font=("Consolas", 9),
+                           padx=10, pady=10)
+    scroll = tb.Scrollbar(middle, orient="vertical", command=details.yview)
+    details.configure(yscrollcommand=scroll.set)
+    scroll.pack(side="right", fill="y")
+    details.pack(side="left", fill="both", expand=True, padx=(10, 0))
+
+    buttons = tb.Frame(body)
+    buttons.pack(fill="x")
+    accept_button = tb.Button(buttons, text="Accept User Changes",
+                              bootstyle="success",
+                              command=lambda: accept())
+    accept_button.pack(side="left")
+    keep_button = tb.Button(buttons, text="Keep My Version",
+                            bootstyle="secondary",
+                            command=lambda: keep())
+    keep_button.pack(side="left", padx=(8, 0))
+    tb.Button(buttons, text="Close", bootstyle="secondary-outline",
+              command=dialog.destroy).pack(side="right")
+    dialog.bind("<Escape>", lambda event: dialog.destroy())
+
+    state = {"items": [], "comparison": None}
+
+    def chosen():
+        picked = tree.selection()
+        return next((item for item in state["items"]
+                     if picked and item["key"] == picked[0]), None)
+
+    def show(event=None):
+        item = chosen()
+        comparison = None
+        if item is None:
+            text = "No report is waiting for review."
+        else:
+            try:
+                comparison = fsr_import.review_comparison(path, item["key"])
+                text = import_review_text(item, comparison)
+            except Exception as error:
+                log.exception("Import review of %s failed", item["control"])
+                text = f"The comparison could not be made:\n{error}"
+        state["comparison"] = comparison
+        details.configure(state="normal")
+        details.delete("1.0", "end")
+        details.insert("1.0", text)
+        details.configure(state="disabled")
+        accept_button.configure(
+            state="normal" if comparison is not None else "disabled")
+        keep_button.configure(state="normal" if item else "disabled")
+
+    def reload(pick=None):
+        state["items"] = waiting_import_reviews()
+        names = sorted({_review_location(i) for i in state["items"]},
+                       key=str.casefold)
+        location_box.configure(values=["All locations", *names])
+        if location_var.get() not in ("All locations", *names):
+            location_var.set("All locations")
+        wanted = location_var.get()
+        tree.delete(*tree.get_children())
+        for item in state["items"]:
+            if wanted != "All locations" and _review_location(item) != wanted:
+                continue
+            tree.insert("", "end", iid=item["key"], values=(
+                item["control"], _review_location(item),
+                item["revision"] if item["revision"] is not None else "?"))
+        shown = tree.get_children()
+        if shown:
+            tree.selection_set(pick if pick in shown else shown[0])
+        show()
+        refresh_import_review_count()
+        refresh_conflict_count()
+
+    def accept():
+        item = chosen()
+        if item is None or state["comparison"] is None:
+            return
+        if import_state["running"]:
+            messagebox.showinfo("Import Review", "An import is running. "
+                                "Try again when it has finished.",
+                                parent=dialog)
+            return
+        control = item["control"]
+        if not messagebox.askyesno(
+                "Accept the user's changes?",
+                f"Apply the user's changes to {control}?\n\n"
+                "Your own changes to other details are kept. Where you both "
+                "changed the same detail, the user's value is used. A copy "
+                "of the file is made first.", parent=dialog):
+            return
+        mysql_now = mysql_in_use()
+        guard = mysql_guard() if mysql_now else None
+        stores = data_store(path).save_steps(
+            mysql=db_mysql if mysql_now else None, guard=guard)
+        journal = data_store(path).save_record()
+        import_state["running"] = True
+
+        def work():
+            return fsr_import.accept_revision(
+                path, item["key"], journal=journal, stores=stores,
+                mysql=mysql_now)
+
+        def done(summary, error):
+            import_state["running"] = False
+            if error is not None:
+                messagebox.showerror(
+                    "Import Review", f"The changes were NOT applied:\n"
+                    f"{error}", parent=dialog)
+                finish_unfinished_saves()
+                reload(item["key"])
+                return
+            notify(f"{control}: the user's changes were applied.")
+            if summary.get("item_lists_failed") is not None:
+                messagebox.showwarning(
+                    "Import Review", "PO_Master and Withdrawn_Item could not "
+                    "be updated (is one of them open in Excel?). They are "
+                    "updated at the next save or start.", parent=dialog)
+            if report_state["editing"] and same_key(
+                    control_entry.get().strip(), control):
+                messagebox.showinfo(
+                    "Import Review", f"Report {control} is open on the form "
+                    "with its old values. Open it again before saving.",
+                    parent=dialog)
+            if mysql_now and summary["saved_reports"]:
+                request_mysql_round()
+            if globals().get("app_shell") is not None:
+                app_shell.service.invalidate()
+            reload()
+
+        run_with_progress(dialog, "Applying the user's changes...", work,
+                          done)
+
+    def keep():
+        item = chosen()
+        if item is None:
+            return
+        if not messagebox.askyesno(
+                "Keep your version?",
+                f"Keep your copy of {item['control']} as it is?\n\nThe "
+                "user's revision is recorded as received and NOT applied. "
+                "Their next revision is compared with it.", parent=dialog):
+            return
+        try:
+            fsr_import.keep_owner_version(path, item["key"])
+        except Exception as error:
+            log.exception("Keeping the Owner's %s failed", item["control"])
+            messagebox.showerror("Import Review", str(error), parent=dialog)
+        else:
+            notify(f"{item['control']}: your version is kept.")
+        reload()
+
+    tree.bind("<<TreeviewSelect>>", show)
+    location_box.bind("<<ComboboxSelected>>", lambda event: reload())
+    reload(select)
+    return dialog
+
+
 def import_finished(path, data, summary, mysql_now):
     new_names = fsr_import.new_master_names(data, master_data)
     total_names = sum(len(names) for names in new_names.values())
@@ -4062,6 +4347,17 @@ def import_finished(path, data, summary, mysql_now):
     if summary["deleted_here"]:
         lines.append("\nNOT brought back, because they were deleted on this "
                      "PC: " + ", ".join(summary["deleted_here"]))
+    if summary.get("pending_review"):
+        lines.append("\nWaiting for your review - the user changed these "
+                     "completed reports; your copy is not changed until you "
+                     "accept: " + ", ".join(summary["pending_review"]))
+    if summary.get("invalid_revisions"):
+        lines.append("\nNOT brought in, because the same revision arrived "
+                     "with different details (ask the user to send the file "
+                     "again): " + ", ".join(summary["invalid_revisions"]))
+    if summary.get("older_revisions"):
+        lines.append("\nNot brought in, because a newer revision is already "
+                     "here: " + ", ".join(summary["older_revisions"]))
     if summary.get("item_lists_failed") is not None:
         lines.append("\nPO_Master and Withdrawn_Item could not be updated "
                      "(is one of them open in Excel?). They are updated at "
@@ -4086,6 +4382,8 @@ def import_finished(path, data, summary, mysql_now):
                      "old values. Open it again before saving.")
     messagebox.showinfo("Import Master Data", "\n".join(lines), parent=window)
     show_import_changes(summary.get("changes") or [])
+    if summary.get("pending_review"):
+        open_import_review()
     refresh_conflict_count()
     if mysql_now and summary["saved_reports"]:
         request_mysql_round()
@@ -4584,7 +4882,8 @@ def build_window():
     global findings_frame, findings_tab, form_row, general_body
     global general_information_frame, general_tab, good_button
     global goods_type_vars, goods_types_frame, hauler_combobox
-    global import_master_button, import_state, incident_actions
+    global import_master_button, import_review_button, import_state
+    global incident_actions
     global incident_body, incident_cards, incident_cards_frame
     global incident_hint, incident_info, incident_tab, index
     global inspection_date_entry, item_form_store, item_form_var
@@ -5165,8 +5464,13 @@ def build_window():
         panel, text="Import Master Data...", bootstyle="secondary-outline",
         command=lambda: import_master_data_file()
     )
+    import_review_button = tb.Button(
+        panel, text="Import Review...", bootstyle="secondary-outline",
+        command=lambda: open_import_review()
+    )
     if IS_OWNER_EDITION:        # the owner compiles the files of every site
         import_master_button.pack(fill="x", pady=3)
+        import_review_button.pack(fill="x", pady=3)
     export_master_button = tb.Button(
         panel, text="Export Master Data...", bootstyle="secondary-outline",
         command=lambda: export_master_data()

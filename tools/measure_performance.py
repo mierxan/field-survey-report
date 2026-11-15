@@ -435,7 +435,8 @@ def run_imports(g, answers, live, storage, work, home, book, name, imports,
     def reset():
         shutil.copy2(pristine, book)
         for pattern in ("*_imported_reports.json", "*_pending_saves.json",
-                        "*_mysql_ledger.json"):
+                        "*_mysql_ledger.json", "*_import_review.json",
+                        "*_import_history.jsonl"):
             for found in (home / "json").glob(pattern):
                 found.unlink()
         for found in (home / "excel").glob("*_before_import_*"):

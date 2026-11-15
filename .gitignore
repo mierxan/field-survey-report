@@ -29,6 +29,8 @@ MySQL Replaced/
 *_mysql_ledger.json
 *_pending_saves.json
 *_imported_reports.json
+*_import_review.json
+*_import_history.jsonl
 *_backup_*.xlsx
 # The reports database (Phase 5) and its notes - business data
 *.sqlite3

@@ -1,5 +1,25 @@
 # Field Survey Report changelog
 
+## Phase 7 - location identity, revisions and Import Review (unreleased, 16 November 2026)
+
+- Recognise a report by its permanent location + report id when the file
+  carries them: it follows its Owner number after a renumber, a replaced or
+  restored phone, or a renamed location, and identical Control #s from two
+  locations stay two reports.
+- Hold a newer revision of a completed report in Import Review instead of
+  overwriting the Owner's copy. The review shows the user's changes, the
+  Owner's own changes since the last accepted revision, and fields both
+  changed. Accept applies the user's changes and keeps the Owner's other
+  edits; Keep My Version records the revision as received.
+- Leave unchanged and older revisions alone; refuse a revision number that
+  arrives with different content.
+- Record every import decision in an append-only history beside the
+  workbook; carried with the workbook, followed by renumbering, kept out of
+  code backups. Files without the new fields are imported as before.
+- What sending apps must add: [IMPORT_REVIEW.md](docs/IMPORT_REVIEW.md).
+  The Android app and the Windows User edition do not send it yet.
+- Full suite: 1269 passed, 0 skipped.
+
 ## Phase 7 - import change details (unreleased, 15 November 2026)
 
 - After Import Master Data updates completed reports, show an
@@ -8,10 +28,8 @@
   entries (for example an item list growing from 1 to 7 rows).
 - Compare a report sent twice in one file in the copy that is saved; several
   updated reports share one read of the workbook or database.
-- Updates are still applied automatically; Owner review before applying,
-  location identity and append-only import history remain Phase 7
-  specifications (`planning_tests`). Full suite: 1247 passed, 0 skipped
-  with the committed Incident Report template.
+- Full suite: 1247 passed, 0 skipped with the committed Incident Report
+  template.
 - Incident Report template: larger print chosen by the Owner (incident text
   11 to 17 pt, header details 14 to 16 pt, title and signature lines 16 to
   18 pt; row heights unchanged). Text continuation measures the new size,
