@@ -92,6 +92,87 @@ def test_change_on_phone_updates_the_same_report(book):
     assert reports[0]["general_information"]["so_number"] == "SO-EDITED"
 
 
+def test_update_summary_has_every_previous_and_imported_detail(book):
+    original = phone_report()
+    imp.import_master_data(book, fresh(master_file(original)))
+
+    edited = phone_report(so="SO-EDITED", saved="27-Oct-2026 09:00")
+    edited["declared_goods"] = [{
+        "description": "Cooling tower components",
+        "quantity": "11", "packaging": "Pcs",
+    }]
+    edited["findings_and_remarks"] = []
+    summary = imp.import_master_data(book, fresh(master_file(edited)))
+
+    assert [entry["control"] for entry in summary["changes"]] == [
+        "FSR-202610-0001"]
+    changes = {entry["path"]: (entry["previous"], entry["imported"])
+               for entry in summary["changes"][0]["fields"]}
+    assert changes[("general_information", "so_number")] == (
+        "SO-PHONE", "SO-EDITED")
+    assert changes[("declared_goods", "count")] == ("0", "1")
+    assert changes[("declared_goods", 0, "description")] == (
+        "(not present)", "Cooling tower components")
+    assert changes[("findings_and_remarks", "count")] == ("1", "0")
+    assert changes[("findings_and_remarks", 0)] == (
+        "Phone detail", "(not present)")
+    assert changes[("last_saved",)] == (
+        "26-Oct-2026 10:00", "27-Oct-2026 09:00")
+
+
+def test_changes_of_a_report_sent_twice_show_the_copy_that_is_saved(book):
+    imp.import_master_data(book, fresh(master_file(phone_report())))
+    first = phone_report(so="SO-FIRST-COPY", saved="27-Oct-2026 09:00")
+    later = phone_report(so="SO-LATER-COPY", saved="27-Oct-2026 10:00")
+    summary = imp.import_master_data(book, fresh(master_file(first, later)))
+
+    assert s.read_report(book, "FSR-202610-0001")[
+        "general_information"]["so_number"] == "SO-LATER-COPY"
+    (entry,) = summary["changes"]
+    changes = {field["path"]: (field["previous"], field["imported"])
+               for field in entry["fields"]}
+    assert changes[("general_information", "so_number")] == (
+        "SO-PHONE", "SO-LATER-COPY")
+
+
+def test_changes_of_several_updated_reports_each_compare_their_own(book):
+    one = phone_report("FSR-202610-0001", so="SO-ONE")
+    two = phone_report("FSR-202610-0002", so="SO-TWO")
+    imp.import_master_data(book, fresh(master_file(one, two)))
+
+    summary = imp.import_master_data(book, fresh(master_file(
+        phone_report("FSR-202610-0001", so="SO-ONE-EDITED",
+                     saved="27-Oct-2026 09:00"),
+        phone_report("FSR-202610-0002", so="SO-TWO-EDITED",
+                     saved="27-Oct-2026 09:00"))))
+
+    by_control = {
+        entry["control"]: {field["path"]: (field["previous"], field["imported"])
+                           for field in entry["fields"]}
+        for entry in summary["changes"]}
+    assert by_control["FSR-202610-0001"][
+        ("general_information", "so_number")] == ("SO-ONE", "SO-ONE-EDITED")
+    assert by_control["FSR-202610-0002"][
+        ("general_information", "so_number")] == ("SO-TWO", "SO-TWO-EDITED")
+
+
+def test_report_changes_records_edited_added_and_removed_rows():
+    changes = imp.report_changes(
+        {"rows": [{"Container": "A", "Packaging": "7x40"}],
+         "remarks": ["Old detail"]},
+        {"rows": [{"Container": "A", "Packaging": "1x40"},
+                  {"Container": "B", "Packaging": "1x40"}],
+         "remarks": []})
+    by_path = {entry["path"]: (entry["previous"], entry["imported"])
+               for entry in changes}
+    assert by_path[("rows", "count")] == ("1", "2")
+    assert by_path[("rows", 0, "Packaging")] == ("7x40", "1x40")
+    assert by_path[("rows", 1, "Container")] == (
+        "(not present)", "B")
+    assert by_path[("remarks", "count")] == ("1", "0")
+    assert by_path[("remarks", 0)] == ("Old detail", "(not present)")
+
+
 def test_update_follows_a_renumbered_report(book):
     s.write_report_to_excel(book, phone_report(so="SO-ON-PC"), False)
     first = imp.import_master_data(book, fresh(master_file(phone_report())))

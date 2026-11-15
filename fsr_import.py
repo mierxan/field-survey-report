@@ -210,6 +210,112 @@ def _quiet(*args, **kwargs):
     pass
 
 
+_MISSING = object()
+
+
+def _change_value(value):
+    """A stable, display-ready value for one side of an import change."""
+    if value is _MISSING:
+        return "(not present)"
+    if value is None:
+        return "(blank)"
+    if isinstance(value, bool):
+        return "Yes" if value else "No"
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    text = str(value)
+    return text if text else "(blank)"
+
+
+def report_changes(previous, imported):
+    """Return every field changed between an Owner copy and an import.
+
+    Each entry has a machine-readable path plus display-ready ``previous``
+    and ``imported`` values.  Lists include a count change and then the
+    individual added, removed, or edited values, so an item-list expansion
+    cannot be hidden behind a single ``Updated`` count.
+    """
+    result = []
+
+    def add(path, before, after):
+        result.append({
+            "path": path,
+            "previous": _change_value(before),
+            "imported": _change_value(after),
+        })
+
+    def walk(before, after, path):
+        if before is _MISSING and isinstance(after, dict):
+            for key in sorted(after, key=str.casefold):
+                walk(_MISSING, after[key], path + (str(key),))
+            return
+        if after is _MISSING and isinstance(before, dict):
+            for key in sorted(before, key=str.casefold):
+                walk(before[key], _MISSING, path + (str(key),))
+            return
+        if before is _MISSING and isinstance(after, list):
+            add(path + ("count",), 0, len(after))
+            for index, value in enumerate(after):
+                walk(_MISSING, value, path + (index,))
+            return
+        if after is _MISSING and isinstance(before, list):
+            add(path + ("count",), len(before), 0)
+            for index, value in enumerate(before):
+                walk(value, _MISSING, path + (index,))
+            return
+        if type(before) is not type(after):
+            add(path, before, after)
+            return
+        if isinstance(before, dict):
+            for key in sorted(set(before) | set(after), key=str.casefold):
+                walk(before.get(key, _MISSING), after.get(key, _MISSING),
+                     path + (str(key),))
+            return
+        if isinstance(before, list):
+            if len(before) != len(after):
+                add(path + ("count",), len(before), len(after))
+            for index in range(max(len(before), len(after))):
+                left = before[index] if index < len(before) else _MISSING
+                right = after[index] if index < len(after) else _MISSING
+                walk(left, right, path + (index,))
+            return
+        if before != after:
+            add(path, before, after)
+
+    walk(previous, imported, ())
+    return result
+
+
+def _update_changes(store, ledger, plan):
+    """report_changes() for every report this import will update.
+
+    Built from the final plan, so a report sent twice in one file is compared
+    in the copy that is actually saved.  Several updates share one read of
+    the workbook or database instead of loading it once per report.
+    """
+    updates = [(report, key) for report, editing, key, *_ in plan if editing]
+    if not updates:
+        return []
+    if len(updates) == 1:
+        read = store.read_report
+    else:
+        current = storage.ControlKeyed(
+            (saved["control_no"], saved) for saved in store.read_all_reports())
+        read = current.get
+    changes = []
+    for report, key in updates:
+        previous = copy.deepcopy(read(report["control_no"]) or {})
+        # Last Saved belongs to the sending copy's import identity and is
+        # kept in the ledger, rather than in the Owner's report row.
+        previous.setdefault("last_saved",
+                            ledger.get(key, {}).get("phone_saved") or "")
+        changes.append({
+            "control": report["control_no"],
+            "fields": report_changes(previous, report),
+        })
+    return changes
+
+
 def import_master_data(excel_path, data, on_saved=None, journal=None,
                        stores=None, mysql=False, progress=None):
     """Bring the reports of a read_master_file() result into the workbook
@@ -233,7 +339,7 @@ def import_master_data(excel_path, data, on_saved=None, journal=None,
     ledger = load_ledger(excel_path)
     summary = {"added": [], "updated": [], "unchanged": [], "renumbered": [],
                "conflicts": [], "deleted_here": [], "backup": None,
-               "saved_reports": []}
+               "saved_reports": [], "changes": []}
 
     def backup_once():
         if summary["backup"] is None and store.kind == "sqlite":
@@ -323,6 +429,7 @@ def import_master_data(excel_path, data, on_saved=None, journal=None,
     if not plan:
         return summary
 
+    summary["changes"] = _update_changes(store, ledger, plan)
     backup_once()
     # One Last Saved time for the whole import, chosen before the write:
     # it is how the record recognises the write afterwards.

@@ -3945,6 +3945,93 @@ def import_stopped(path, error):
     finish_unfinished_saves()
 
 
+def _import_change_label(path):
+    """Turn the import engine's path into a label an Owner can read."""
+    names = {
+        "control_no": "Control #", "general_information": "General",
+        "inspection_schedule": "Inspection Schedule",
+        "transport_details": "Shipment / Transport Details",
+        "documents_used": "Documents Used",
+        "declared_goods": "Declared Goods",
+        "other_important_remarks": "Other Important Remarks",
+        "item_lists": "Item Lists",
+        "findings_and_remarks": "Additional Details",
+        "incident_reports": "Incident Reports",
+        "other_item_forms": "Other Item Forms",
+        "last_saved": "Last Saved", "count": "Number of entries",
+    }
+    parts = []
+    previous = None
+    for value in path:
+        if isinstance(value, int):
+            if previous == "item_lists":
+                label = f"Item List {value + 1}"
+            elif previous == "rows":
+                label = f"Row {value + 1}"
+            else:
+                label = f"Entry {value + 1}"
+        else:
+            label = names.get(value, str(value).replace("_", " ").title())
+        parts.append(label)
+        previous = value
+    return " > ".join(parts) or "Report"
+
+
+def import_change_text(changes):
+    """Readable previous/imported cards for all updated reports."""
+    lines = []
+    for report in changes:
+        lines.append(f"CONTROL #: {report['control']}")
+        fields = report.get("fields") or []
+        if not fields:
+            lines.append("No report fields differ (only the import marker changed).")
+        for field in fields:
+            lines += [
+                "",
+                _import_change_label(field["path"]),
+                f"  Previous: {field['previous']}",
+                f"  Imported: {field['imported']}",
+            ]
+        lines += ["", "-" * 76, ""]
+    return "\n".join(lines).rstrip()
+
+
+def show_import_changes(changes):
+    """Show long import comparisons without squeezing them into a message box."""
+    if not changes:
+        return None
+    dialog = tb.Toplevel(window)
+    dialog.title("Imported Report Changes")
+    dialog.transient(window)
+    dialog.geometry("900x650")
+    dialog.minsize(650, 420)
+
+    body = tb.Frame(dialog, padding=16)
+    body.pack(fill="both", expand=True)
+    tb.Label(
+        body, justify="left", wraplength=840,
+        text="The following completed reports were updated. Review each "
+             "previous value and the value received from the user."
+    ).pack(anchor="w", pady=(0, 10))
+
+    text_frame = tb.Frame(body)
+    text_frame.pack(fill="both", expand=True)
+    details = tkinter.Text(text_frame, wrap="word", font=("Consolas", 9),
+                           padx=10, pady=10)
+    scroll = tb.Scrollbar(text_frame, orient="vertical",
+                          command=details.yview)
+    details.configure(yscrollcommand=scroll.set)
+    scroll.pack(side="right", fill="y")
+    details.pack(side="left", fill="both", expand=True)
+    details.insert("1.0", import_change_text(changes))
+    details.configure(state="disabled")
+
+    tb.Button(body, text="Close", bootstyle="primary",
+              command=dialog.destroy).pack(anchor="e", pady=(10, 0))
+    dialog.bind("<Escape>", lambda event: dialog.destroy())
+    return dialog
+
+
 def import_finished(path, data, summary, mysql_now):
     new_names = fsr_import.new_master_names(data, master_data)
     total_names = sum(len(names) for names in new_names.values())
@@ -3988,6 +4075,9 @@ def import_finished(path, data, summary, mysql_now):
             fsr_sqlite_store.DB_SUFFIX) else "the Excel file")
         lines.append(f"\nCopy of {copied} before the import:\n"
                      f"{summary['backup']}")
+    if summary.get("changes"):
+        lines.append("\nThe previous and imported details are shown in a "
+                     "separate review window.")
     open_control = control_entry.get().strip()
     if report_state["editing"] and any(
             same_key(open_control, control)
@@ -3995,6 +4085,7 @@ def import_finished(path, data, summary, mysql_now):
         lines.append(f"\nReport {open_control} is open on the form with its "
                      "old values. Open it again before saving.")
     messagebox.showinfo("Import Master Data", "\n".join(lines), parent=window)
+    show_import_changes(summary.get("changes") or [])
     refresh_conflict_count()
     if mysql_now and summary["saved_reports"]:
         request_mysql_round()

@@ -1,5 +1,18 @@
 # Field Survey Report changelog
 
+## Phase 7 - import change details (unreleased, 15 November 2026)
+
+- After Import Master Data updates completed reports, show an
+  "Imported Report Changes" window listing every changed field with its
+  previous and imported value, including added and removed rows and
+  entries (for example an item list growing from 1 to 7 rows).
+- Compare a report sent twice in one file in the copy that is saved; several
+  updated reports share one read of the workbook or database.
+- Updates are still applied automatically; Owner review before applying,
+  location identity and append-only import history remain Phase 7
+  specifications (`planning_tests`). Full suite: 1247 passed, 0 skipped
+  with the committed Incident Report template.
+
 ## Phase 6 - automatic text continuation (unreleased, 14 November 2026)
 
 - Continue typed and pasted text onto the next row in Declared Goods,

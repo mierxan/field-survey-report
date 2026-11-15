@@ -551,6 +551,21 @@ def test_import_master_data_button(app, tmp_path):
     assert "Phone Only Supplier Co" in g["master_data"]["supplier_list"]
     assert any("Added: 1" in str(call[2]) for call in answers.calls)
 
+    change_text = g["import_change_text"]([{
+        "control": "FSR-209901-0001",
+        "fields": [{
+            "path": ("item_lists", 0, "rows", 1, "Packaging"),
+            "previous": "(not present)", "imported": "1x40 cvan",
+        }, {
+            "path": ("other_important_remarks", 0),
+            "previous": "Old remark", "imported": "New remark",
+        }],
+    }])
+    assert "Item Lists > Item List 1 > Rows > Row 2 > Packaging" in change_text
+    assert "Previous: (not present)" in change_text
+    assert "Imported: 1x40 cvan" in change_text
+    assert "Other Important Remarks > Entry 1" in change_text
+
     forms, _, _ = g["create_report_forms"](path, saved)
     sheet = load_workbook(forms[0])["First Page"]
     assert sheet["A38"].value == "Phone Inspector"
