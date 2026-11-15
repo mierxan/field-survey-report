@@ -3965,6 +3965,9 @@ def _import_change_label(path):
         "incident_reports": "Incident Reports",
         "other_item_forms": "Other Item Forms",
         "last_saved": "Last Saved", "count": "Number of entries",
+        "so_number": "SO Number", "po_number": "PO Number",
+        "jo_number": "JO Number", "dr_number": "DR Number",
+        "bl_awb_number": "BL/AWB Number",
     }
     parts = []
     previous = None
