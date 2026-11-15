@@ -39,7 +39,8 @@ def test_template_geometry_is_read_only_and_uses_actual_fonts():
     assert remarks[:2] == ('Calibri', 12)
     assert len(widths) == 5
     _, incident, widths = line_spec(str(paths[3]), 1, 'A19')
-    assert incident[:2] == ('Times New Roman', 11)
+    # Owner enlarged the incident text from 11 to 17 points (15-Nov-2026)
+    assert incident[:2] == ('Times New Roman', 17)
     assert len(widths) == 9
     assert before == {path: hashlib.sha256(Path(path).read_bytes()).digest() for path in paths}
 
@@ -260,7 +261,7 @@ def test_normal_save_printed_copies_and_reopen_keep_flowed_lines(form):
     assert first['A22'].font.sz == 12
     assert first['G21'].font.sz == 12
     incident = next(book[name] for name in book.sheetnames if 'Incident' in name)
-    assert incident['A18'].font.sz == incident['A19'].font.sz == 11
+    assert incident['A18'].font.sz == incident['A19'].font.sz == 17
     book.close()
     g['new_report'](confirm=False)
     g['load_report_into_form'](control, 'excel')

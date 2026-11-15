@@ -12,6 +12,10 @@
   location identity and append-only import history remain Phase 7
   specifications (`planning_tests`). Full suite: 1247 passed, 0 skipped
   with the committed Incident Report template.
+- Incident Report template: larger print chosen by the Owner (incident text
+  11 to 17 pt, header details 14 to 16 pt, title and signature lines 16 to
+  18 pt; row heights unchanged). Text continuation measures the new size,
+  so fewer characters fit on each incident line. Text-flow checks: 39 passed.
 
 ## Phase 6 - automatic text continuation (unreleased, 14 November 2026)
 
