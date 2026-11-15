@@ -593,7 +593,7 @@ _SIDE_FOLDERS = (storage.INCIDENT_FOLDER_NAME, storage.ITEM_FORM_FOLDER_NAME,
                  "MySQL Replaced")
 _SIDE_FILES = ("_mysql_ledger.json", "_pending_saves.json",
                "_imported_reports.json", "_import_review.json",
-               "_import_history.jsonl")
+               "_import_history.jsonl", "_handovers.json")
 
 
 def carry_side_files(old_excel, new_excel):

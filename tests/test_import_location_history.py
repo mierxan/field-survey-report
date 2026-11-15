@@ -12,9 +12,9 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 
-import fsr_import as imp
-import fsr_storage as storage
-from factories import report
+import fsr_import as imp  # noqa: E402
+import fsr_storage as storage  # noqa: E402
+from factories import report  # noqa: E402
 
 
 def source_report(
@@ -256,10 +256,15 @@ def test_keeping_the_owner_version_counts_the_revision_as_received(tmp_path):
 def test_older_revisions_and_resent_waiting_ones_change_nothing(tmp_path):
     book = tmp_path / "owner.xlsx"
     control = "FSR-MPR-202611-0001"
-    imp.import_master_data(book, master(revision(2)))
+    # revision 2 has content of its own: a copy with the same content and
+    # only another Last Saved time is "unchanged", whatever its revision
+    imp.import_master_data(book, master(revision(
+        2, other_important_remarks=["Second remark"])))
 
     older = imp.import_master_data(book, master(source_report()))
     assert older["older_revisions"] == [control]
+    assert imp.import_master_data(book, master(source_report(
+        saved="01-Dec-2026 10:00")))["older_revisions"] == [control]
 
     third = with_so(revision(3), "SO-THIRD")
     assert imp.import_master_data(book, master(third))[
@@ -290,7 +295,8 @@ def test_a_revision_of_a_report_deleted_here_is_not_brought_back(tmp_path):
     book = tmp_path / "owner.xlsx"
     imp.import_master_data(book, master(source_report()))
     storage.delete_reports_from_excel(book, ["FSR-MPR-202611-0001"])
-    summary = imp.import_master_data(book, master(revision(2)))
+    summary = imp.import_master_data(book, master(
+        with_so(revision(2), "SO-AFTER-DELETE")))
     assert summary["deleted_here"] == ["FSR-MPR-202611-0001"]
     assert storage.read_all_reports(book) == []
     assert imp.pending_reviews(book) == []

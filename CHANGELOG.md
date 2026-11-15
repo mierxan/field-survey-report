@@ -1,5 +1,30 @@
 # Field Survey Report changelog
 
+## Phase 8 - hand-over to the next inspector (unreleased, 16 November 2026)
+
+- Storage > **Hand Over...** writes one file with a saved report or one of
+  the account's drafts, for the inspector who finishes it; **Receive
+  Hand-over...** brings such a file in. Both editions, and the Android app
+  (1.6.0) reads and writes the same file: completed reports move between
+  PCs and phones, drafts between devices of the same kind.
+- Numbering: a saved report keeps the Control # it was first given; only
+  when that number is used by another report where it arrives does it get
+  the next free one (initials kept, Receiving Refs follow). A draft of a
+  new report takes the finishing inspector's number at its first save.
+- The sender's copy is kept, marked handed over: opened and printed, not
+  saved, until it comes back or the hand-over is cancelled.
+- Handed-over reports carry a permanent identity and revision, also in
+  Master Data files; the Owner's import recognises them whichever
+  inspector sends them (also when sent the old way before), so nothing is
+  doubled. The import fingerprint now leaves out Control #, Last Saved and
+  identity fields (earlier fingerprints still recognised).
+- PO-linked Withdrawal reports are not handed over yet. See
+  [HANDOVER.md](docs/HANDOVER.md).
+- Import Master Data, Hand Over and Receive Hand-over wait until the
+  one-time move into the reports database has finished.
+- Full suite: 1294 passed, 0 skipped. Android 1.6.0: 56 unit tests and 22
+  device tests passed.
+
 ## Phase 7 - location identity, revisions and Import Review (unreleased, 16 November 2026)
 
 - Recognise a report by its permanent location + report id when the file

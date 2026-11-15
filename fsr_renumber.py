@@ -180,6 +180,9 @@ def renumber_report(excel_path, old, new, required_root=None, store=None):
     # is never rewritten (its events keep the number they had then)
     if _rewrite_json(fsr_import.review_path(excel_path), old, new):
         touched["files"].append("import review")
+    import fsr_handover
+    if _rewrite_json(fsr_handover.ledger_path(excel_path), old, new):
+        touched["files"].append("hand-over record")
     from warehouse import store
     if _rewrite_json(store.side_file_path(excel_path), old, new):
         touched["files"].append("warehouse side file")

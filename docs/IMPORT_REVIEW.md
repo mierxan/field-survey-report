@@ -43,7 +43,11 @@ All optional, inside the existing format (`"format": "fsr-master-data"`,
 | report | `report_id` | Permanent id of the report. A random UUID made when the report is first created. It never changes: not when the report is edited, renumbered, moved to another phone, or restored from a backup. |
 | report | `revision` | Whole number. `1` when the report is first completed; `+1` each time a completed report is saved with changes. Never reused for different content. |
 
-The identity of a report is `location_id` + `report_id`. A phone that is
+The identity of a report is `location_id` + `report_id`. A report that was handed
+over to another inspector carries its own `location_id`, `location_name`
+and `handover_origin` (the device + Control # it was handed over from);
+they take the place of the file's location, so it stays one report
+whichever location sends it ([HANDOVER.md](HANDOVER.md)). A phone that is
 replaced or restored must keep both (they belong in the phone's backup).
 
 **Changeover.** The first file with identities usually contains reports

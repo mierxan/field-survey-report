@@ -54,7 +54,7 @@ sys.path.insert(0, str(Path.cwd() / 'tests'))
 import gui_harness as h
 import fsr_drafts_ui
 home, result = sys.argv[1:]
-def offer(self):
+def offer(self, startup=False):
     values, damaged = self.store.list()
     assert len(values) == 1 and not damaged
     assert self.restore(values[0])

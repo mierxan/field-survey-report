@@ -341,9 +341,14 @@ def _update_changes(store, ledger, plan):
 ID_PREFIX = "id:"
 HISTORY_SUFFIX = "_import_history.jsonl"
 REVIEW_SUFFIX = "_import_review.json"
-# Bookkeeping of a report, not what the inspector wrote: never compared.
+# Carried by a report handed over to another inspector (fsr_handover): it
+# keeps the location where it was first handed over, and the phone or PC +
+# Control # it had there.
+HANDOVER_KEYS = ("location_id", "location_name", "handover_origin")
+# Bookkeeping of a report, not what the inspector wrote: never compared,
+# and not part of its fingerprint.
 _NOT_CONTENT = frozenset({"control_no", "last_saved", "revision",
-                          "report_id", "incident_error"})
+                          "report_id", "incident_error", *HANDOVER_KEYS})
 
 
 def identity_key(location_id, report_id):
@@ -352,13 +357,33 @@ def identity_key(location_id, report_id):
                                   ensure_ascii=False)
 
 
+def report_location(data, report):
+    """(location id, location name) of a report of this file. A handed-over
+    report names its own location (where it was first handed over), so it
+    stays one report whichever location sends it."""
+    own = str(report.get("location_id") or "").strip()
+    if own:
+        return own, str(report.get("location_name") or "").strip()
+    return (str(data.get("location_id") or "").strip(),
+            str(data.get("location_name") or "").strip())
+
+
 def report_identity(data, report):
     """identity_key() of a report of this file, or None (no report_id)."""
     report_id = str(report.get("report_id") or "").strip()
     if not report_id:
         return None
-    return identity_key(str(data.get("location_id") or "").strip(),
-                        report_id)
+    return identity_key(report_location(data, report)[0], report_id)
+
+
+def _handover_origin(report):
+    """[(device, Control #)] where a handed-over report was before."""
+    origin = report.get("handover_origin")
+    if not isinstance(origin, dict):
+        return []
+    device = str(origin.get("device") or "").strip()
+    control = str(origin.get("control") or "").strip()
+    return [(device, control)] if device and control else []
 
 
 def _as_revision(value):
@@ -377,7 +402,16 @@ def report_revision(report):
 
 
 def report_fingerprint(report):
-    """One value for the whole content of a report as it was sent."""
+    """One value for what the inspector wrote in a report: its Control #,
+    Last Saved time, revision and identity are left out, so the same
+    content saved again (or kept under another number) is the same."""
+    return _whole_fingerprint({key: value for key, value in report.items()
+                               if key not in _NOT_CONTENT})
+
+
+def _whole_fingerprint(report):
+    """The fingerprint of the whole report as it was sent (how the first
+    Phase 7 build recorded it; still recognised)."""
     text = json.dumps(report, sort_keys=True, ensure_ascii=False,
                       separators=(",", ":"), default=str)
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -465,13 +499,15 @@ def _save_review(excel_path, review):
     storage.write_json_atomic(path, review)
 
 
-def _revision_decision(entry, pending, revision, fingerprint):
-    """What to do with a received copy of a report already imported."""
+def _revision_decision(entry, pending, revision, fingerprint, also=()):
+    """What to do with a received copy of a report already imported.
+    `also`: other fingerprints the same copy may have been recorded with."""
     known = [(_as_revision(entry.get("revision")), entry.get("fingerprint"))]
     if pending:
         known.append((_as_revision(pending.get("revision")),
                       pending.get("fingerprint")))
-    if any(fingerprint == seen for _, seen in known if seen):
+    mine = {fingerprint, *also}
+    if any(seen in mine for _, seen in known if seen):
         return "unchanged"
     if revision is not None:
         if any(revision == number for number, _ in known):
@@ -867,8 +903,6 @@ def import_master_data(excel_path, data, on_saved=None, journal=None,
     store = fsr_store.open_store(excel_path)
     device = str(data["device_id"]).strip()
     inspector = str(data.get("inspector") or "").strip()
-    location_id = str(data.get("location_id") or "").strip()
-    location_name = str(data.get("location_name") or "").strip()
     ledger = load_ledger(excel_path)
     review = load_review(excel_path)
     summary = _new_summary()
@@ -892,12 +926,13 @@ def import_master_data(excel_path, data, on_saved=None, journal=None,
 
     def event(result, original, owner_control, fingerprint, revision,
               **more):
+        place, place_name = report_location(data, original)
         return {"id": uuid.uuid4().hex, "time": received, "result": result,
                 "owner_control": owner_control,
                 "source_control": str(original.get("control_no") or "")
                 .strip(),
-                "device": device, "location_id": location_id,
-                "location_name": location_name, "inspector": inspector,
+                "device": device, "location_id": place,
+                "location_name": place_name, "inspector": inspector,
                 "report_id": str(original.get("report_id") or "").strip(),
                 "revision": revision, "fingerprint": fingerprint,
                 "exported_at": data.get("exported_at"), **more}
@@ -918,16 +953,22 @@ def import_master_data(excel_path, data, on_saved=None, journal=None,
             if winners[identity] != index:
                 continue            # a copy superseded later in this file
             key = identity
+            place, place_name = report_location(data, original)
             extra = {"report_id": str(original["report_id"]).strip(),
-                     "location_id": location_id,
-                     "location_name": location_name, "device": device,
+                     "location_id": place,
+                     "location_name": place_name, "device": device,
                      "revision": revision, "fingerprint": fingerprint}
             entry = ledger.get(key)
             legacy = None
             if entry is None:
-                old_key = _ledger_key(ledger, device, phone_no)
-                if old_key not in moved:
-                    legacy = ledger.get(old_key)
+                # this phone's number, then - for a handed-over report -
+                # the phone or PC and number it was handed over from
+                for owner, number in [(device, phone_no),
+                                      *_handover_origin(original)]:
+                    old_key = _ledger_key(ledger, owner, number)
+                    if old_key not in moved and old_key in ledger:
+                        legacy = ledger[old_key]
+                        break
             if legacy is not None:
                 # Imported before the phone sent identities: still found by
                 # phone + Control #, and its record moves to the permanent
@@ -949,8 +990,14 @@ def import_master_data(excel_path, data, on_saved=None, journal=None,
                     review_changed = True
             if entry is not None:
                 local = entry["control"]
+                # also as it reads under the Owner's number: a copy that was
+                # renumbered elsewhere (its Receiving Refs follow) is the same
+                as_here = copy.deepcopy(original)
+                _renumbered(as_here, phone_no, str(local))
                 decision = _revision_decision(
-                    entry, review["pending"].get(key), revision, fingerprint)
+                    entry, review["pending"].get(key), revision, fingerprint,
+                    also=(_whole_fingerprint(original),
+                          report_fingerprint(as_here)))
                 result = {"unchanged": "unchanged", "older": "older_revision",
                           "invalid": "invalid_revision"}.get(decision)
                 if result is None and local not in saved:
@@ -1156,10 +1203,63 @@ def accept_revision(excel_path, key, journal=None, stores=None, mysql=False,
     summary["backup"] = _backup(excel_path, store)
     _write_plan(excel_path, store, [item], summary, journal, stores, mysql,
                 progress, review, [])
+    # a report the Owner handed over is back: it can be edited here again
+    import fsr_handover
+    try:
+        fsr_handover.came_back(excel_path, pending.get("report_id"), control,
+                               pending.get("revision"))
+    except fsr_handover.HandoverError:
+        log.exception("The hand-over record could not be updated")
     if on_saved is not None:
         for saved_report in summary["saved_reports"]:
             on_saved(saved_report)
     return summary
+
+
+def record_handover(excel_path, report, control, device="", inspector="",
+                    result="handed_over"):
+    """The Owner handed report `control` over to an inspector, or received
+    it from one directly (fsr_handover). Its import record and accepted
+    revision become this copy, so when it comes back in a Master Data file
+    it is recognised (unchanged, older, or waiting for review) instead of
+    arriving as a second report."""
+    key = report_identity({}, report)
+    if key is None:
+        return
+    excel_path = Path(excel_path)
+    now = datetime.now().isoformat(timespec="seconds")
+    place, place_name = report_location({}, report)
+    revision = report_revision(report)
+    fingerprint = report_fingerprint(report)
+    ledger = load_ledger(excel_path)
+    entry = dict(ledger.get(key) or {})
+    entry.update(control=control,
+                 phone_control=str(report.get("control_no") or control),
+                 inspector=inspector or entry.get("inspector", ""),
+                 phone_saved=str(report.get("last_saved") or ""),
+                 imported=now, report_id=str(report["report_id"]).strip(),
+                 location_id=place, location_name=place_name,
+                 device=device or entry.get("device", ""),
+                 revision=revision, fingerprint=fingerprint)
+    entry.setdefault("pc_saved", "")
+    record_imports(excel_path, {key: entry})
+    review = load_review(excel_path)
+    base_report = copy.deepcopy(report)
+    base_report["control_no"] = control
+    review["bases"][key] = {"control": control, "revision": revision,
+                            "fingerprint": fingerprint, "report": base_report}
+    pending = review["pending"].get(key)
+    if pending is not None and (_as_revision(pending.get("revision")) or 0) \
+            <= (revision or 0):
+        review["pending"].pop(key)      # this copy is as new or newer
+    _save_review(excel_path, review)
+    _append_history(excel_path, [{
+        "id": uuid.uuid4().hex, "time": now, "result": result,
+        "owner_control": control,
+        "source_control": str(report.get("control_no") or ""),
+        "device": device, "location_id": place, "location_name": place_name,
+        "inspector": inspector, "report_id": entry["report_id"],
+        "revision": revision, "fingerprint": fingerprint}])
 
 
 def keep_owner_version(excel_path, key):

@@ -333,6 +333,8 @@ class Controller:
     def restore(self, value):
         if value.get('orphan') or value['owner'] != self.owner or value.get('scope') != self.scope:
             raise drafts.DraftError('Removed-account drafts can only be discarded, not restored.')
+        if value.get('handed_over'):
+            raise drafts.DraftError('This draft was handed over to the next inspector, so it is continued there. It can only be discarded here.')
         if value.get('session') != self.session and fsr_windows_session.draft_is_running(value):
             raise drafts.DraftError('This draft is open in another running session. Close that session first.')
         current = self.compare(value)
@@ -402,7 +404,7 @@ class Controller:
         self.baseline = {'data': copy.deepcopy(data), 'stamp': record['stamp_planned']}
         self.clean_form = form.capture(self.h)
 
-    def show(self):
+    def show(self, startup=False):
         if self.stopped:
             return
         if self.dialog is not None and self.dialog.winfo_exists():
@@ -421,6 +423,8 @@ class Controller:
         values = [v for v in values if not (v['owner'] == self.owner and v['id'] == self.draft_id and v.get('session') == self.session)]
         if not values:
             return
+        if startup and all(v.get('handed_over') for v in values):
+            return          # handed over: kept to look at, not to continue
         dialog = tk.Toplevel(self.window)
         self.dialog = dialog
         dialog.title('Unfinished work found')
@@ -431,6 +435,11 @@ class Controller:
         tree.pack(fill='both', expand=True, padx=12, pady=12)
         for index, value in enumerate(values):
             state = 'Removed account — discard only' if value['orphan'] else 'Older than 30 days — review for discard' if value['old'] else ''
+            if value.get('handed_over'):
+                state = f"Handed over to {value['handed_over'].get('to') or 'the next inspector'} — discard only"
+            elif value.get('received'):
+                sender = value['received'].get('from') or {}
+                state = f"Received from {sender.get('inspector') or sender.get('initials') or 'an inspector'}"
             if value.get('session') != self.session and fsr_windows_session.draft_is_running(value):
                 state = 'Open in another session'
             tree.insert('', 'end', iid=str(index), values=(value['control'] or 'New report',
@@ -472,7 +481,7 @@ class Controller:
         def selection_changed(_=None):
             value = selected()
             busy = value and value.get('session') != self.session and fsr_windows_session.draft_is_running(value)
-            restore_button.configure(state='disabled' if not value or value['orphan'] or busy else 'normal')
+            restore_button.configure(state='disabled' if not value or value['orphan'] or value.get('handed_over') or busy else 'normal')
             discard_button.configure(state='disabled' if not value or busy else 'normal')
         tree.bind('<<TreeviewSelect>>', selection_changed)
         selection_changed()

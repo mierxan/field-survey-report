@@ -84,6 +84,8 @@ import fsr_backup                  # the daily backups (shown in Account)
 import fsr_edition                 # Owner app (Excel + MySQL) or User app
 import fsr_import                  # Master Data files from the sites/phones
 import fsr_master_export           # one Master Data file for the owner
+import fsr_handover                # a report or draft for the next inspector
+import fsr_handover_ui
 import fsr_mysql_guard             # never overwrite another copy's report
 import fsr_mysql_sender            # MySQL in the background
 import fsr_save_journal            # finishes a save that stopped halfway
@@ -3391,7 +3393,13 @@ def load_report_into_form(control_no, source="excel"):
     update_status()
     if draft_controller:
         draft_controller.reset(data, source)
-    notify(f"Opened {data['control_no']}", "info")
+    away = fsr_handover.handed_over(excel_state["path"], data["control_no"])
+    if away is not None:
+        notify(f"{data['control_no']} was handed over to "
+               f"{away.get('to') or 'the next inspector'}: view and print "
+               "only", "warning")
+    else:
+        notify(f"Opened {data['control_no']}", "info")
 
 
 def read_withdrawal_listing(*args, **kwargs):
@@ -3871,10 +3879,43 @@ def export_master_data():
     )
 
 
+def reports_are_moving(title):
+    """True (and the user is told) while the reports are being moved into
+    the database: nothing may write them meanwhile."""
+    if not db_move_state.get("running"):
+        return False
+    messagebox.showinfo(
+        title, "The reports are being moved into the reports database. "
+        "Try again when that is finished.", parent=window)
+    return True
+
+
+def open_hand_over():
+    """Storage > Hand Over...: a report or draft for the next inspector."""
+    if Workbook is None:
+        excel_missing_message()
+        return None
+    if reports_are_moving("Hand Over"):
+        return None
+    return fsr_handover_ui.open_hand_over(globals())
+
+
+def receive_handover(chosen=None):
+    """Storage > Receive Hand-over...: a file from the previous inspector."""
+    if Workbook is None:
+        excel_missing_message()
+        return None
+    if reports_are_moving("Receive Hand-over"):
+        return None
+    return fsr_handover_ui.receive(globals(), chosen)
+
+
 def import_master_data_file():
     """Bring in a Master Data file sent from a site PC or the Android app."""
     if Workbook is None:
         excel_missing_message()
+        return
+    if reports_are_moving("Import Master Data"):
         return
 
     chosen = filedialog.askopenfilename(
@@ -4886,6 +4927,7 @@ def build_window():
     global general_information_frame, general_tab, good_button
     global goods_type_vars, goods_types_frame, hauler_combobox
     global import_master_button, import_review_button, import_state
+    global hand_over_button, receive_handover_button, hand_over_state
     global incident_actions
     global incident_body, incident_cards, incident_cards_frame
     global incident_hint, incident_info, incident_tab, index
@@ -5479,6 +5521,17 @@ def build_window():
         command=lambda: export_master_data()
     )
     export_master_button.pack(fill="x", pady=3)
+    # a report or draft for the inspector who finishes it (fsr_handover)
+    hand_over_button = tb.Button(
+        panel, text="Hand Over...", bootstyle="secondary-outline",
+        command=lambda: open_hand_over()
+    )
+    hand_over_button.pack(fill="x", pady=3)
+    receive_handover_button = tb.Button(
+        panel, text="Receive Hand-over...", bootstyle="secondary-outline",
+        command=lambda: receive_handover()
+    )
+    receive_handover_button.pack(fill="x", pady=3)
 
     # MySQL: three circles. All three colours = MySQL works,
     # three red circles = it does not. Click them to check again.
@@ -6125,6 +6178,7 @@ def build_window():
 
 
     import_state = {"running": False}
+    hand_over_state = {"dialog": None}
 
 
     for _key, _func in (("s", save_report),
@@ -6153,7 +6207,7 @@ def build_window():
     def recover_then_offer_drafts():
         finish_unfinished_saves()
         if draft_controller:
-            draft_controller.show()
+            draft_controller.show(startup=True)
     window.after(300, lambda: start_on_database(then=recover_then_offer_drafts))
 
     if "check_mysql_status" in globals():

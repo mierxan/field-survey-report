@@ -45,12 +45,35 @@ def host_globals():
     return object.__getattribute__(host, "names")
 
 
+def host_handover_allows_save():
+    """A report handed over to the next inspector is finished there: this
+    PC's copy is not saved, so the two copies cannot both change."""
+    import fsr_handover
+    control = host.control_entry.get().strip()
+    entry = fsr_handover.handed_over(host.excel_state["path"], control)
+    if entry is None:
+        return True
+    messagebox.showwarning(
+        "Handed Over",
+        f"{control} was handed over to "
+        f"{entry.get('to') or 'the next inspector'} on "
+        f"{str(entry.get('at') or '')[:10]}, who finishes it. This copy can "
+        "be opened and printed, not saved.\n\nTo work on it here again: "
+        "receive it back (Storage > Receive Hand-over...), or choose "
+        "Storage > Hand Over... > Cancel Hand-over.",
+        parent=host.window)
+    return False
+
+
 def save_report():
     """Add the report to the Excel file, or update it if it is a
     saved report that was opened for editing. Returns True when saved."""
 
     if Workbook is None:
         host.excel_missing_message()
+        return False
+
+    if host.report_state["editing"] and not host_handover_allows_save():
         return False
 
     if not host.condition_var.get():

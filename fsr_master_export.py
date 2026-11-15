@@ -8,7 +8,9 @@ The file is a normal fsr-master-data file: the reports of both workbooks with
 their incident text, this PC's master lists (consignees, suppliers ...), and the
 Bad Order case statuses of the warehouse side file. It names this PC, so the
 owner knows where it came from. Nothing here changes a report or a workbook;
-the owner's import treats a repeated export as already imported.
+the owner's import treats a repeated export as already imported. Reports that
+were handed over to or from another inspector (fsr_handover) carry their
+permanent identity and revision, so the owner gets them once.
 
   python fsr_master_export.py data.xlsx --device my-pc --inspector "Name" --out file.json
 """
@@ -51,6 +53,11 @@ def build_export(excel_path, device_id, inspector="", master_lists=None):
     for report in reports:
         report.pop("incident_error", None)
         report["last_saved"] = saved.get(report["control_no"].casefold(), "")
+    import fsr_handover
+    try:
+        reports = fsr_handover.with_identity(excel_path, reports)
+    except fsr_handover.HandoverError as error:
+        raise MasterExportError(str(error)) from error
     try:
         statuses = SideStore(excel_path).data["case_status"]
     except ValueError as error:
