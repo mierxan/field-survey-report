@@ -12,6 +12,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from . import analytics as an
+from . import dashboard as dash
 from . import tables as tb
 from .periods import day_period, month_period, week_period
 from .transactions import BAD_ORDER, RECEIVING, WITHDRAWAL
@@ -36,6 +37,7 @@ class ReportDocument:
     statements: list = field(default_factory=list)   # (topic, text)
     generated: datetime = field(default_factory=datetime.now)
     source: str = ""
+    dashboard: object = None        # dashboard.Dashboard: Excel only
 
     @property
     def file_stem(self):
@@ -95,6 +97,7 @@ def transaction_summary_report(snapshot, activity, kind, day, filters=None):
         f"{name} {activity} Summary", period.describe(),
         filters.describe(), summary_kpis(summary), source=str(snapshot.source))
     if kind != "daily":
+        doc.dashboard = dash.build(summary, kind)
         breakdown = (summary.by_day if kind == "weekly"
                      else summary.by_week)
         doc.sections.append(Section(
@@ -151,6 +154,7 @@ def summary_report(snapshot, activity, kind, day):
         f"{name} {activity} Summary Report", period.describe(),
         [f"Activity: {activity}"], summary_kpis(summary),
         source=str(snapshot.source))
+    doc.dashboard = dash.build(summary, kind)
     columns = tb.SUMMARY_REPORT_COLUMNS
     total_row = None
     if totals:
@@ -308,6 +312,7 @@ def table_report(title, period_text, filters_text, columns, rows,
 
 NAVY = "1F2A44"
 LIGHT = "EEF2F7"
+SLATE_DARK = "334155"
 
 
 def write_excel(doc, path):
@@ -421,11 +426,268 @@ def write_excel(doc, path):
         sheet.page_setup.fitToHeight = 0
         sheet.sheet_properties.pageSetUpPr.fitToPage = True
         sheet.print_title_rows = f"{start}:{start}"
+    if doc.dashboard is not None:
+        write_dashboard(wb, doc.dashboard)
     path = Path(path)
     temp = path.with_name(path.stem + ".saving.tmp.xlsx")
     wb.save(temp)
+    if doc.dashboard is not None:
+        _own_label_formats(temp)
     temp.replace(path)
     return path
+
+
+# ---------- the Dashboard sheet ----------
+
+DASH_COLUMNS = 16                   # A..P; a card is 4 columns, a chart 8
+CHART_ROWS = 18                     # rows per chart (and gap)
+
+
+def nice_step(top):
+    """A whole-number axis step giving about 5 gridlines (1, 2, 5, 10 ...),
+    so counts never show as 1, 1, 2, 2."""
+    step = 1
+    while top / step > 7:
+        for factor in (2, 5 / 2, 2):
+            step *= factor
+            if top / step <= 7:
+                break
+    return int(step)
+
+
+def write_dashboard(wb, board):
+    """The Dashboard sheet (first in the workbook): a banner, KPI cards,
+    charts of the period, the comparison with the previous period, and the
+    figures the charts are drawn from. Classic Excel charts only, so it
+    opens in every Excel since 2007."""
+    from openpyxl.chart import BarChart, DoughnutChart, Reference
+    from openpyxl.chart.label import DataLabelList
+    from openpyxl.chart.series import DataPoint
+    from openpyxl.chart.shapes import GraphicalProperties
+    from openpyxl.drawing.line import LineProperties
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+
+    ws = wb.create_sheet("Dashboard", 0)
+    wb.active = 0
+    ws.sheet_view.showGridLines = False
+    ws.sheet_view.zoomScale = 90
+    for col in range(1, DASH_COLUMNS + 1):
+        ws.column_dimensions[get_column_letter(col)].width = 10.5
+    last_col = get_column_letter(DASH_COLUMNS)
+
+    def fill(color):
+        return PatternFill("solid", fgColor=color)
+
+    def band(row, height, color, text="", font=None, align="left"):
+        ws.merge_cells(f"A{row}:{last_col}{row}")
+        cell = ws.cell(row=row, column=1, value=text)
+        cell.fill = fill(color)
+        cell.font = font or Font(color="FFFFFF")
+        cell.alignment = Alignment(horizontal=align, vertical="center",
+                                   indent=1)
+        for col in range(2, DASH_COLUMNS + 1):
+            ws.cell(row=row, column=col).fill = fill(color)
+        ws.row_dimensions[row].height = height
+
+    # banner
+    band(1, 40, NAVY, board.title.upper(),
+         Font(bold=True, size=22, color="FFFFFF"))
+    band(2, 22, NAVY, board.period, Font(size=12, color="CBD5E1"))
+    where = f"Site: {board.site}   ·   " if board.site else ""
+    band(3, 20, dash.BLUE, f"{where}Generated "
+         f"{board.generated:%d-%b-%Y %H:%M}   ·   Field Survey Report",
+         Font(bold=True, size=10, color="FFFFFF"))
+    ws.row_dimensions[4].height = 10
+
+    # KPI cards
+    white = Side(style="thick", color="FFFFFF")
+    for index, card in enumerate(board.cards[:4]):
+        first = index * 4 + 1
+        lastc = first + 3
+        accent = Side(style="thick", color=card.color)
+        for row in range(5, 10):
+            for col in range(first, lastc + 1):
+                cell = ws.cell(row=row, column=col)
+                cell.fill = fill("F8FAFC")
+                cell.border = Border(
+                    left=white if col == first else None,
+                    right=white if col == lastc else None,
+                    top=accent if row == 5 else None,
+                    bottom=Side(style="thin", color="E2E8F0")
+                    if row == 9 else None)
+        letters = (get_column_letter(first), get_column_letter(lastc))
+        for row in (5, 8, 9):
+            ws.merge_cells(f"{letters[0]}{row}:{letters[1]}{row}")
+        ws.merge_cells(f"{letters[0]}6:{letters[1]}7")
+        label = ws.cell(row=5, column=first, value=card.label.upper())
+        label.font = Font(bold=True, size=10, color="475569")
+        size = 28 if len(card.value) <= 9 else 20 if len(card.value) <= 16 \
+            else 15
+        value = ws.cell(row=6, column=first, value=card.value)
+        value.font = Font(bold=True, size=size, color=card.color)
+        note = ws.cell(row=8, column=first, value=card.note)
+        note.font = Font(size=9, color="64748B")
+        arrow = {1: "▲ ", -1: "▼ "}.get(card.trend, "")
+        change = ws.cell(row=9, column=first,
+                         value=f"{arrow}{card.change}" if card.change
+                         else "")
+        change.font = Font(bold=True, size=9, color={
+            1: dash.GREEN, -1: dash.RED}.get(card.trend, "64748B"))
+        for row in (5, 6, 8, 9):
+            ws.cell(row=row, column=first).alignment = Alignment(
+                horizontal="left", vertical="center", indent=1)
+    for row, height in ((5, 20), (6, 24), (7, 24), (8, 16), (9, 18)):
+        ws.row_dimensions[row].height = height
+
+    # the figures behind the charts, below everything else
+    panels_rows = ((len(board.charts) + 1) // 2) * CHART_ROWS
+    compare_row = 11 + panels_rows
+    data_row = compare_row + len(board.comparison) + 5
+    ws.cell(row=data_row, column=1,
+            value="FIGURES BEHIND THE CHARTS").font = Font(
+        bold=True, size=11, color=NAVY)
+    data_row += 2
+
+    def figures(chart):
+        nonlocal data_row
+        title = ws.cell(row=data_row, column=1, value=chart.title)
+        title.font = Font(bold=True, color="FFFFFF")
+        for col in range(1, 6):
+            ws.cell(row=data_row, column=col).fill = fill(SLATE_DARK)
+        first = data_row + 1
+        for offset, (label, value) in enumerate(
+                zip(chart.labels, chart.values)):
+            row = first + offset
+            ws.merge_cells(f"A{row}:D{row}")
+            ws.cell(row=row, column=1, value=str(label))
+            cell = ws.cell(row=row, column=5, value=value)
+            cell.number_format = "#,##0" if float(value).is_integer()                 else "#,##0.00"
+            if offset % 2:
+                for col in range(1, 6):
+                    ws.cell(row=row, column=col).fill = fill(LIGHT)
+        last = first + len(chart.labels) - 1
+        data_row = last + 2
+        return first, last
+
+    def labels_only(values=True, percent=False):
+        # every flag set: Excel shows what is not switched off
+        return DataLabelList(showVal=values, showPercent=percent,
+                             showSerName=False, showCatName=False,
+                             showLegendKey=False, showLeaderLines=False)
+
+    def style_axes(chart, values, horizontal=False):
+        chart.legend = None
+        chart.x_axis.delete = False
+        chart.y_axis.delete = False
+        chart.y_axis.majorGridlines.spPr = GraphicalProperties(
+            ln=LineProperties(solidFill="E2E8F0"))
+        chart.y_axis.numFmt = "#,##0"
+        chart.y_axis.scaling.min = 0
+        chart.y_axis.majorUnit = nice_step(max(values or [0]))
+        if horizontal:
+            # the biggest first, from the top; the numbers stay below
+            chart.x_axis.scaling.orientation = "maxMin"
+            chart.y_axis.crosses = "max"
+
+    def make(chart, first, last):
+        values = Reference(ws, min_col=5, min_row=first, max_row=last)
+        labels = Reference(ws, min_col=1, min_row=first, max_row=last)
+        if chart.kind == "doughnut":
+            made = DoughnutChart(holeSize=55)
+            made.add_data(values)
+            made.set_categories(labels)
+            series = made.series[0]
+            for index, color in enumerate(chart.colors):
+                point = DataPoint(idx=index)
+                point.graphicalProperties.solidFill = color
+                point.graphicalProperties.line.solidFill = "FFFFFF"
+                series.dPt.append(point)
+            made.dataLabels = labels_only(values=False, percent=True)
+            made.legend.position = "b"
+        else:
+            made = BarChart()
+            made.type = "bar" if chart.kind == "bar" else "col"
+            made.add_data(values)
+            made.set_categories(labels)
+            made.gapWidth = 60
+            series = made.series[0]
+            series.graphicalProperties.solidFill = chart.color
+            series.graphicalProperties.line.solidFill = chart.color
+            made.dataLabels = labels_only()
+            made.dataLabels.numFmt = "#,##0;-#,##0;;"   # no label for 0
+            style_axes(made, chart.values, horizontal=chart.kind == "bar")
+            if chart.axis_title:
+                made.y_axis.title = chart.axis_title
+        made.title = chart.title
+        made.width = 16.5
+        made.height = 8.4
+        return made
+
+    alone = len(board.charts) % 2 == 1         # the last one: full width
+    for index, chart in enumerate(board.charts):
+        row = 11 + (index // 2) * CHART_ROWS
+        column = "A" if index % 2 == 0 else "I"
+        if not chart.labels or (chart.kind == "doughnut" and chart.empty):
+            note = ws[f"{column}{row}"]
+            note.value = f"{chart.title}: no transactions in this period."
+            note.font = Font(italic=True, color="64748B")
+            continue
+        first, last = figures(chart)
+        made = make(chart, first, last)
+        if alone and index == len(board.charts) - 1:
+            made.width = 33.4
+        ws.add_chart(made, f"{column}{row}")
+
+    # comparison with the previous period
+    title = f"COMPARED WITH {board.previous_label.upper()}" \
+        if board.previous_label else "COMPARED WITH THE PREVIOUS PERIOD"
+    band(compare_row, 22, NAVY, title,
+         Font(bold=True, size=11, color="FFFFFF"))
+    heads = (("Measure", 1, 4), ("This Period", 5, 7),
+             ("Previous Period", 8, 10), ("Change", 11, 16))
+    thin = Side(style="thin", color="E2E8F0")
+    for offset, values in enumerate([[h for h, *_ in heads],
+                                     *board.comparison]):
+        row = compare_row + 1 + offset
+        for (_, start, end), value in zip(heads, values):
+            ws.merge_cells(start_row=row, start_column=start, end_row=row,
+                           end_column=end)
+            cell = ws.cell(row=row, column=start, value=value)
+            cell.alignment = Alignment(horizontal="left", indent=1)
+            if offset == 0:
+                cell.font = Font(bold=True, color="475569")
+            elif start == 11 and str(value).startswith("+"):
+                cell.font = Font(bold=True, color=dash.GREEN)
+            elif start == 11 and str(value).startswith("-"):
+                cell.font = Font(bold=True, color=dash.RED)
+            for col in range(start, end + 1):
+                ws.cell(row=row, column=col).border = Border(bottom=thin)
+
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.print_area = f"A1:{last_col}{max(data_row, compare_row + 6)}"
+    return ws
+
+
+def _own_label_formats(path):
+    """openpyxl writes a data-label number format without
+    sourceLinked="0", and Excel then uses the cells' format instead: the
+    charts would label empty days with 0. Added in the saved file."""
+    import zipfile
+    path = Path(path)
+    plain = path.with_name(path.stem + ".labels.tmp")
+    with zipfile.ZipFile(path) as source,             zipfile.ZipFile(plain, "w", zipfile.ZIP_DEFLATED) as target:
+        for item in source.infolist():
+            data = source.read(item.filename)
+            if item.filename.startswith("xl/charts/"):
+                data = data.replace(
+                    b'<numFmt formatCode="#,##0;-#,##0;;" />',
+                    b'<numFmt formatCode="#,##0;-#,##0;;" sourceLinked="0" />')
+            target.writestr(item, data)
+    plain.replace(path)
 
 
 def write_pdf(doc, path):

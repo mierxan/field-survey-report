@@ -1,5 +1,18 @@
 # Field Survey Report changelog
 
+## Phase 9 - Dashboard sheet for the client (unreleased, 16 November 2026)
+
+- Weekly and Monthly Receiving and Withdrawal Excel reports (Summary
+  Report Excel and Export Excel, Owner and User editions) start with a
+  **Dashboard** sheet: a banner with the period and site, four KPI cards
+  with the change against the previous period, charts (per day / per
+  week, Good / Bad Order, quantity or cargo lines, top suppliers or
+  consignees, sites), the comparison with the previous period, and the
+  figures behind the charts. See [DASHBOARD.md](docs/DASHBOARD.md).
+- Classic Excel charts only: checked in Excel 2007.
+- The phone app 1.7.0 adds the same sheet to its Weekly Summary and asks
+  for Receiving or Withdrawal.
+
 ## Phase 8.1 - phone drafts on a PC (unreleased, 16 November 2026)
 
 - Receive Hand-over now takes an unfinished report (draft) from the phone
