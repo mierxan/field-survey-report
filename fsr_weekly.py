@@ -74,7 +74,9 @@ def report_to_weekly_rows(data):
     return lines
 
 
-def weekly_rows_from_excel(first_day, last_day):
+def weekly_rows_from_excel(first_day, last_day, with_control=False):
+    """The rows of the period; with_control: (Control #, row) pairs (the
+    rows themselves do not carry the Control #)."""
     path = host.excel_state["path"]
     rows = []
     for entry in host.data_store(path).list_reports():
@@ -90,17 +92,50 @@ def weekly_rows_from_excel(first_day, last_day):
             rows.append((day, report["control_no"],
                          report_to_weekly_rows(report)))
     rows.sort(key=lambda item: (item[0], item[1]))
+    if with_control:
+        return [(control, line) for _, control, lines in rows
+                for line in lines]
     return [line for _, _, lines in rows for line in lines]
 
 
-def weekly_rows(year, month, week, source):
+def packages_by_control(controls):
+    """{Control #: Declared Goods packages, or None} of these reports, read
+    from this PC's reports and counted as the Receiving / Withdrawal
+    screens count them."""
+    from warehouse.transactions import split_number
+
+    def packages(report):
+        found = [split_number(g.get("quantity"))[0]
+                 for g in report.get("declared_goods") or []]
+        found = [q for q in found if q is not None and q >= 0]
+        return sum(found) if found else None
+
+    wanted = set(controls)
+    store = host.data_store(host.excel_state["path"])
+    result = {}
+    try:
+        for report in store.read_all_withdrawal_reports():
+            if report["control_no"] in wanted:
+                result[report["control_no"]] = packages(report)
+    except Exception:           # the figures only; the table is exported
+        host.log.exception("Withdrawal reports not read for the packages")
+    for control in wanted - set(result):
+        try:
+            result[control] = packages(store.read_report(control))
+        except Exception:
+            result[control] = None
+    return result
+
+
+def weekly_rows(year, month, week, source, with_control=False):
     span = host.week_span(year, month, week)
     if span is None:
         return []
     first_day, last_day = date(year, month, span[0]), date(year, month, span[1])
     if source == "mysql":
-        return host.db_mysql.weekly_summary(first_day, last_day)
-    return weekly_rows_from_excel(first_day, last_day)
+        return host.db_mysql.weekly_summary(first_day, last_day,
+                                            with_control=with_control)
+    return weekly_rows_from_excel(first_day, last_day, with_control)
 
 
 def weekly_cells(line):
@@ -129,8 +164,11 @@ def weekly_title(year, month, week):
             f"({span[0]}-{span[1]} {name})")
 
 
-def write_weekly_workbook(path, title, rows):
-    """Save the rows as a formatted Excel sheet."""
+def write_weekly_workbook(path, title, rows, controls=None, period=None,
+                          packages=None):
+    """Save the rows as a formatted Excel sheet. With `controls` (the
+    Control # of each row) and `period` (first day, last day) the file
+    starts with the interactive Dashboard (fsr_weekly_dashboard)."""
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     from openpyxl.utils import get_column_letter
 
@@ -210,4 +248,12 @@ def write_weekly_workbook(path, title, rows):
     ws.page_setup.fitToHeight = 0
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     ws.print_title_rows = f"{header_row}:{header_row}"
+    dashboard = bool(rows and controls and period)
+    if dashboard:
+        import fsr_weekly_dashboard
+        fsr_weekly_dashboard.add_dashboard(wb, title, rows, controls,
+                                           *period, packages=packages)
     wb.save(path)
+    if dashboard:
+        from warehouse.exports import _own_label_formats
+        _own_label_formats(path)

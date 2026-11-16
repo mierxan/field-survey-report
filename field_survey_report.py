@@ -97,6 +97,7 @@ import fsr_sqlite_store            # the reports database (Phase 5)
 import fsr_save_ui
 import fsr_open_dialog
 import fsr_weekly
+import fsr_weekly_dashboard
 import fsr_item_lists_ui
 import fsr_drafts_ui
 import fsr_draft_form
@@ -1598,20 +1599,23 @@ def refresh_weekly(*_):
 
     problem = None
     try:
-        rows = busy(weekly_rows, year, month, week, source_var_weekly.get())
+        pairs = busy(weekly_rows, year, month, week, source_var_weekly.get(),
+                     True)
     except PermissionError:
-        rows, problem = [], "The Excel file is open in Excel - close it."
+        pairs, problem = [], "The Excel file is open in Excel - close it."
     except Exception as error:
         log.exception("Weekly summary failed")
-        rows = []
+        pairs = []
         problem = (db_mysql.explain_error(error)
                    if source_var_weekly.get() == "mysql" else str(error))
+    rows = [line for _, line in pairs]
 
     weekly_state["rows"] = rows
+    weekly_state["controls"] = [control for control, _ in pairs]
     summary_tree.delete(*summary_tree.get_children())
     for line in rows:
         summary_tree.insert("", "end", values=weekly_display(line))
-    reports = len({(line[0], line[1]) for line in rows})
+    reports = len(set(weekly_state["controls"]))
     summary_note.configure(
         text=problem or (f"{len(rows)} line(s) from {reports} report(s)"
                          if rows else "No reports in this period."),
@@ -1644,8 +1648,11 @@ def export_weekly_summary():
     if not chosen:
         return
     try:
+        controls = weekly_state.get("controls")
         busy(write_weekly_workbook, chosen, weekly_title(year, month, week),
-             rows)
+             rows, controls,
+             fsr_weekly_dashboard.period_of(year, month, week, week_span),
+             fsr_weekly.packages_by_control(controls or []))
     except PermissionError:
         messagebox.showerror(
             "File In Use",
@@ -5978,7 +5985,7 @@ def build_window():
                         "Quantity", "UOM", "Dimensions", "Weights", "Currency",
                         "Unit Price", "Total Price")
     MONTH_LIST = [calendar.month_name[n] for n in range(1, 13)]
-    weekly_state = {"rows": [], "span": None}
+    weekly_state = {"rows": [], "controls": [], "span": None}
 
 
     # ---------- the page ----------

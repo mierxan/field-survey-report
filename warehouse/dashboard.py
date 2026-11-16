@@ -54,6 +54,15 @@ class Chart:
 
 
 @dataclass
+class Table:
+    """A table under the charts, with in-cell bars on the number columns."""
+    title: str
+    headings: list              # 5: name, three numbers, share
+    rows: list                  # [name, n1, n2, n3, share (0..1)]
+    total: list
+
+
+@dataclass
 class Dashboard:
     title: str                  # "Weekly Receiving Dashboard"
     period: str                 # "Week 45, 2026 (02-Nov-2026 to ...)"
@@ -64,6 +73,7 @@ class Dashboard:
     comparison: list            # (measure, this period, previous, change)
     previous_label: str = ""
     generated: datetime = field(default_factory=datetime.now)
+    tables: list = field(default_factory=list)
 
 
 def _change(current, previous):
@@ -159,6 +169,37 @@ def cards_of(summary):
     return cards
 
 
+def destinations(summary):
+    """Withdrawal: (destination, shipments, packages or None, cargo lines),
+    the most shipments first."""
+    found = {}
+    for tx in summary.transactions:
+        entry = found.setdefault(tx.destination or NOT_RECORDED,
+                                 [0, None, 0])
+        entry[0] += 1
+        if tx.packages is not None:
+            entry[1] = (entry[1] or 0) + tx.packages
+        entry[2] += tx.line_count
+    return [(name, *values) for name, values in sorted(
+        found.items(), key=lambda kv: (-kv[1][0], kv[0].casefold()))]
+
+
+def destination_table(summary):
+    places = destinations(summary)
+    total = sum(p[1] for p in places)
+    packages = [p[2] for p in places if p[2] is not None]
+    return Table(
+        "WITHDRAWAL  ·  DELIVERY DESTINATIONS",
+        ["Destination", "Shipments", "Total Packages", "Cargo Line Items",
+         "Share of Shipments"],
+        [[name, count, _number(pkg) if pkg is not None else None, lines,
+          count / total if total else None]
+         for name, count, pkg, lines in places],
+        ["TOTAL WITHDRAWAL", total,
+         _number(sum(packages)) if packages else None,
+         sum(p[3] for p in places), None])
+
+
 def build(summary, kind):
     """The dashboard of a weekly ("weekly") or monthly ("monthly")
     summary (analytics.Summary)."""
@@ -209,10 +250,21 @@ def build(summary, kind):
     charts.append(Chart("bar", "Transactions per Site / Warehouse",
                         [s for s, _ in sites], [c for _, c in sites],
                         SLATE))
+    tables = []
+    if not receiving:
+        # where the cargo was delivered
+        places = _top([(name, count) for name, count, *_ in
+                       destinations(summary)])
+        charts.append(Chart("bar", "Shipments per Delivery Destination",
+                            [p for p, _ in places], [c for _, c in places],
+                            AMBER))
+        if summary.transactions:
+            tables.append(destination_table(summary))
     prev = summary.previous
     return Dashboard(
         title=f"{name} {summary.activity} Dashboard",
         period=summary.period.describe(), site=site_text(summary),
         activity=summary.activity, cards=cards_of(summary), charts=charts,
         comparison=an.comparison_rows(summary),
-        previous_label=prev.period.describe() if prev else "")
+        previous_label=prev.period.describe() if prev else "",
+        tables=tables)

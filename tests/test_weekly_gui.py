@@ -250,7 +250,15 @@ def test_the_page_shows_the_lines_and_exports_them(week_reports, tmp_path,
     w["export_weekly_summary"]()
     assert offered["initialfile"] == "Weekly Summary March 2031 Week 2.xlsx"
     assert notes == ["Exported 4 line(s) to chosen.xlsx"]
-    ws = load_workbook(target)["Weekly Summary"]
+    # the interactive Dashboard comes first; the table is as before
+    book = load_workbook(target)
+    assert book.sheetnames == ["Dashboard", "Weekly Summary", "Data", "Calc"]
+    assert book["Dashboard"]["E6"].value == "Week 2 (8-14)"
+    data = [r for r in book["Data"].iter_rows(min_row=2, values_only=True)]
+    assert [(r[0], r[10]) for r in data] == [
+        ("FSR-W-0001", 1), ("FSR-W-0002", 1), ("FSR-W-0002", 0),
+        ("FSR-W-0003", 1)]
+    ws = book["Weekly Summary"]
     assert [[c.value for c in r] for r in ws.iter_rows(min_row=2,
                                                        max_row=5)] == \
         EXPECTED_ROWS
@@ -306,7 +314,7 @@ def test_the_mysql_source_asks_the_database_for_the_same_days(app,
     w = live(g)
     asked = []
 
-    def summary(first, last):
+    def summary(first, last, with_control=False):
         asked.append((first, last))
         return []
     monkeypatch.setattr(w["db_mysql"], "weekly_summary", summary)

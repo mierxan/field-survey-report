@@ -132,3 +132,33 @@ def test_an_empty_period_still_makes_a_dashboard(tmp_path):
 def test_axis_steps_are_whole_numbers():
     assert [ex.nice_step(t) for t in (0, 3, 7, 13, 30, 130, 1222)] == \
         [1, 1, 1, 2, 5, 20, 200]
+
+
+def test_withdrawal_highlights_the_delivery_destinations(sample, tmp_path):
+    snap = sample["snapshot"]
+    summary = an.monthly_summary(snap.transactions, "Withdrawal", ANCHOR)
+    board = dash.build(summary, "monthly")
+    charts = {chart.title: chart for chart in board.charts}
+    places = charts["Shipments per Delivery Destination"]
+    assert sum(places.values) == summary.tx_count
+    (table,) = board.tables
+    assert table.headings == ["Destination", "Shipments", "Total Packages",
+                              "Cargo Line Items", "Share of Shipments"]
+    assert sum(r[1] for r in table.rows) == summary.tx_count
+    assert sum(r[3] for r in table.rows) == summary.line_count
+    assert table.total[:2] == ["TOTAL WITHDRAWAL", summary.tx_count]
+    assert sum(r[4] for r in table.rows) == pytest.approx(1)
+    by_place = {}
+    for tx in summary.transactions:
+        key = tx.destination or "(not recorded)"
+        by_place[key] = by_place.get(key, 0) + 1
+    assert {r[0]: r[1] for r in table.rows} == by_place
+    receiving = an.monthly_summary(snap.transactions, "Receiving", ANCHOR)
+    assert dash.build(receiving, "monthly").tables == []
+    # in the file, under the comparison
+    doc = ex.build_report("monthly_withdrawal_report", snap, an.Filters(),
+                          ANCHOR)
+    ws = load_workbook(ex.export(doc, tmp_path / "wd.xlsx"))["Dashboard"]
+    texts = [c.value for row in ws.iter_rows() for c in row if c.value]
+    assert "WITHDRAWAL  ·  DELIVERY DESTINATIONS" in texts
+    assert "TOTAL WITHDRAWAL" in texts

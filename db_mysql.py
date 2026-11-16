@@ -895,10 +895,11 @@ def load_all_reports(connection=None):
 
 # ---------- weekly summary report ----------
 
-def weekly_summary(first_day, last_day, connection=None):
+def weekly_summary(first_day, last_day, connection=None, with_control=False):
     """One row per item line (or one row for a report without items) of every
     report whose inspection date is between the two dates (inclusive).
-    Each row has the 28 fields of the Weekly Summary, as text."""
+    Each row has the 28 fields of the Weekly Summary, as text.
+    with_control: (Control #, row) pairs instead."""
     own = connection is None
     conn = connection or connect()
     try:
@@ -918,7 +919,7 @@ def weekly_summary(first_day, last_day, connection=None):
             "r.dr_number, r.vehicle_type, r.vehicle_plate_number, "
             f"i.description, i.po_number, i.packaging, i.quantity, {uom}, "
             f"i.dimensions, i.weights, {currency}, i.unit_price, "
-            "i.total_price, r.cargo_condition "
+            "i.total_price, r.cargo_condition, r.control_no "
             "FROM reports r LEFT JOIN item_lines i ON i.control_no = r.control_no "
             "WHERE r.inspection_date BETWEEN %s AND %s "
             "ORDER BY r.inspection_date, r.control_no, i.item_list, i.id",
@@ -926,10 +927,11 @@ def weekly_summary(first_day, last_day, connection=None):
         rows = []
         for row in cur.fetchall():
             row = list(row)
+            control = _show(row.pop())
             row[1] = _show_date(row[1])
             row = [_show(value) for value in row]
             row[20], row[21] = split_quantity_unit(row[20], row[21])
-            rows.append(row)
+            rows.append((control, row) if with_control else row)
         cur.close()
         return rows
     finally:

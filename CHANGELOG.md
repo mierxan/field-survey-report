@@ -12,6 +12,14 @@
 - Classic Excel charts only: checked in Excel 2007.
 - The phone app 1.7.0 adds the same sheet to its Weekly Summary and asks
   for Receiving or Withdrawal.
+- Withdrawal dashboards highlight the **delivery destinations**: a chart of
+  shipments per destination and a table of shipments, total packages and
+  cargo line items per destination.
+- Inspection Reports > Weekly Summary > **Export** starts with an
+  **interactive Dashboard**: dropdowns for Activity, Week, Cargo Condition
+  and Supplier change the cards and charts at once (Excel formulas, no
+  macros). The page now counts reports by Control # ("N line(s) from N
+  report(s)"), not by SO Number and date.
 
 ## Phase 8.1 - phone drafts on a PC (unreleased, 16 November 2026)
 

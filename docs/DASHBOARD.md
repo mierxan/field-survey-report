@@ -30,6 +30,45 @@ adds the same sheet to its Weekly Summary.
 The figures are the screen's own (`analytics.summarize`), so the
 dashboard and the screen always agree.
 
+## Withdrawal: delivery destinations
+
+A Withdrawal dashboard also shows where the cargo was delivered: a chart of
+**shipments per delivery destination**, and a table with, per destination,
+the **shipments** (reports), **total packages** (Declared Goods), **cargo
+line items** and the share of shipments, with in-cell bars (the phone's
+table has no bars).
+
+## The interactive Dashboard (Inspection Reports > Weekly Summary > Export)
+
+The Weekly Summary export starts with an **interactive Dashboard**. The
+client picks from four yellow dropdowns - **Activity**, **Week**, **Cargo
+Condition**, **Supplier** - and the cards and charts change at once:
+
+- Cards: Transactions, Line Items, Total Quantity, Good / Bad Order.
+- Charts: Transactions per Day (the chosen week coloured, the other days
+  grey), Transactions per Week, Good Order / Bad Order, Top Suppliers (the
+  chosen supplier coloured), Receiving vs Withdrawal, Quantity per Day,
+  and Withdrawal: Shipments per Destination.
+- Withdrawal delivery destinations table: shipments, total packages,
+  cargo line items and share per destination, with in-cell bars. It
+  always shows Withdrawal reports and follows the Week, Cargo Condition
+  and Supplier choices.
+
+How it works: Excel formulas (SUMIFS) over a hidden **Data** sheet (one
+typed row per line, with the Control #, so a report is counted once even
+when reports share an SO Number) and a hidden **Calc** sheet that the cards
+and charts read. No macros, no security warning; Excel 2007 or later
+(SUMIFS). The file asks Excel to calculate on opening, so viewers that do
+not calculate (some phone previews) show the cards empty. The Weekly
+Summary sheet is unchanged. Packages come from the reports' Declared Goods
+on this PC. Checked in Excel 2007 by changing the dropdowns and comparing
+the cards with the program's own figures.
+
+The phone app (1.8.0) makes the same interactive Dashboard: Export Excel >
+Weekly Summary > **All (interactive)** (`InteractiveDashboard.kt`, its own
+xlsx writer). It also saves every formula's value for the first choices,
+so phone viewers that do not calculate still show the cards and charts.
+
 ## Periods
 
 - PC: a week is Monday to Sunday; a month is the calendar month.

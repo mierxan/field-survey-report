@@ -543,7 +543,8 @@ def write_dashboard(wb, board):
     # the figures behind the charts, below everything else
     panels_rows = ((len(board.charts) + 1) // 2) * CHART_ROWS
     compare_row = 11 + panels_rows
-    data_row = compare_row + len(board.comparison) + 5
+    tables_row = compare_row + len(board.comparison) + 4
+    data_row = tables_row + sum(len(t.rows) + 5 for t in board.tables) + 1
     ws.cell(row=data_row, column=1,
             value="FIGURES BEHIND THE CHARTS").font = Font(
         bold=True, size=11, color=NAVY)
@@ -664,6 +665,45 @@ def write_dashboard(wb, board):
             for col in range(start, end + 1):
                 ws.cell(row=row, column=col).border = Border(bottom=thin)
 
+    # tables (Withdrawal: the delivery destinations), with in-cell bars
+    from openpyxl.formatting.rule import DataBarRule
+    spans = ((1, 4), (5, 7), (8, 10), (11, 13), (14, 16))
+    at = tables_row
+    for table in board.tables:
+        band(at, 24, NAVY, table.title,
+             Font(bold=True, size=11, color="FFFFFF"))
+        lines = [table.headings, *table.rows, table.total]
+        for offset, values in enumerate(lines):
+            r = at + 1 + offset
+            for index, ((start, end), value) in enumerate(zip(spans,
+                                                              values)):
+                ws.merge_cells(start_row=r, start_column=start, end_row=r,
+                               end_column=end)
+                cell = ws.cell(row=r, column=start, value=value)
+                cell.alignment = Alignment(horizontal="left", indent=1)
+                if offset == 0:
+                    cell.font = Font(bold=True, color="475569")
+                elif offset == len(lines) - 1:
+                    cell.font = Font(bold=True, color=NAVY)
+                if index in (1, 2, 3) and offset:
+                    cell.number_format = "#,##0"
+                if index == 4 and offset:
+                    cell.number_format = "0%"
+                for col in range(start, end + 1):
+                    ws.cell(row=r, column=col).border = Border(bottom=thin)
+                    if 0 < offset < len(lines) - 1 and offset % 2 == 0:
+                        ws.cell(row=r, column=col).fill = fill("F8FAFC")
+        first, last = at + 2, at + 1 + len(table.rows)
+        if table.rows:
+            for letter, color in (("E", dash.AMBER), ("H", dash.TEAL),
+                                  ("K", dash.BLUE)):
+                ws.conditional_formatting.add(
+                    f"{letter}{first}:{letter}{last}",
+                    DataBarRule(start_type="num", start_value=0,
+                                end_type="max", color=color,
+                                showValue=True))
+        at += len(lines) + 3
+
     ws.page_setup.orientation = "landscape"
     ws.page_setup.fitToWidth = 1
     ws.page_setup.fitToHeight = 0
@@ -675,17 +715,20 @@ def write_dashboard(wb, board):
 def _own_label_formats(path):
     """openpyxl writes a data-label number format without
     sourceLinked="0", and Excel then uses the cells' format instead: the
-    charts would label empty days with 0. Added in the saved file."""
+    charts would label empty days with 0. Added in the saved file (axis
+    formats already have it)."""
+    import re
     import zipfile
     path = Path(path)
     plain = path.with_name(path.stem + ".labels.tmp")
-    with zipfile.ZipFile(path) as source,             zipfile.ZipFile(plain, "w", zipfile.ZIP_DEFLATED) as target:
+    with zipfile.ZipFile(path) as source, \
+            zipfile.ZipFile(plain, "w", zipfile.ZIP_DEFLATED) as target:
         for item in source.infolist():
             data = source.read(item.filename)
             if item.filename.startswith("xl/charts/"):
-                data = data.replace(
-                    b'<numFmt formatCode="#,##0;-#,##0;;" />',
-                    b'<numFmt formatCode="#,##0;-#,##0;;" sourceLinked="0" />')
+                data = re.sub(rb'<numFmt formatCode="([^"]*)" />',
+                              rb'<numFmt formatCode="\1" sourceLinked="0" />',
+                              data)
             target.writestr(item, data)
     plain.replace(path)
 
