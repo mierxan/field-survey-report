@@ -3,6 +3,7 @@
 `h` is the main module's globals (as in fsr_drafts_ui): names are looked up
 when they are used. The work itself is fsr_handover.
 """
+import copy
 import re
 import socket
 import tkinter as tk
@@ -10,6 +11,7 @@ from datetime import date, datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+import fsr_draft_form
 import fsr_handover
 import fsr_storage as storage
 
@@ -36,6 +38,34 @@ def _day(text):
         return str(text or "")[:16]
 
 
+def form_of(h, data):
+    """The draft form of a report in the Windows data shape (a draft from
+    the phone app), made by the form itself: it is filled as when a saved
+    report is opened, read, and put back exactly as it was. Nothing is
+    shown in between and no draft is written."""
+    controller = h.get("draft_controller")
+    state = h["report_state"]
+    before = (fsr_draft_form.capture(h), dict(state),
+              h["control_entry"].get(), h["notebook"].select())
+    muted = controller.muted if controller is not None else None
+    if controller is not None:
+        controller.muted = True
+    try:
+        h["populate_form"](copy.deepcopy(data))
+        return fsr_draft_form.capture(h)
+    finally:
+        try:
+            fsr_draft_form.restore(h, before[0])
+            state.clear()
+            state.update(before[1])
+            h["set_control_number"](before[2])
+            h["notebook"].select(before[3])
+        finally:
+            if controller is not None:
+                controller.muted = muted
+        h["update_status"]()
+
+
 def rows(h, path, controller):
     """What can be handed over: this account's drafts of this workbook,
     then the saved reports of the main workbook."""
@@ -53,10 +83,12 @@ def rows(h, path, controller):
             away = value.get("handed_over")
             status = (f"Handed over to {away.get('to') or '?'} on "
                       f"{_day(away.get('at'))}" if away else "")
+            kept = fsr_handover._kept(value.get("received"))
             result.append({
                 "kind": "draft", "value": value,
                 "control": value["control"] or "",
-                "label": value["control"] or "New report",
+                "label": value["control"] or (kept or {}).get("control")
+                or "New report",
                 "so": value["form"].get("simple", {}).get(
                     "SO_number_entry", ""),
                 "when": _day(value["changed"]), "status": status,
@@ -334,7 +366,8 @@ def receive(h, chosen=None):
         return h["busy"](
             fsr_handover.receive, path, payload,
             controller.store if controller else None, initials, journal,
-            stores, mysql_now, bool(h.get("IS_OWNER_EDITION")), replace)
+            stores, mysql_now, bool(h.get("IS_OWNER_EDITION")), replace,
+            lambda data: form_of(h, data))
 
     try:
         try:
@@ -385,10 +418,28 @@ def receive(h, chosen=None):
                      f"{result['sent_as']} is already used by another "
                      "report on this PC.")
     if payload["kind"] == "draft":
-        if result["draft"] is not None:
+        draft = result["draft"]
+        kept = None if draft is None else fsr_handover._kept(
+            draft.get("received"))
+        if kept is not None:
+            try:
+                number = fsr_handover.kept_number(path, draft["received"])
+            except (OSError, ValueError):
+                h["log"].exception("The number of a received draft could "
+                                   "not be checked")
+                number = kept["control"]
+            lines.append(
+                "\nThe unfinished report is in Account > Unfinished work. "
+                "Restore it there to continue; "
+                + (f"it keeps its Control # {number} when you save it."
+                   if storage.same_key(number, kept["control"]) else
+                   f"it gets the number {number} when you save it, because "
+                   f"{kept['control']} is already used by another report "
+                   "on this PC."))
+        elif draft is not None:
             lines.append("\nThe unfinished report is in Account > "
                          "Unfinished work. Restore it there to continue; "
-                         + ("it keeps its Control #." if result["draft"][
+                         + ("it keeps its Control #." if draft[
                              "editing"] else "it gets your next Control # "
                             "when you save it."))
         else:

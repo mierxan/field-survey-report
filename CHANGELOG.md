@@ -1,5 +1,21 @@
 # Field Survey Report changelog
 
+## Phase 8.1 - phone drafts on a PC (unreleased, 16 November 2026)
+
+- Receive Hand-over now takes an unfinished report (draft) from the phone
+  app: it becomes a draft in Account > Unfinished work. Restored, it shows
+  the phone's Control # and keeps it on its first save (the next free one,
+  same initials, if another report here has it). Earlier the PC refused
+  phone drafts.
+- It stays the phone's report: its identity and next revision are recorded
+  at the first save, so a hand-back to the phone updates the phone's copy
+  and the Owner's import recognises it. Handed on from the PC as a draft,
+  its number and identity go along.
+- The conversion is the app's own Master Data export of the report, checked
+  against a file written by the app's tests. The form that is open while
+  the file is received is left exactly as it was. No new Android release is
+  needed: drafts from app 1.6.0 are read.
+- Windows drafts are still continued on a PC only.
 ## Phase 8 - hand-over to the next inspector (unreleased, 16 November 2026)
 
 - Storage > **Hand Over...** writes one file with a saved report or one of

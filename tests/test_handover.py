@@ -196,15 +196,18 @@ def test_damaged_or_foreign_files_are_refused_before_anything_changes(
     assert storage.list_saved_reports(b) == []
 
 
-def test_a_phone_draft_is_refused_on_windows(tmp_path):
+def test_a_damaged_phone_draft_is_refused(tmp_path):
     b = pc(tmp_path, "b")
     payload = {"handover_id": "x" * 32, "kind": "draft", "app": "android",
                "created_at": "", "from": A, "to": "", "note": "",
                "report": None, "draft": {"app": "android", "report": {}}}
     file = tmp_path / "phone.json"
     file.write_text(json.dumps(ho._envelope(payload)), encoding="utf-8")
-    with pytest.raises(ho.HandoverError, match="Android"):
-        ho.receive(b, ho.read_file(file), draft_store=drafts(tmp_path, "b"))
+    store = drafts(tmp_path, "b")
+    with pytest.raises(ho.HandoverError, match="damaged"):
+        ho.receive(b, ho.read_file(file), draft_store=store,
+                   to_form=lambda data: snapshot())
+    assert store.list()[0] == []
 
 
 def test_a_report_made_on_a_phone_is_received(tmp_path):
@@ -424,13 +427,140 @@ def test_a_completed_report_from_the_phone_app_is_received(tmp_path):
         "FSR-PHN-202611-0004"]
 
 
-def test_a_draft_from_the_phone_app_is_refused_with_a_reason(tmp_path):
+PHONE = "FSR-PHN-202611-0004"
+
+
+def from_phone(book, store, name="handover_from_android_draft.json",
+               **more):
+    """Receive a phone draft; the window's form is stood in for: the data
+    it is given is kept in `seen`."""
+    seen = []
+
+    def to_form(data):
+        seen.append(data)
+        return snapshot(data["general_information"]["so_number"])
+    result = ho.receive(book, ho.read_file(DATA / name), draft_store=store,
+                        to_form=to_form, **more)
+    return result, seen
+
+
+def finish(book, data, control, received, **more):
+    """The finishing inspector saves the restored draft as `control`."""
+    value = json.loads(json.dumps(data))
+    value["control_no"] = control
+    fsr_store.ExcelStore(book).write_report(value, False)
+    return ho.adopt(book, control, received, **more)
+
+
+def test_the_phone_apps_draft_is_converted_as_the_app_itself_does():
+    """Every field of a phone draft, against the app's own export of it
+    (both files written by the app's HandoverCodecTest)."""
+    payload = ho.read_file(DATA / "handover_from_android_rich_draft.json")
+    expected = json.loads((DATA / "android_rich_draft_windows_shape.json")
+                          .read_text(encoding="utf-8"))
+    assert ho.phone_report_data(payload["draft"]["report"]) == expected
+    assert ho.describe(payload).startswith(
+        "unfinished report FSR-PHN-202611-0007 (a draft from the phone app)")
+
+
+def test_a_draft_from_the_phone_app_becomes_a_draft_that_keeps_its_number(
+        tmp_path):
     b = pc(tmp_path, "b")
-    payload = ho.read_file(DATA / "handover_from_android_draft.json")
-    assert payload["kind"] == "draft" and payload["draft"]["app"] == "android"
-    with pytest.raises(ho.HandoverError, match="Android app"):
-        ho.receive(b, payload, draft_store=drafts(tmp_path, "b"))
-    assert storage.list_saved_reports(b) == []
+    owner = pc(tmp_path, "owner")
+    store = drafts(tmp_path, "b")
+    result, seen = from_phone(b, store)
+    assert result["result"] == "draft" and result["control"] is None
+    value = result["draft"]
+    assert value["editing"] is False and value["control"] == ""
+    assert value["received"]["control"] == PHONE
+    assert value["received"]["identity"]["report_id"] == "uid-1"
+    assert value["received"]["from"]["inspector"] == "Phone Inspector"
+    data = seen[0]
+    assert data["general_information"]["so_number"] == "SO-PHONE"
+    assert data["other_important_remarks"] == ["Phone remark"]
+    # Receiving Refs made from the phone's number are given again on save
+    assert data["item_lists"][0]["rows"][0]["Receiving Ref"] == ""
+    # the same file again: still one draft
+    again, _ = from_phone(b, store)
+    assert again["draft"] is None and len(store.list()[0]) == 1
+    assert ho.kept_number(b, value["received"]) == PHONE
+
+    entry = finish(b, data, PHONE, value["received"])
+    assert entry["revision"] == 3 and entry["state"] == ho.ACTIVE
+    saved = storage.read_report(b, PHONE)
+    assert saved["item_lists"][0]["rows"][0]["Receiving Ref"] == \
+        f"RCV-{PHONE}-1-01"
+    # one report everywhere: Master Data carries the phone's report id
+    exported = export(b, "pc-b")["reports"][0]
+    assert exported["control_no"] == PHONE
+    assert exported["report_id"] == "uid-1" and exported["revision"] == 3
+    assert exported["handover_origin"] == {"device": "phone-1",
+                                           "control": PHONE}
+    assert imp.import_master_data(owner, export(b, "pc-b"))["added"] == [
+        PHONE]
+    # and handed back to the phone, the phone finds its own report
+    back = ho.hand_over_report(b, PHONE, tmp_path / "back.json", B,
+                               to="Phone Inspector")
+    assert back["report"]["report_id"] == "uid-1"
+    assert back["report"]["revision"] == 3
+
+
+def test_a_phone_drafts_number_used_here_gets_the_next_free_one(tmp_path):
+    b = pc(tmp_path, "b", invented(PHONE, so="SO-ALREADY-HERE"))
+    result, seen = from_phone(b, drafts(tmp_path, "b"))
+    received = result["draft"]["received"]
+    expected = fsr_store.ExcelStore(b).next_free_number(PHONE)
+    assert expected != PHONE and expected.startswith("FSR-PHN-")
+    assert ho.kept_number(b, received) == expected
+    finish(b, seen[0], expected, received)
+    assert storage.read_report(b, PHONE)["general_information"][
+        "so_number"] == "SO-ALREADY-HERE"
+    assert export(b, "pc-b")["reports"][1]["report_id"] == "uid-1"
+
+
+def test_a_phone_draft_handed_on_from_a_pc_keeps_its_number(tmp_path):
+    b = pc(tmp_path, "b")
+    c = pc(tmp_path, "c")
+    store_b = drafts(tmp_path, "b")
+    from_phone(b, store_b)
+    (value,), _ = store_b.list()
+    payload = ho.hand_over_draft(b, value, store_b, tmp_path / "on.json", B,
+                                 to="Inspector Charlie")
+    assert payload["draft"]["kept"]["control"] == PHONE
+    store_c = drafts(tmp_path, "c")
+    result = ho.receive(c, ho.read_file(tmp_path / "on.json"),
+                        draft_store=store_c)
+    received = result["draft"]["received"]
+    assert received["control"] == PHONE
+    assert received["identity"]["report_id"] == "uid-1"
+    assert ho.kept_number(c, received) == PHONE
+
+
+def test_the_owner_who_finishes_a_phone_draft_knows_it_at_import(tmp_path):
+    owner = pc(tmp_path, "owner")
+    result, seen = from_phone(owner, drafts(tmp_path, "e"),
+                              owner_edition=True)
+    finish(owner, seen[0], PHONE, result["draft"]["received"],
+           owner_edition=True)
+    key = imp.report_identity({}, {"report_id": "uid-1",
+                                   "location_id": "handover:phone-1"})
+    assert imp.load_ledger(owner)[key]["control"] == PHONE
+
+
+def test_a_phone_draft_of_a_report_this_pc_has_is_refused(tmp_path):
+    b = pc(tmp_path, "b")
+    ho.receive(b, ho.read_file(DATA / "handover_from_android_report.json"))
+    store = drafts(tmp_path, "b")
+    with pytest.raises(ho.HandoverError, match="already has this report"):
+        from_phone(b, store)
+    assert store.list()[0] == []
+
+
+def test_a_phone_draft_needs_the_window(tmp_path):
+    b = pc(tmp_path, "b")
+    with pytest.raises(ho.HandoverError, match="window"):
+        ho.receive(b, ho.read_file(DATA / "handover_from_android_draft.json"),
+                   draft_store=drafts(tmp_path, "b"))
 
 
 def test_a_copy_renumbered_at_the_receiver_is_unchanged_for_the_owner(

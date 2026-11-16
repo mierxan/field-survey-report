@@ -10,7 +10,10 @@ Numbering: a saved report keeps the Control # it was first given, on every
 PC and phone. Only when that exact number is already used by ANOTHER report
 where it arrives does it get the next free number there. A draft of a new
 report has no number yet; it takes the finishing inspector's next number on
-its first save, as any new report does.
+its first save, as any new report does. A draft started on the Android
+app already has its number (the app numbers a report on its first save, also
+as a draft): it keeps it, and it becomes a draft on the PC that keeps the
+report's identity (see "phone drafts" below).
 
 The sender keeps a copy marked "handed over": it can be opened and printed,
 not saved, until it comes back (Receive Hand-over, or for the Owner Import
@@ -278,6 +281,11 @@ def describe(payload):
     who = sender.get("inspector") or sender.get("initials") or "an inspector"
     if payload["kind"] == "report":
         what = f"completed report {payload['report']['control_no']}"
+    elif payload["draft"].get("app") == "android":
+        phone = payload["draft"].get("report")
+        number = phone.get("controlNo") if isinstance(phone, dict) else ""
+        what = (f"unfinished report {number} (a draft from the phone app)"
+                if number else "an unfinished report from the phone app")
     elif payload.get("report"):
         what = (f"unfinished changes to report "
                 f"{payload['report']['control_no']}")
@@ -380,6 +388,10 @@ def hand_over_draft(excel_path, value, draft_store, target, sender, to="",
              "editing": bool(value["editing"]),
              "control": value["control"] if value["editing"] else "",
              "source": value.get("source", "excel")}
+    kept = _kept(value.get("received"))
+    if kept is not None and not value["editing"]:
+        # a phone draft received here: its number and identity go along
+        draft["kept"] = kept
     payload = _payload("draft", sender, to, note, report=report, draft=draft)
     _write_file(target, payload)
     if entry is not None:
@@ -574,8 +586,274 @@ def _receive_report(excel_path, payload, journal, stores, mysql,
     return result
 
 
+
+# ---------- phone drafts ----------
+#
+# A draft started on the Android app is the app's own report record. The PC
+# turns it into the Windows data shape (the same as the app's Master Data
+# export, MasterDataExport.reportJson, checked against a file the app's
+# tests write), and the window turns that into its draft form. The draft
+# keeps the phone's Control # and the report's identity in
+# value["received"]: the number is put on the form when the draft is
+# restored (the next free one when another report here has it by then), and
+# on its first save the identity is recorded (adopt), so it stays one
+# report: for a hand-back to the phone and for the Owner.
+
+PHONE_FORMS = ("Default", "Containerized", "Loading")
+_PHONE_LINE = (("Description of Goods", "description"),
+               ("PO Number", "poNumber"), ("Packaging", "packaging"),
+               ("Quantity", "quantity"), ("Dimensions", "dimensions"),
+               ("Weights", None), ("Unit Price", "unitPrice"),
+               ("Total Price", "totalPrice"), ("Findings", "findings"),
+               ("Cargo ID", "cargoId"), ("Receiving Ref", "receivingRef"),
+               ("UOM", "uom"), ("Currency", "currency"),
+               ("Container / Truck No.", "unitNo"))
+_PHONE_FILLED = ("description", "poNumber", "packaging", "quantity", "uom",
+                 "dimensions", "weights", "weightUnit", "currency",
+                 "unitPrice", "totalPrice", "findings", "unitNo")
+
+
+def _phone_text(value):
+    return value if isinstance(value, str) else ""
+
+
+def _phone_rows(values):
+    return [v for v in values if isinstance(v, dict)] \
+        if isinstance(values, list) else []
+
+
+def _phone_strings(values):
+    return [v for v in values if isinstance(v, str) and v.strip()] \
+        if isinstance(values, list) else []
+
+
+def phone_report_data(phone):
+    """The Windows data shape of a phone draft (the app's Report record)."""
+    def text(key, default=""):
+        return _phone_text(phone.get(key, default))
+
+    def line(value):
+        weight = " ".join(part for part in (
+            _phone_text(value.get("weights")).strip(),
+            _phone_text(value.get("weightUnit")).strip()) if part)
+        return {header: weight if key is None
+                else _phone_text(value.get(key))
+                for header, key in _PHONE_LINE}
+
+    def filled(value):
+        return any(_phone_text(value.get(key)).strip()
+                   for key in _PHONE_FILLED)
+
+    lists = phone.get("itemLists")
+    lists = lists if isinstance(lists, dict) else {}
+
+    def lists_of(form):
+        found = _phone_rows(lists.get(form)) if form in lists \
+            else [{"lines": []}]
+        return [{"name": f"Item List {number}",
+                 "rows": [line(row) for row in _phone_rows(
+                     value.get("lines")) if filled(row)]}
+                for number, value in enumerate(found, 1)]
+
+    form = text("itemForm", "Default")
+    condition = text("cargoCondition")
+    others = {}
+    for name in PHONE_FORMS:
+        if name != form:
+            found = lists_of(name)
+            if any(value["rows"] for value in found):
+                others[name] = found
+    incidents = []
+    if condition == "Bad Order":
+        for card in _phone_rows(phone.get("incidents", [{}])):
+            incidents.append({
+                **{key: _phone_text(card.get(name)) for key, name in (
+                    ("vessel", "vessel"), ("voyage", "voyage"),
+                    ("client", "client"), ("so_number", "soNumber"),
+                    ("port", "port"), ("date", "date"),
+                    ("operation", "operation"))},
+                "lines": _phone_strings(card.get("lines"))})
+    return {
+        "control_no": text("controlNo"), "last_saved": text("lastSaved"),
+        "cargo_condition": condition, "item_form": form,
+        "goods_types": {
+            "new": phone.get("goodsNew") is True,
+            "used": phone.get("goodsUsed") is True,
+            "food_stuffs": phone.get("goodsFoodStuff") is True,
+            "vehicle": phone.get("goodsVehicle") is True,
+            "pharma_chemicals": phone.get("goodsPharma") is True,
+            "others": phone.get("goodsOthers") is True,
+            "others_text": text("goodsOthersText")},
+        "general_information": {
+            "so_number": text("soNumber"),
+            "inspection_date": text("inspectionDate"),
+            "consignee": text("consignee"), "supplier": text("supplier"),
+            "brokerage": text("brokerage"), "hauler": text("hauler"),
+            "location": text("location"),
+            "destination": text("destination"),
+            "country_of_origin": text("countryOfOrigin")},
+        "inspection_schedule": {
+            "activity": text("activity"),
+            "commenced_date": text("commencedDate"),
+            "commenced_time": text("commencedTime"),
+            "completion_date": text("completionDate"),
+            "completion_time": text("completionTime")},
+        "transport_details": {
+            "shipment_type": text("shipmentType"),
+            "container_type": text("containerType"),
+            "vessel_carrier": text("vesselCarrier"),
+            "vehicle_type": text("vehicleType"),
+            "vehicle_plate_number": text("vehiclePlateNumber")},
+        "documents_used": {
+            "invoice_number": text("invoiceNumber"),
+            "po_number": text("poNumber"), "jo_number": text("joNumber"),
+            "gatepass_number": text("gatepassNumber"),
+            "bl_awb_number": text("blAwbNumber"),
+            "dr_number": text("drNumber"),
+            "other_documents": text("otherDocuments")},
+        "declared_goods": [
+            {key: _phone_text(good.get(key))
+             for key in ("description", "quantity", "packaging")}
+            for good in _phone_rows(phone.get("declaredGoods"))
+            if any(_phone_text(good.get(key)).strip()
+                   for key in ("description", "quantity", "packaging"))],
+        "other_important_remarks": _phone_strings(phone.get("otherRemarks")),
+        "item_lists": lists_of(form),
+        "other_item_forms": others,
+        "findings_and_remarks": _phone_strings(
+            phone.get("additionalDetails")),
+        "incident_reports": incidents,
+    }
+
+
+def _phone_identity(value):
+    """The identity a phone draft carries, checked, or None."""
+    if not isinstance(value, dict):
+        return None
+    revision = value.get("revision")
+    if not str(value.get("report_id") or "").strip() \
+            or isinstance(revision, bool) or not isinstance(revision, int) \
+            or revision < 1 or not isinstance(value.get("location_id"), str):
+        return None
+    origin = value.get("handover_origin")
+    return {"report_id": str(value["report_id"]).strip(),
+            "revision": revision, "location_id": value["location_id"],
+            "location_name": _phone_text(value.get("location_name")),
+            "handover_origin": {
+                "device": _phone_text(origin.get("device")),
+                "control": _phone_text(origin.get("control"))}
+            if isinstance(origin, dict) else None}
+
+
+def _kept(received):
+    """{"control", "identity"} of a draft that keeps its number (a phone
+    draft), or None."""
+    if not isinstance(received, dict):
+        return None
+    identity = _phone_identity(received.get("identity"))
+    control = _phone_text(received.get("control")).strip()
+    if identity is None or not control:
+        return None
+    return {"control": control, "identity": identity}
+
+
+def _without_own_refs(data, control):
+    """Receiving Refs made from the phone's number are given again when the
+    report is saved here, from the number it gets then."""
+    prefix = f"RCV-{control}-".casefold()
+    for lists in (data["item_lists"], *data["other_item_forms"].values()):
+        for value in lists:
+            for row in value["rows"]:
+                if str(row.get("Receiving Ref") or "").casefold() \
+                        .startswith(prefix):
+                    row["Receiving Ref"] = ""
+    return data
+
+
+def kept_number(excel_path, received):
+    """The Control # a restored draft that keeps its number gets: its own,
+    or the next free one when another report here has it. None for other
+    drafts."""
+    import fsr_store
+    kept = _kept(received)
+    if kept is None:
+        return None
+    store = fsr_store.open_store(excel_path)
+    if any(storage.same_key(n, kept["control"])
+           for n in store.control_numbers()):
+        return store.next_free_number(kept["control"])
+    return kept["control"]
+
+
+def adopt(excel_path, control, received, owner_edition=False):
+    """A draft that keeps its number (a phone draft) was saved here as
+    `control`: from now on it is the same report as on the phone. Returns
+    the entry, or None for other drafts."""
+    import fsr_store
+    kept = _kept(received)
+    if kept is None:
+        return None
+    phone = kept["identity"]
+    sender = received.get("from") if isinstance(received.get("from"),
+                                                dict) else {}
+    data = load(excel_path)
+    entry = data["reports"].get(phone["report_id"])
+    if entry is None:
+        entry = {"report_id": phone["report_id"],
+                 "location_id": phone["location_id"],
+                 "location_name": phone["location_name"],
+                 "origin": phone["handover_origin"] or {
+                     "device": sender.get("device_id", ""),
+                     "control": kept["control"]},
+                 "history": []}
+        data["reports"][phone["report_id"]] = entry
+    entry.update(control=control, state=ACTIVE,
+                 revision=phone["revision"] + 1, fingerprint=None)
+    entry.pop("to", None)
+    _note(entry, "received", sender=sender, revision=phone["revision"],
+          handover_id=received.get("handover_id"), draft=True,
+          sent_as=kept["control"])
+    report = fsr_store.open_store(excel_path).read_report(control)
+    _bump(entry, report)
+    _save(excel_path, data)
+    if owner_edition:
+        fsr_import.record_handover(
+            excel_path, {**clean(report), **identity(entry),
+                         "revision": phone["revision"]}, control,
+            device=sender.get("device_id", ""),
+            inspector=sender.get("inspector", ""),
+            result="received_handover")
+    return entry
+
+
+def _receive_phone_draft(excel_path, draft, to_form):
+    """(form, what the draft keeps) of a draft from the phone app."""
+    import fsr_store
+    phone = draft.get("report")
+    found = _phone_identity(draft.get("identity"))
+    if not isinstance(phone, dict) or found is None \
+            or not _phone_text(phone.get("controlNo")).strip():
+        raise HandoverError("The draft in the file is damaged.")
+    if to_form is None:
+        raise HandoverError("A draft from the phone app can only be "
+                            "received in the program's window.")
+    sent_as = phone["controlNo"].strip()
+    entry = load(excel_path)["reports"].get(found["report_id"])
+    if entry is not None:
+        numbers = fsr_store.open_store(excel_path).control_numbers()
+        here = next((n for n in numbers
+                     if storage.same_key(n, entry.get("control"))), None)
+        if here is not None:
+            raise HandoverError(
+                f"This PC already has this report as {here}, from an "
+                "earlier hand-over. Ask for it to be saved on the phone and "
+                "handed over as a completed report instead.")
+    data = _without_own_refs(phone_report_data(phone), sent_as)
+    return to_form(data), {"control": sent_as, "identity": found}
+
+
 def _receive_draft(excel_path, payload, draft_store, owner_label, control,
-                   sent_as):
+                   sent_as, to_form=None):
     import fsr_drafts
     import fsr_store
     from fsr_draft_form import validate_snapshot
@@ -585,7 +863,11 @@ def _receive_draft(excel_path, payload, draft_store, owner_label, control,
     if any((value.get("received") or {}).get("handover_id")
            == payload["handover_id"] for value in found):
         return None             # received before: one draft, not two
-    form = copy.deepcopy(draft["form"])
+    if draft["app"] == "android":
+        form, keeps = _receive_phone_draft(excel_path, draft, to_form)
+    else:
+        form = copy.deepcopy(draft["form"])
+        keeps = _kept(draft.get("kept"))
     if not validate_snapshot(form):
         raise HandoverError("The draft in the file is damaged.")
     editing = bool(draft.get("editing")) and control is not None
@@ -605,28 +887,26 @@ def _receive_draft(excel_path, payload, draft_store, owner_label, control,
              "form": form,
              "received": {"from": payload["from"], "at": now_text(),
                           "handover_id": payload["handover_id"]}}
+    if keeps is not None and not editing:
+        value["received"].update(keeps)
     draft_store.write(value)
     return value
 
 
 def receive(excel_path, payload, draft_store=None, owner_label="",
             journal=None, stores=None, mysql=False, owner_edition=False,
-            replace=False):
+            replace=False, to_form=None):
     """Bring a read_file() payload in. A report is added (keeping its
     number when it is free here) or updates this PC's copy when that was
     handed over from here; a draft becomes one of the signed-in account's
     drafts (`draft_store`: fsr_drafts.Store). HandoverConflict: this PC has
     its own working copy - call again with replace=True to replace it.
+    `to_form(data)`: the draft form of a report in the Windows data shape
+    (made by the window), needed for a draft from the phone app.
     Returns {"result", "control", "sent_as", "renumbered", "draft",
     "lists_failed"}."""
     excel_path = Path(excel_path)
     if payload["kind"] == "draft":
-        if payload["draft"]["app"] != APP:
-            raise HandoverError(
-                "This unfinished report was started on the Android app, so "
-                "it can only be continued on a phone with the Field Survey "
-                "Report app. A completed report can be received on any PC "
-                "or phone.")
         if draft_store is None:
             raise HandoverError("Drafts are not available. Sign in again.")
     result = {"result": None, "control": None, "renumbered": False,
@@ -638,7 +918,7 @@ def receive(excel_path, payload, draft_store=None, owner_label="",
     if payload["kind"] == "draft":
         result["draft"] = _receive_draft(
             excel_path, payload, draft_store, owner_label,
-            result["control"], result["sent_as"])
+            result["control"], result["sent_as"], to_form)
         if result["result"] is None:
             result["result"] = "draft" if result["draft"] else "unchanged"
     return result

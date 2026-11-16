@@ -19,6 +19,8 @@ read and write the same file.
   and who sent it, and brings it in after you say yes.
   - A received **report** opens with Open saved report (Ctrl+O).
   - A received **draft** is in Account > Unfinished work; Restore it there.
+    This includes a draft from the **phone app**: the PC turns it into one
+    of its own drafts.
 
 **Android:** open the report (Completed Reports), or for a draft tap the
 send icon in Draft Reports, then choose **Hand Over**. Type the next
@@ -35,7 +37,13 @@ inspector's name, then **Share** or **Save File**. To receive a file, go to
   kept. The receiver is told the new number, and Receiving Refs follow it.
 - A **draft of a new report** has no number yet (Windows). It takes the
   **finishing inspector's** next number when they first save it, like any
-  new report. A phone draft already has its number and keeps it.
+  new report.
+- A **phone draft** already has its number (the app numbers a report at
+  its first save, also as a draft) and keeps it, also on a PC: restored
+  there, the form shows the phone's number, and the first save uses it. If
+  another report on that PC has the number by then, it gets the next free
+  one, with the same initials. Its Receiving Refs are made again from the
+  number it is saved with.
 
 ## The sender's copy
 
@@ -89,10 +97,36 @@ before.
 
 - **Withdrawal reports linked to a PO** (Windows): their stock belongs to
   the location's PO lists. Hand-over refuses them with a message.
-- **Drafts between Windows and Android.** A Windows draft is the raw form,
-  and a phone draft is the phone's report record. Each is continued on the
-  same kind of device; the other one says so. **Completed reports** go
-  both ways.
+- **Windows drafts to a phone.** A Windows draft is the raw form of the
+  PC program; the app says it is continued on a PC. Save it as a report on
+  the PC and hand the completed report over instead. (Phone drafts go to a
+  PC; completed reports go both ways.)
+
+## A phone draft on a PC
+
+The PC turns the phone's report record into the Windows data shape exactly
+as the app's own Master Data export does
+(`fsr_handover.phone_report_data`; the tests compare it with a file the
+app's tests write), and then into a Windows draft by filling the form as
+for an opened saved report and reading it back. The form the inspector has
+open is put back exactly as it was, and nothing is shown in between.
+
+The Windows draft keeps, in `received`, the phone's Control # and the
+report's identity (`report_id`, `revision`, location, origin):
+
+- Restoring it puts that number on the form (`fsr_handover.kept_number`).
+- Its first save records the identity on that PC as for a received report,
+  with the next revision (`fsr_handover.adopt`; for the Owner also in the
+  import record). From then on it is the phone's report: handed back to
+  the phone, the phone updates its own copy, and in Master Data files the
+  Owner recognises it.
+- Handed on from that PC as a draft, the number and identity go along
+  (`draft.kept`).
+- A phone draft of a report the PC already has (from an earlier hand-over)
+  is refused: the phone should hand over the completed report instead.
+
+As on any PC save, times and prices are written in the PC's format (for
+example `0830H` and `10.00`).
 
 ## The file
 
@@ -111,7 +145,7 @@ The payload:
 | `app` | `windows` or `android`: the sending app. |
 | `created_at`, `from` (`inspector`, `initials`, `device_id`), `to`, `note` | Who handed it over, to whom, when. |
 | `report` | A saved report in the Windows data shape (as in Master Data files) with `report_id`, `revision`, `location_id`, `location_name`, `handover_origin` (`device`, `control`). For a Windows draft of a saved report: that saved report. Otherwise `null`. |
-| `draft` | Windows: `{"app": "windows", "form", "editing", "control", "source"}` (the raw form). Android: `{"app": "android", "report": <the phone's report>, "identity": {...}}`. `null` for a report. |
+| `draft` | Windows: `{"app": "windows", "form", "editing", "control", "source"}` (the raw form), plus `kept` (`control`, `identity`) for a phone draft handed on from a PC. Android: `{"app": "android", "report": <the phone's report>, "identity": {...}}`. `null` for a report. |
 
 `location_id` is `handover:<device of the first sender>` and stays the
 same for good. With `report_id` it is the report's identity at the Owner

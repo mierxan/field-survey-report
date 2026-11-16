@@ -174,3 +174,83 @@ def test_nothing_is_written_while_the_reports_move_into_the_database(
         assert "being moved" in answers.calls[0][2]
     finally:
         g["db_move_state"]["running"] = False
+
+
+def test_a_draft_from_the_phone_app_is_continued_and_keeps_its_number(app):
+    """A phone draft with every field: received while other work is on the
+    form (which stays as it was), restored with the phone's Control #, and
+    saved here as the same report the phone app itself would export."""
+    import fsr_draft_form
+    from pathlib import Path
+    g, answers = app
+    data = Path(__file__).resolve().parent / "data"
+    number = "FSR-PHN-202611-0007"
+    expected = json.loads((data / "android_rich_draft_windows_shape.json")
+                          .read_text(encoding="utf-8"))
+
+    g["new_report"](confirm=False)
+    g["set_entry"](g["SO_number_entry"], "SO-MY-OWN-WORK")
+    g["set_entry"](g["other_remarks_entries"][0], "My unsaved remark")
+    g["window"].update()
+    before = (fsr_draft_form.capture(g), dict(g["report_state"]),
+              g["control_entry"].get())
+    answers.calls.clear()
+    result = g["receive_handover"](
+        str(data / "handover_from_android_rich_draft.json"))
+    shown = g["draft_controller"].dialog
+    if shown is not None and shown.winfo_exists():
+        shown.destroy()
+    assert result["result"] == "draft"
+    said = "\n".join(c[2] for c in answers.calls)
+    assert f"unfinished report {number} (a draft from the phone app)" in said
+    assert f"it keeps its Control # {number} when you save it" in said
+    assert not [c for c in answers.calls if c[0] == "showerror"]
+    # the work on the form is as it was
+    assert (fsr_draft_form.capture(g), dict(g["report_state"]),
+            g["control_entry"].get()) == before
+
+    g["new_report"](confirm=False)
+    (value,) = [v for v in g["draft_controller"].store.list()[0]
+                if (v.get("received") or {}).get("control") == number]
+    assert g["draft_controller"].restore(value)
+    g["window"].update()
+    assert g["control_entry"].get() == number
+    assert g["SO_number_entry"].get() == "SO-PHONE-RICH"
+    answers.calls.clear()
+    assert g["save_report"]() is True, answers.calls
+    path = g["excel_state"]["path"]
+    saved = g["data_store"](path).read_report(number)
+    # the form writes times its own way, as for any report saved here
+    expected["inspection_schedule"].update(commenced_time="0830H",
+                                           completion_time="1145H")
+    expected["item_lists"][0]["rows"][0].update({"Unit Price": "10.00",
+                                                 "Total Price": "40.00"})
+    for key in ("cargo_condition", "item_form", "goods_types",
+                "general_information", "inspection_schedule",
+                "transport_details", "documents_used", "declared_goods",
+                "other_important_remarks", "findings_and_remarks"):
+        assert saved[key] == expected[key], key
+    columns = ("Description of Goods", "Quantity", "UOM", "Weights",
+               "Currency", "Unit Price", "Total Price", "Findings",
+               "Container / Truck No.", "Dimensions", "Cargo ID",
+               "Packaging")
+
+    def lines(lists):
+        return [[{c: str(row.get(c) or "") for c in columns}
+                 for row in value["rows"]] for value in lists]
+    assert lines(saved["item_lists"]) == lines(expected["item_lists"])
+    assert saved["item_lists"][0]["rows"][0]["Receiving Ref"] == \
+        f"RCV-{number}-1-01"
+    others = g["data_store"](path).load_item_forms(number)
+    assert lines(others["Default"]) == lines(
+        expected["other_item_forms"]["Default"])
+    incidents = saved["incident_reports"]
+    assert [card["lines"] for card in incidents] == [
+        card["lines"] for card in expected["incident_reports"]]
+    assert incidents[0]["vessel"] == "MV Invented"
+    # the phone's report: its id and next revision are recorded here
+    entry = fsr_handover.status(path, number)
+    assert entry["report_id"] == "uid-1" and entry["revision"] == 3
+    # and the draft is gone from Unfinished work
+    assert not [v for v in g["draft_controller"].store.list()[0]
+                if (v.get("received") or {}).get("control") == number]

@@ -11,6 +11,7 @@ from tkinter import messagebox, ttk
 
 import fsr_drafts as drafts
 import fsr_draft_form as form
+import fsr_handover
 import fsr_windows_session
 
 
@@ -83,6 +84,9 @@ class Controller:
         self.base_control = ''
         self.restored = False
         self.source = 'excel'
+        # A received draft's hand-over details; a phone draft keeps its
+        # Control # and identity in them until its first save (fsr_handover).
+        self.received = None
         self.warning = False
         self.pending = None
         self.dialog = None
@@ -211,7 +215,8 @@ class Controller:
                 'editing': self.h['report_state']['editing'],
                 'control': self.h['control_entry'].get().strip() if self.h['report_state']['editing'] else '',
                 'source': self.source, 'baseline': copy.deepcopy(self.baseline),
-                'form': form.capture(self.h)}
+                'form': form.capture(self.h),
+                **({'received': copy.deepcopy(self.received)} if self.received else {})}
 
     def checkpoint(self):
         value = self.value()
@@ -281,6 +286,7 @@ class Controller:
         self.status.set('')
         self.source = source
         self.restored = False
+        self.received = None
         self.base_control = data.get('control_no', '') if data else ''
         # No store read during ordinary Save; keep Phase 3's write/read counts.
         self.baseline = {'data': copy.deepcopy(data)} if data else {}
@@ -345,8 +351,11 @@ class Controller:
         try:
             form.restore(self.h, value['form'])
             self.h['report_state'].update(editing=value['editing'], dirty=True)
-            # A new draft never owns its previously displayed candidate number.
-            self.h['set_control_number'](value['control'] if value['editing'] else self.h['next_new_control_number']())
+            # A new draft never owns its previously displayed candidate number,
+            # except a phone draft: the phone gave it its number.
+            kept = None if value['editing'] else self.kept_number(value)
+            self.h['set_control_number'](value['control'] if value['editing'] else kept or self.h['next_new_control_number']())
+            self.received = copy.deepcopy(value.get('received')) or None
             self.draft_id, self.revision = value['id'], value['revision'] + 1
             self.changed_text = value['changed']
             self.base_control = value['control']
@@ -359,6 +368,24 @@ class Controller:
         finally:
             self.muted = False
         return True
+
+    def kept_number(self, value):
+        try:
+            return fsr_handover.kept_number(self.h['excel_state']['path'], value.get('received'))
+        except (OSError, ValueError, KeyError, TypeError):
+            self.h['log'].exception('The number of a received draft could not be checked')
+            return None
+
+    def adopt(self, data):
+        """The first save of a phone draft: it is the phone's report here."""
+        received, self.received = self.received, None
+        if not (received or {}).get('identity') or self.base_control:
+            return
+        try:
+            fsr_handover.adopt(self.h['excel_state']['path'], data['control_no'], received,
+                               bool(self.h.get('IS_OWNER_EDITION')))
+        except Exception:       # the report is saved; its identity is a record beside it
+            self.h['log'].exception('The hand-over identity of a saved draft was not recorded')
 
     def before_save(self):
         self.suspended = False
@@ -384,6 +411,7 @@ class Controller:
         return ref
 
     def saved(self, data, record, failed, journal):
+        self.adopt(data)
         # Side-file failures without a journal have no durable repair copy.
         if journal is None and any(k in failed for k in ('incidents', 'item_forms')):
             self.h['report_state']['dirty'] = True
@@ -442,7 +470,8 @@ class Controller:
                 state = f"Received from {sender.get('inspector') or sender.get('initials') or 'an inspector'}"
             if value.get('session') != self.session and fsr_windows_session.draft_is_running(value):
                 state = 'Open in another session'
-            tree.insert('', 'end', iid=str(index), values=(value['control'] or 'New report',
+            kept = (value.get('received') or {}).get('control') if (value.get('received') or {}).get('identity') else ''
+            tree.insert('', 'end', iid=str(index), values=(value['control'] or kept or 'New report',
                 value['form'].get('simple', {}).get('SO_number_entry', ''),
                 datetime.fromisoformat(value['changed']).astimezone().strftime('%Y-%m-%d %H:%M:%S'), state))
         def selected():
