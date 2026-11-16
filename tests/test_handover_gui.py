@@ -254,3 +254,48 @@ def test_a_draft_from_the_phone_app_is_continued_and_keeps_its_number(app):
     # and the draft is gone from Unfinished work
     assert not [v for v in g["draft_controller"].store.list()[0]
                 if (v.get("received") or {}).get("control") == number]
+
+
+def test_a_phone_draft_without_any_item_list_is_continued(app, tmp_path):
+    """A real phone draft had no item lists at all: restored, the form shows
+    one empty Item List, and it saves with the phone's number."""
+    from pathlib import Path
+    g, answers = app
+    data = Path(__file__).resolve().parent / "data"
+    payload = fsr_handover.read_file(data / "handover_from_android_draft.json")
+    payload["handover_id"] = "e" * 32
+    phone = payload["draft"]["report"]
+    number = "FSR-PHN-202611-0099"
+    phone.update(controlNo=number, cargoCondition="", otherRemarks=[],
+                 additionalDetails=[], soNumber="SO-NO-ITEM-LISTS",
+                 itemLists={"Default": [], "Containerized": [],
+                            "Loading": []})
+    payload["draft"]["identity"]["report_id"] = "uid-empty-lists"
+    file = tmp_path / "empty_lists.json"
+    file.write_text(json.dumps(fsr_handover._envelope(payload)),
+                    encoding="utf-8")
+
+    g["new_report"](confirm=False)
+    answers.calls.clear()
+    assert g["receive_handover"](str(file))["result"] == "draft"
+    shown = g["draft_controller"].dialog
+    if shown is not None and shown.winfo_exists():
+        shown.destroy()
+    assert not [c for c in answers.calls if c[0] == "showerror"]
+    (value,) = [v for v in g["draft_controller"].store.list()[0]
+                if (v.get("received") or {}).get("control") == number]
+    assert g["draft_controller"].restore(value)
+    g["window"].update()
+    assert g["control_entry"].get() == number
+    assert len(g["item_frames"]) == 1
+    # the phone left Cargo Condition empty: SAVE asks for it first
+    answers.calls.clear()
+    assert g["save_report"]() is False
+    assert answers.calls[0][1] == "Cargo Condition"
+    g["choose_condition"]("Good Order")
+    assert g["save_report"]() is True
+    path = g["excel_state"]["path"]
+    saved = g["data_store"](path).read_report(number)
+    assert saved["general_information"]["so_number"] == "SO-NO-ITEM-LISTS"
+    assert fsr_handover.status(path, number)["report_id"] == \
+        "uid-empty-lists"

@@ -578,3 +578,25 @@ def test_a_copy_renumbered_at_the_receiver_is_unchanged_for_the_owner(
     assert summary["unchanged"] == [NUMBER]
     assert summary["pending_review"] == []
     assert summary["renumbered"] == [(NUMBER, "FSR-ALP-202611-0002")]
+
+
+def test_a_phone_draft_without_any_item_list_is_received(tmp_path):
+    """A phone draft can have no item lists at all ("Default": []), as in a
+    real draft: the app's export then has none either."""
+    payload = ho.read_file(DATA / "handover_from_android_draft.json")
+    phone = payload["draft"]["report"]
+    phone.update(itemLists={"Default": [], "Containerized": [],
+                            "Loading": []}, otherRemarks=[],
+                 additionalDetails=[], cargoCondition="")
+    data = ho.phone_report_data(phone)
+    assert data["item_lists"] == [] and data["other_item_forms"] == {}
+    assert data["other_important_remarks"] == []
+    file = tmp_path / "empty.json"
+    file.write_text(json.dumps(ho._envelope(payload)), encoding="utf-8")
+    b = pc(tmp_path, "b")
+    seen = []
+    result = ho.receive(b, ho.read_file(file),
+                        draft_store=drafts(tmp_path, "b"),
+                        to_form=lambda value: seen.append(value) or snapshot())
+    assert result["draft"]["received"]["control"] == PHONE
+    assert seen[0]["item_lists"] == []
