@@ -213,9 +213,6 @@ class TransactionLine:
     findings: str
     remarks: str
     problems: list = field(default_factory=list)
-    currency: str = ""          # of the Unit Price and Total Price
-    unit_price: str = ""        # as recorded
-    total_price: str = ""
 
     @property
     def cargo_key(self):
@@ -304,9 +301,6 @@ def report_to_transaction(report):
                 findings=str(row.get("Findings") or "").strip(),
                 remarks=remarks,
                 problems=problems,
-                currency=str(row.get("Currency") or "").strip(),
-                unit_price=str(row.get("Unit Price") or "").strip(),
-                total_price=str(row.get("Total Price") or "").strip(),
             ))
     tx.line_count = len(tx.lines)
     return tx

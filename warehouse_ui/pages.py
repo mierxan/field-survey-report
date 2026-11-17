@@ -10,13 +10,12 @@ from warehouse import analytics as an
 from warehouse import exports
 from warehouse import periods as pr
 from warehouse import tables as tbl
-from warehouse import values as val
 from warehouse.transactions import BAD_ORDER, RECEIVING, WITHDRAWAL
 
 from .components import (Card, ChartPanel, DataTable, EmptyState, KpiGrid,
                          PeriodBar, ScrollPage, ask_export,
                          explain_load_error, fill_choices, section_label)
-from .dialogs import DetailPanel, ask_case_status, ask_php_rates, line_pairs
+from .dialogs import DetailPanel, ask_case_status, line_pairs
 
 DATE_FORMAT = "%d-%b-%Y"
 
@@ -144,57 +143,6 @@ class DashboardPage(Page):
                                 "Receiving batches with a remaining balance")
         self.aging.grid(row=2, column=0, columnspan=2, sticky="we",
                         pady=(10, 0))
-        self.filters = None
-        self.value = None
-        if getattr(self.ctx, "owner_edition", True):
-            # Owner edition only: what the suppliers' deliveries are worth
-            self.value = ChartPanel(
-                charts, "Top 10 Suppliers by Total Value (PHP)",
-                "Receiving reports in the period: the Total Price of every "
-                "cargo line (Unit Price x Quantity when it is empty), other "
-                "currencies converted to PHP", height=330)
-            self.value.grid(row=3, column=0, columnspan=2, sticky="we",
-                            pady=(10, 0))
-            tb.Button(self.value.header, text="Exchange Rates to PHP...",
-                      bootstyle="secondary-outline",
-                      command=self.edit_rates).grid(row=0, column=1,
-                                                    rowspan=2, sticky="ne")
-            self.value_note = ttk.Label(self.value.content,
-                                        style="CardMuted.TLabel",
-                                        wraplength=900, justify="left")
-            self.value_note.grid(row=1, column=0, sticky="w", pady=(6, 0))
-
-    def edit_rates(self):
-        snap = self.snapshot
-        if snap is None:
-            return
-        ask_php_rates(self.ctx, snap.side, val.currencies_in(
-            snap.transactions), self._rates_saved)
-
-    def _rates_saved(self):
-        if self.filters is not None:
-            self.render_filters(self.filters)
-
-    def _show_values(self, snap, filters):
-        rates = snap.side.php_rates()
-        result = val.top_suppliers_by_value(snap.transactions, filters, rates)
-        if result.rows:
-            self.value.bars([name for name, _, _ in result.rows],
-                            [("Total value (PHP)",
-                              [value for _, value, _ in result.rows],
-                              "receiving")],
-                            horizontal=True, value_label="Total value (PHP)",
-                            fmt=val.fmt_php)
-            if self.value.ax is not None:
-                from matplotlib.ticker import FuncFormatter
-                self.value.ax.xaxis.set_major_formatter(
-                    FuncFormatter(lambda v, _: f"{v:,.0f}"))
-                self.value.canvas.draw_idle()
-        else:
-            self.value.empty("No priced Receiving cargo lines for the "
-                             "selected filters.")
-        self.value_note.configure(
-            text=result.note() + "\nRates: " + val.rates_text(rates))
 
     def render(self, snapshot):
         fill_choices(self.bar, snapshot.transactions)
@@ -204,7 +152,6 @@ class DashboardPage(Page):
         snap = self.snapshot
         if snap is None:
             return
-        self.filters = filters
         self.inspection.show(an.inspection_kpis(snap.transactions, filters))
         kpis = an.warehouse_kpis(snap.transactions, snap.inventory, filters)
         self.activity.show(kpis[:4])
@@ -228,8 +175,6 @@ class DashboardPage(Page):
         _color_bars(self.good_bad, ["good", "critical"])
         _status_chart(self.status, snap.inventory, filters.warehouse)
         _aging_chart(self.aging, snap.inventory, filters.warehouse)
-        if self.value is not None:
-            self._show_values(snap, filters)
 
 
 def _color_bars(panel, tokens_):

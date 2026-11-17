@@ -102,7 +102,7 @@ def save_report():
     if not fsr_text_flow.validate(host_globals()):
         return False
 
-    # a price with no Currency cannot be counted in the value reports
+    # a price with no Currency cannot be added to the Summary's totals
     if not host.prices_have_currency():
         return False
 

@@ -69,28 +69,6 @@ Weekly Summary > **All (interactive)** (`InteractiveDashboard.kt`, its own
 xlsx writer). It also saves every formula's value for the first choices,
 so phone viewers that do not calculate still show the cards and charts.
 
-## Owner Dashboard: Top 10 Suppliers by Total Value (PHP)
-
-On the Owner edition's **Dashboard** page (not an Excel sheet): the ten
-suppliers whose Receiving deliveries in the chosen period and warehouse
-are worth the most, in Philippine pesos. Withdrawal reports are never
-counted.
-
-- A cargo line's value: its **Total Price**, or **Unit Price x Quantity**
-  when the Total Price is empty, in the line's **Currency** (a code typed
-  with the price, as in `jpy 4,000.-`, is used when the Currency column is
-  empty).
-- **Exchange Rates to PHP...**: one rate per currency (1 USD = n PHP),
-  entered by the owner and kept in the warehouse settings file with the
-  date and user. The program is offline and never fetches rates.
-- Left out and counted in the note under the chart: lines in a currency
-  without a rate, lines with a price but no currency, lines without a
-  price.
-- Suppliers are grouped by their name as typed: two spellings of one
-  supplier are two bars.
-- Code: `warehouse/values.py` (the figures), `DashboardPage` in
-  `warehouse_ui/pages.py` and `ask_php_rates` in `warehouse_ui/dialogs.py`.
-
 ## Periods
 
 - PC: a week is Monday to Sunday; a month is the calendar month.
@@ -111,3 +89,34 @@ counted.
   and `XlsxCharts` (the chart parts of its own xlsx writer). The chart
   parts also carry the figures as a cache, so viewers that do not
   recalculate still show the charts.
+
+## How the charts fit (Phase 12)
+
+Every dashboard chart, PC and phone, is placed by its cells
+(`warehouse/chart_style.py`; phone: `ChartPlace` in `XlsxCharts.kt`):
+
+- **Pinned to cells**, not sized in centimetres: a chart covers columns
+  A-H, I-P or A-P and 17 rows; the 18th row is the gap to the next charts.
+  A chart in centimetres came out wider than its columns wherever the
+  columns are drawn narrower - Windows display scaling above 100%, WPS
+  Office, phone viewers - and lay under the chart beside it.
+- **A gap** of a few pixels between two charts side by side, and a small
+  margin inside the right edge and the foot: printed, Excel draws a chart
+  a little bigger than its cells. The print area has one spare column (Q)
+  for the same reason.
+- **Title and legend in their own place**: both are marked as not lying on
+  the chart (`overlay` 0), every text has its own size (title 14 pt,
+  axes, labels and legend 9 pt), and legends sit under the chart. Viewers
+  that guessed otherwise drew the title over the "Selected / Other days"
+  legend.
+- **A month of days** is labelled with the day number (1 ... 31); 31
+  dates side by side ran together. A week keeps its dates (26-Oct ...).
+- Numbers inside the stacked bars of the interactive Dashboard are white.
+- Card texts shrink to fit their card.
+- **Printed pages** start between charts: the banner, cards and first
+  charts on page 1, then two rows of charts a page; the figures behind the
+  charts start a new page. The page starts on the empty row above a chart,
+  so no edge of it shows at the foot of the page before.
+
+Checked by opening the files in Excel and saving each Dashboard as a
+picture and as a PDF; `tests/test_chart_layout.py` keeps the rules.

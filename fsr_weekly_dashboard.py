@@ -99,6 +99,7 @@ def add_dashboard(wb, title, rows, controls, first_day, last_day,
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     from openpyxl.utils import get_column_letter
     from openpyxl.workbook.defined_name import DefinedName
+    from warehouse import chart_style
     from openpyxl.worksheet.datavalidation import DataValidation
 
     records = data_rows(rows, controls, packages)
@@ -209,7 +210,9 @@ def add_dashboard(wb, title, rows, controls, first_day, last_day,
         count = f"SUMIFS({TX},{DAY},{number},{no_week})"
         qty = f"SUMIFS({QTY},{DAY},{number},{no_week})"
         week = week_of(number)
-        day_lines.append((day.strftime("%d-%b"),
+        # a month: the day of the month only (31 dates ran together)
+        day_lines.append((day.strftime("%d-%b") if len(days) <= 7
+                          else str(day.day),
                           f"=IF({in_week(week)},{count},0)",
                           f"=IF({in_week(week)},0,{count})",
                           f"=IF({in_week(week)},{qty},0)",
@@ -403,7 +406,7 @@ def add_dashboard(wb, title, rows, controls, first_day, last_day,
             cell = ws.cell(row=r, column=first, value=text)
             cell.font = font
             cell.alignment = Alignment(horizontal="left", vertical="center",
-                                       indent=1)
+                                       indent=1, shrink_to_fit=True)
             if r == 10 and index < 3:
                 cell.number_format = "#,##0"
     for r, height in ((9, 20), (10, 24), (11, 24), (12, 16), (13, 10)):
@@ -455,14 +458,15 @@ def add_dashboard(wb, title, rows, controls, first_day, last_day,
         if horizontal:
             chart.x_axis.scaling.orientation = "maxMin"
             chart.y_axis.crosses = "max"
-        if axis:
-            chart.y_axis.title = axis
         if len(columns) > 1:
-            chart.legend.position = "t"
+            chart.legend.position = "b"
         else:
             chart.legend = None
-        chart.title = title
-        chart.width, chart.height = 16.5, 8.4
+        chart_style.finish(chart, title, axis, horizontal=horizontal)
+        if labels and stacked:
+            # stacked: the numbers stand inside the coloured bars
+            chart.series[0].dLbls.txPr = chart_style.text(bold=True,
+                                                          color="FFFFFF")
         return chart
 
     def ring(name, title, colors):
@@ -477,9 +481,7 @@ def add_dashboard(wb, title, rows, controls, first_day, last_day,
         chart.dataLabels = labels_only(values=False, percent=True)
         chart.dataLabels.numFmt = "0%;-0%;;"         # no label for 0%
         chart.legend.position = "b"
-        chart.title = title
-        chart.width, chart.height = 16.5, 8.4
-        return chart
+        return chart_style.finish(chart, title)
 
     top_day = max(totals_by_day.values() or [1])
     week_totals = Counter(r[3] for r in records if r[10])
@@ -503,15 +505,18 @@ def add_dashboard(wb, title, rows, controls, first_day, last_day,
               labels=len(days) <= 7),
          "A", start + 3 * CHART_ROWS, False),
     ]
+    alone = "destinations" not in tables
     if "destinations" in tables:
         placed.append((bars(
             "destinations", "Withdrawal: Shipments per Destination", [2],
             [dash.AMBER], max(by_place.values() or [1]), horizontal=True,
             stacked=False), "I", start + 3 * CHART_ROWS, False))
     for chart, column, at, wide in placed:
-        if wide:
-            chart.width = 33.4
-        ws.add_chart(chart, f"{column}{at}")
+        if wide or (alone and at == start + 3 * CHART_ROWS):
+            side = "wide"
+        else:
+            side = "left" if column == "A" else "right"
+        chart_style.place(ws, chart, at, CHART_ROWS, side, COLUMNS)
 
     # Withdrawal: the delivery destinations as a table with in-cell bars
     at = start + 4 * CHART_ROWS
@@ -582,7 +587,13 @@ def add_dashboard(wb, title, rows, controls, first_day, last_day,
     ws.page_setup.fitToWidth = 1
     ws.page_setup.fitToHeight = 0
     ws.sheet_properties.pageSetUpPr.fitToPage = True
-    ws.print_area = f"A1:{last}{end_row}"
+    # one spare column: Excel prints a chart a little wider than its cells
+    ws.print_area = f"A1:{get_column_letter(COLUMNS + 1)}{end_row}"
+    # printed: the dropdowns, cards and the day chart on page 1, then two
+    # rows of charts a page, the last with the destinations - no chart
+    # cut in two
+    chart_style.page_breaks(ws, [start - 1 + CHART_ROWS,
+                                 start - 1 + 3 * CHART_ROWS])
     # the formulas are worked out when Excel opens the file
     wb.calculation.fullCalcOnLoad = True
     return ws

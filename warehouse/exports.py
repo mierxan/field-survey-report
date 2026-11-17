@@ -467,6 +467,7 @@ def write_dashboard(wb, board):
     from openpyxl.drawing.line import LineProperties
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     from openpyxl.utils import get_column_letter
+    from warehouse import chart_style
 
     ws = wb.create_sheet("Dashboard", 0)
     wb.active = 0
@@ -536,7 +537,8 @@ def write_dashboard(wb, board):
             1: dash.GREEN, -1: dash.RED}.get(card.trend, "64748B"))
         for row in (5, 6, 8, 9):
             ws.cell(row=row, column=first).alignment = Alignment(
-                horizontal="left", vertical="center", indent=1)
+                horizontal="left", vertical="center", indent=1,
+                shrink_to_fit=True)
     for row, height in ((5, 20), (6, 24), (7, 24), (8, 16), (9, 18)):
         ws.row_dimensions[row].height = height
 
@@ -545,6 +547,7 @@ def write_dashboard(wb, board):
     compare_row = 11 + panels_rows
     tables_row = compare_row + len(board.comparison) + 4
     data_row = tables_row + sum(len(t.rows) + 5 for t in board.tables) + 1
+    figures_row = data_row
     ws.cell(row=data_row, column=1,
             value="FIGURES BEHIND THE CHARTS").font = Font(
         bold=True, size=11, color=NAVY)
@@ -563,7 +566,8 @@ def write_dashboard(wb, board):
             ws.merge_cells(f"A{row}:D{row}")
             ws.cell(row=row, column=1, value=str(label))
             cell = ws.cell(row=row, column=5, value=value)
-            cell.number_format = "#,##0" if float(value).is_integer()                 else "#,##0.00"
+            cell.number_format = "#,##0" if float(value).is_integer() \
+                else "#,##0.00"
             if offset % 2:
                 for col in range(1, 6):
                     ws.cell(row=row, column=col).fill = fill(LIGHT)
@@ -618,12 +622,8 @@ def write_dashboard(wb, board):
             made.dataLabels = labels_only()
             made.dataLabels.numFmt = "#,##0;-#,##0;;"   # no label for 0
             style_axes(made, chart.values, horizontal=chart.kind == "bar")
-            if chart.axis_title:
-                made.y_axis.title = chart.axis_title
-        made.title = chart.title
-        made.width = 16.5
-        made.height = 8.4
-        return made
+        return chart_style.finish(made, chart.title, chart.axis_title,
+                                  horizontal=chart.kind == "bar")
 
     alone = len(board.charts) % 2 == 1         # the last one: full width
     for index, chart in enumerate(board.charts):
@@ -637,8 +637,10 @@ def write_dashboard(wb, board):
         first, last = figures(chart)
         made = make(chart, first, last)
         if alone and index == len(board.charts) - 1:
-            made.width = 33.4
-        ws.add_chart(made, f"{column}{row}")
+            side = "wide"
+        else:
+            side = "left" if index % 2 == 0 else "right"
+        chart_style.place(ws, made, row, CHART_ROWS, side, DASH_COLUMNS)
 
     # comparison with the previous period
     title = f"COMPARED WITH {board.previous_label.upper()}" \
@@ -708,7 +710,16 @@ def write_dashboard(wb, board):
     ws.page_setup.fitToWidth = 1
     ws.page_setup.fitToHeight = 0
     ws.sheet_properties.pageSetUpPr.fitToPage = True
-    ws.print_area = f"A1:{last_col}{max(data_row, compare_row + 6)}"
+    # one spare column: Excel prints a chart a little wider than its cells
+    spare = get_column_letter(DASH_COLUMNS + 1)
+    ws.print_area = f"A1:{spare}{max(data_row, compare_row + 6)}"
+    # printed: the banner, the cards and the first charts on page 1, then
+    # two rows of charts a page, then the tables and, from a new page, the
+    # figures - no chart cut in two
+    chart_rows = (len(board.charts) + 1) // 2
+    chart_style.page_breaks(
+        ws, [10 + r * CHART_ROWS for r in range(1, chart_rows, 2)]
+        + [figures_row])
     return ws
 
 

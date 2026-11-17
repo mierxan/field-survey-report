@@ -1,4 +1,4 @@
-"""Detail panel, the case-status dialog and the exchange rates to PHP."""
+"""Detail panel and the case-status dialog."""
 
 import tkinter
 from tkinter import messagebox, ttk
@@ -123,83 +123,6 @@ def ask_case_status(ctx, side, control_no, on_saved):
 
     row = ttk.Frame(body)
     row.grid(row=6, column=0, columnspan=3, sticky="we", pady=(14, 0))
-    tb.Button(row, text="Save", bootstyle="primary", width=10,
-              command=save).pack(side="right")
-    tb.Button(row, text="Cancel", bootstyle="secondary-outline", width=10,
-              command=dialog.destroy).pack(side="right", padx=8)
-    dialog.bind("<Escape>", lambda e: dialog.destroy())
-    return dialog
-
-
-def ask_php_rates(ctx, side, found, on_saved):
-    """Enter the exchange rates to PHP used by the Dashboard's Top 10
-    Suppliers by Total Value. found: the currencies the reports use."""
-    from fsr_storage import CURRENCIES
-    from warehouse.values import HOME
-    current = side.php_rates()
-    codes = sorted((set(CURRENCIES) | set(found) | set(current)) - {HOME})
-    dialog = tb.Toplevel(ctx.window)
-    dialog.title("Exchange Rates to PHP")
-    dialog.transient(ctx.window)
-    dialog.resizable(False, False)
-    body = ttk.Frame(dialog, padding=20)
-    body.pack(fill="both", expand=True)
-    ttk.Label(body, text="Exchange Rates to PHP",
-              font=("Segoe UI", 11, "bold")).grid(row=0, column=0,
-                                                  columnspan=4, sticky="w")
-    tb.Label(body, text=(
-        "How many pesos one unit of each currency is worth. Used for the "
-        "Top 10 Suppliers by Total Value on the Dashboard. Leave a currency "
-        "empty to leave its prices out."), bootstyle="secondary",
-        wraplength=420, justify="left").grid(row=1, column=0, columnspan=4,
-                                             sticky="w", pady=(2, 12))
-    entries = {}
-    for index, code in enumerate(codes, start=2):
-        ttk.Label(body, text=f"1 {code} =").grid(row=index, column=0,
-                                                 sticky="e", pady=3)
-        entry = tb.Entry(body, width=14, justify="right")
-        if code in current:
-            entry.insert(0, f"{current[code]:g}")
-        entry.grid(row=index, column=1, padx=6, pady=3)
-        ttk.Label(body, text="PHP").grid(row=index, column=2, sticky="w")
-        if code in found:
-            tb.Label(body, text="used in the reports",
-                      bootstyle="secondary").grid(row=index, column=3,
-                                                  sticky="w", padx=(10, 0))
-        entries[code] = entry
-    last = len(codes) + 2
-    updated = side.php_rates_updated()
-    if updated:
-        tb.Label(body, text=f"Last changed {updated[0].replace('T', ' ')}"
-                  + (f" by {updated[1]}" if updated[1] else ""),
-                  bootstyle="secondary").grid(row=last, column=0,
-                                              columnspan=4, sticky="w",
-                                              pady=(8, 0))
-
-    def save():
-        rates = {}
-        for code, entry in entries.items():
-            text = entry.get().strip().replace(",", "")
-            if not text:
-                continue
-            try:
-                rates[code] = float(text)
-            except ValueError:
-                messagebox.showerror("Exchange Rates to PHP",
-                                     f"The rate for {code} is not a number.",
-                                     parent=dialog)
-                return
-        try:
-            side.set_php_rates(rates, ctx.user_name)
-        except (ValueError, OSError) as error:
-            messagebox.showerror("Exchange Rates to PHP", str(error),
-                                 parent=dialog)
-            return
-        dialog.destroy()
-        on_saved()
-
-    row = ttk.Frame(body)
-    row.grid(row=last + 1, column=0, columnspan=4, sticky="we", pady=(14, 0))
     tb.Button(row, text="Save", bootstyle="primary", width=10,
               command=save).pack(side="right")
     tb.Button(row, text="Cancel", bootstyle="secondary-outline", width=10,

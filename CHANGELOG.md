@@ -1,5 +1,26 @@
 # Field Survey Report changelog
 
+## Phase 12 - Dashboards that fit (unreleased, 17 November 2026)
+
+- **Excel Dashboards (Weekly / Monthly reports and the interactive
+  Weekly Summary): every chart now fits its place.** Charts are pinned to
+  their cells, with a small gap between two side by side, so they no
+  longer run under the next chart on PCs with display scaling, in WPS
+  Office or on phones. The chart title and the legend ("Selected / Other
+  days") each have their own place and no longer print on top of each
+  other; legends sit under the chart.
+- A month of days is labelled 1 ... 31 (the 31 dates ran together).
+- White numbers inside the blue and purple bars of the interactive
+  Dashboard; card texts shrink to fit their card.
+- Printed, no chart is cut between two pages, and nothing is cut at the
+  right edge.
+- **Removed: Top 10 Suppliers by Total Value (PHP)** and its **Exchange
+  Rates to PHP...** window, from the Owner edition's Dashboard page
+  (Phase 10). Rates already entered stay in the settings file, unused.
+  The missing-Currency question when saving stays: its message now says
+  the price cannot be added to the Summary report's totals.
+- The phone app's dashboards have the same changes (next phone release).
+
 ## Phase 11 - Open a hand-over file (unreleased, 17 November 2026)
 
 - **Double-click a hand-over file.** Hand Over now saves

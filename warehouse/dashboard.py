@@ -241,10 +241,11 @@ def build(summary, kind):
         "bar", f"Top {party}s (transactions)",
         [p for p, _ in parties], [c for _, c in parties], PURPLE))
     if kind == "monthly":
+        # the day of the month only: 31 dates side by side ran together
         per_day = _per_bucket(summary, "day", "transactions")
         charts.append(Chart(
             "column", "Transactions per Day",
-            [bucket_label(d, "day") for d in per_day], list(per_day.values()),
+            [str(d.day) for d in per_day], list(per_day.values()),
             BLUE, axis_title="Transactions"))
     sites = _top(summary.by_warehouse)
     charts.append(Chart("bar", "Transactions per Site / Warehouse",

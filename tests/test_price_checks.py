@@ -25,3 +25,16 @@ def test_the_warning_names_each_line():
     assert "Item List 1: line 3" in text
     assert "Item List 2: lines 1, 4" in text
     assert text.endswith("Save anyway?")
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("1,250.50", (1250.5, "")),
+    ("jpy 4,000.-", (4000.0, "JPY")),
+    ("PHP 16,000", (16000.0, "PHP")),
+    ("₱ 500", (500.0, "PHP")),
+    ("1,000 usd", (1000.0, "USD")),
+    ("n/a", (None, "")),
+    ("", (None, "")),
+])
+def test_prices_are_read_with_their_currency(text, expected):
+    assert checks.parse_money(text) == expected
