@@ -80,12 +80,14 @@ except ImportError:
 # Field definitions + Excel storage (fsr_storage.py beside this script).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fsr_paths
+import fsr_price_checks            # a price without a currency
 import fsr_backup                  # the daily backups (shown in Account)
 import fsr_edition                 # Owner app (Excel + MySQL) or User app
 import fsr_import                  # Master Data files from the sites/phones
 import fsr_master_export           # one Master Data file for the owner
 import fsr_handover                # a report or draft for the next inspector
 import fsr_handover_ui
+import fsr_incoming                # a hand-over file opened from Windows
 import fsr_mysql_guard             # never overwrite another copy's report
 import fsr_mysql_sender            # MySQL in the background
 import fsr_save_journal            # finishes a save that stopped halfway
@@ -756,6 +758,23 @@ def update_line_counter(label, used, limit):
         text, color = f"{used} of {limit} lines used", "secondary"
 
     label.configure(text=text, bootstyle=color)
+
+
+def prices_have_currency():
+    """Before a save: every line with a price has a Currency, or the user
+    chose to save anyway. Returns True to go on with the save."""
+    places = []
+    for section in item_frames:
+        numbers = section.lines_missing_currency()
+        if numbers:
+            places.append((section.frame.cget("text"), numbers))
+    if not places:
+        return True
+    notebook.select(items_tab)
+    return messagebox.askyesno(
+        "Price Without a Currency",
+        fsr_price_checks.missing_currency_text(places),
+        icon="warning", default="no", parent=window)
 
 
 def total_item_rows():
@@ -3917,6 +3936,46 @@ def receive_handover(chosen=None):
     return fsr_handover_ui.receive(globals(), chosen)
 
 
+INCOMING_FIRST_MS = 1500        # after the start-up questions (drafts ...)
+INCOMING_POLL_MS = 1000
+
+
+def poll_incoming_handover():
+    """A hand-over file opened from Windows (fsr_incoming): offered as soon
+    as the window is free - no other window waiting for an answer, the
+    reports not being moved into the database."""
+    try:
+        if window.grab_current() is None and \
+                not db_move_state.get("running"):
+            receive_incoming_handover()
+    except Exception:
+        log.exception("An opened hand-over file could not be received")
+    finally:
+        window.after(INCOMING_POLL_MS, poll_incoming_handover)
+
+
+def receive_incoming_handover():
+    """The next opened hand-over file, with the usual Receive Hand-over
+    question (nothing comes in without Yes). It leaves the incoming folder
+    whatever the answer; the inspector's own file is not touched."""
+    path = incoming_state.get("direct")
+    queued = path is None
+    if queued:
+        path = fsr_incoming.take(INCOMING_DIR)
+    if path is None:
+        return None
+    incoming_state["direct"] = None
+    try:
+        if window.state() == "iconic":
+            window.deiconify()
+        window.lift()
+        window.focus_force()
+        return receive_handover(str(path))
+    finally:
+        if queued:
+            fsr_incoming.done(path)
+
+
 def import_master_data_file():
     """Bring in a Master Data file sent from a site PC or the Android app."""
     if Workbook is None:
@@ -4899,6 +4958,7 @@ def build_window():
     before. Importing this module builds nothing (the functions
     and classes can be used and tested without a window)."""
     global db_move_state, export_sender, export_state
+    global INCOMING_DIR, incoming_state
     global BASE_DIR, CONFIG_DIR, COUNTRY_LIST_KEY, DATA_DIR, DATA_ROOT
     global DEFAULT_EXCEL_NAME, DEMO_MODE, DESTINATION_LIST_KEY
     global DOCUMENT_COLUMNS, DOT_BAD, DOT_OK, DOT_WAIT, EXCEL_ROOT
@@ -5089,6 +5149,24 @@ def build_window():
         sys.exit(fsr_sqlite_migrate.command(
             _way_back[0], initial_excel_path(),
             DATA_DIR if DEMO_MODE else None, _way_back[1]))
+
+    # A hand-over file opened from Windows (double-click): it waits in the
+    # incoming folder until the window asks the inspector. When the program
+    # is already open, that window takes it, and this start closes.
+    INCOMING_DIR = SETTINGS_FILE.parent / fsr_incoming.FOLDER_NAME
+    incoming_state = {"direct": None}
+    _opened_file = fsr_incoming.handover_argument(sys.argv[1:])
+    _already_open = fsr_incoming.already_running(INCOMING_DIR)
+    if _opened_file is not None:
+        try:
+            fsr_incoming.queue(INCOMING_DIR, _opened_file)
+        except OSError:
+            log.exception("The opened hand-over file could not be queued")
+            incoming_state["direct"] = _opened_file     # this window takes it
+        else:
+            if _already_open:
+                fsr_incoming.allow_other_window_to_front()
+                sys.exit(0)
 
 
     # =====================================================
@@ -6260,6 +6338,7 @@ def build_window():
 
 
     window.after(600, tell_owner_about_requests)
+    window.after(INCOMING_FIRST_MS, poll_incoming_handover)
 
 
 def main():

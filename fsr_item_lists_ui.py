@@ -15,6 +15,7 @@ from fsr_storage import UOM_CHOICES
 from fsr_storage import WEIGHT_UNIT_CHOICES
 from fsr_storage import split_quantity_unit
 from fsr_storage import to_number
+import fsr_price_checks
 import fsr_withdrawal
 import fsr_withdrawal_ui
 
@@ -263,6 +264,17 @@ class ItemListSection:
                  if self.cell(w, "Currency").get()]
         if above:
             currency.set(above[-1])
+
+    def lines_missing_currency(self):
+        """Line numbers (1, 2, ...) that have a price but no currency."""
+        if not self.priced or "Currency" not in self.headers:
+            return []
+        return [number for number, widgets in enumerate(self.rows, start=1)
+                if fsr_price_checks.needs_currency(
+                    self.cell(widgets, "Currency").get(),
+                    self.cell(widgets, "Unit Price").get()
+                    if "Unit Price" in self.headers else "",
+                    self.cell(widgets, "Total Price").get())]
 
     def filled_count(self):
         return sum(

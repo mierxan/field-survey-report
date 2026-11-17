@@ -450,7 +450,7 @@ UOM_CHOICES = ["PCS", "SET", "UNIT", "BOX", "CASE", "CRATE", "PALLET",
 # Units offered next to Weights; the Weights column keeps "1,250 KG".
 WEIGHT_UNIT_CHOICES = ["KG", "G", "L", "ML", "MT", "LBS"]
 QUANTITY_UNIT_PATTERN = re.compile(
-    r"^\s*(-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)\s*([^\d\s].*?)\s*$")
+    r"^\s*(-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)\s*([^\d\s,.\-].*?)\s*$")
 
 
 def split_quantity_unit(quantity, uom=""):

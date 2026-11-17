@@ -1,5 +1,60 @@
 # Field Survey Report changelog
 
+## Phase 11 - Open a hand-over file (unreleased, 17 November 2026)
+
+- **Double-click a hand-over file.** Hand Over now saves
+  `FSR_Handover_<Control #>_<date>.fsrhandover`. The installer tells
+  Windows that this file type opens Field Survey Report. After sign-in,
+  the program shows the usual Receive Hand-over question; nothing is
+  brought in without Yes.
+- If the program is already open, the file goes to that window, and the
+  new start closes at once (`fsr_incoming.py`). It waits in the
+  "Incoming hand-overs" folder beside the settings until it is answered,
+  also if the program is closed first.
+- **Receive Hand-over...** opens both `.fsrhandover` and the older `.json`
+  files.
+- The phone app 1.9.0 makes and opens the same `.fsrhandover` files.
+- **Fix: the file sent back was confused with the one sent out.** Both
+  had the same name (same report, same day), so the first inspector
+  could open their own file, see only "nothing changed", and the report
+  stayed handed over. The name now ends with the sender's initials
+  (`..._2026-11-17_from_BRV.fsrhandover`), and opening your own file says
+  "This is the file you sent to <name>. Open the file <name> sent back
+  to you instead." (Phone app 1.9.1 the same.) A PC no longer makes a
+  second draft from its own draft file.
+- **Fix:** the list of reports databases (`databases.json`) is saved with
+  the same two-second retry as the other files. A virus scanner reading
+  it at that moment made the first move into the database stop with
+  "Access is denied" (seen twice in the tests).
+- `installer.iss`: the file type is registered per edition and removed on
+  uninstall. Installers built 17 November 2026 (version
+  2026.11.17.102123), all 1364 tests passing.
+
+## Phase 10 - Top suppliers by value (unreleased, 17 November 2026)
+
+- Owner edition, **Dashboard**: a new chart, **Top 10 Suppliers by Total
+  Value (PHP)**, from the Receiving reports of the chosen period and
+  warehouse. A cargo line's value is its Total Price (Unit Price x
+  Quantity when the Total Price is empty), in its Currency.
+- **Exchange Rates to PHP...** (button on the chart): the owner enters how
+  many pesos one USD, JPY, EUR, SEK (or any other currency found in the
+  reports) is worth. The rates are kept with the warehouse settings, with
+  who changed them and when. Nothing is guessed: lines in a currency
+  without a rate, or with a price but no currency, are left out and
+  counted in the note under the chart.
+- **Saving a report:** a line with a price but no Currency is caught. The
+  form opens the Item Lists tab and names the lines (e.g. "Item List 1:
+  line 3"); the inspector chooses the Currency, or saves anyway. A code
+  typed with the price ("usd 100") counts as its currency.
+- **Fix:** a Weight (or Quantity) saved as a number with a thousands comma
+  or decimals and no unit, e.g. "18,400", was split into "18" and ",400"
+  when the report was opened again, and saved back as "18 ,400". It now
+  stays whole, as on the phone.
+- Demo Mode data now has invented prices on its Receiving lines.
+- **Fix:** the Bad Order **Case Status** window could not open with
+  ttkbootstrap 2 (`unknown option "-bootstyle"`); it uses ttkbootstrap's
+  own labels now.
+
 ## Phase 9 - Dashboard sheet for the client (unreleased, 16 November 2026)
 
 - Weekly and Monthly Receiving and Withdrawal Excel reports (Summary

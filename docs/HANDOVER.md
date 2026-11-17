@@ -15,8 +15,9 @@ read and write the same file.
   one file to the next inspector by e-mail, chat or USB stick. If the form
   has unsaved changes, you are asked first whether to save them, or to keep
   them as a draft and hand the draft over.
-- **Receive Hand-over...** opens such a file. It says what the file holds
-  and who sent it, and brings it in after you say yes.
+- **Double-click** the file (or **Receive Hand-over...** and choose it).
+  The program opens, and after sign-in it says what the file holds and who
+  sent it, and brings it in after you say yes.
   - A received **report** opens with Open saved report (Ctrl+O).
   - A received **draft** is in Account > Unfinished work; Restore it there.
     This includes a draft from the **phone app**: the PC turns it into one
@@ -24,8 +25,36 @@ read and write the same file.
 
 **Android:** open the report (Completed Reports), or for a draft tap the
 send icon in Draft Reports, then choose **Hand Over**. Type the next
-inspector's name, then **Share** or **Save File**. To receive a file, go to
+inspector's name, then **Share** or **Save File**. To receive a file, tap
+it in the e-mail or chat and choose Field Survey Report (1.9.0), or go to
 **Master Data** and choose **Receive Hand-over**.
+
+## Opening the file with a tap or a double-click (Phase 11)
+
+Hand-over files end in **`.fsrhandover`** (before: `.json`, still read by
+Receive Hand-over on both). The name ends with the sender's initials,
+`FSR_Handover_<Control #>_<date>_from_<initials>.fsrhandover`, so the file
+sent back is never mistaken for the one sent out. Opening the file you
+sent yourself says so ("This is the file you sent to ...") instead of only
+"nothing changed"; on a PC, your own draft file is refused rather than
+received as a second draft.
+
+- **Windows:** the installer registers the file type, so a double-click
+  starts the program with the file (`fsr_incoming.py`). The file is copied
+  into the **Incoming hand-overs** folder beside the settings
+  (`%APPDATA%\FieldSurveyReport`, or `json\demo_data` in Demo Mode) and
+  offered once the window is free: signed in, no other question open, the
+  reports not being moved into the database. It leaves that folder when it
+  is answered, Yes or No; the inspector's own file is never touched.
+- If the program is already open with the same data (a Windows mutex per
+  incoming folder), the new start only queues the file and closes, and the
+  open window brings it in. Demo Mode and a test copy have their own.
+- **Android (1.9.0):** the app is offered for the file in e-mail, chat and
+  file manager apps, and under Share. Those apps often give no file name
+  and a general type (application/octet-stream), so the app is offered for
+  that type too; the content decides, and anything else gets "This is not
+  a Field Survey Report hand-over file". The app opens on Master Data with
+  the Receive hand-over question.
 
 ## Numbering
 

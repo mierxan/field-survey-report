@@ -299,3 +299,69 @@ def test_a_phone_draft_without_any_item_list_is_continued(app, tmp_path):
     assert saved["general_information"]["so_number"] == "SO-NO-ITEM-LISTS"
     assert fsr_handover.status(path, number)["report_id"] == \
         "uid-empty-lists"
+
+
+def test_a_file_opened_from_windows_is_received_after_yes(app, tmp_path):
+    """Double-clicking a .fsrhandover file: the program (or the start that
+    found it open) queues it; the window asks, and only Yes brings it in."""
+    import fsr_incoming
+    g, answers = app
+    path = g["excel_state"]["path"]
+    other = tmp_path / "other" / "Field_Survey_Reports.xlsx"
+    other.parent.mkdir()
+    numbers = ["FSR-OPN-209901-0001", "FSR-OPN-209901-0002"]
+    files = []
+    for number in numbers:
+        fsr_store.ExcelStore(other).write_report(
+            invented(number, "SO-OPENED"), False)
+        files.append(tmp_path / f"FSR_Handover_{number}.fsrhandover")
+        fsr_handover.hand_over_report(
+            other, number, files[-1],
+            {"inspector": "Opening Inspector", "initials": "OPN",
+             "device_id": "pc-opening"}, to="Test User")
+    folder = g["INCOMING_DIR"]
+
+    # No: nothing comes in, and the file is not offered again
+    fsr_incoming.queue(folder, files[0])
+    answers.calls.clear()
+    answers.yes = False
+    try:
+        assert g["receive_incoming_handover"]() is None
+    finally:
+        answers.yes = True
+    assert [c[0] for c in answers.calls][:1] == ["askyesno"]
+    with pytest.raises(ValueError, match="not found"):
+        fsr_storage.read_report(path, numbers[0])
+    assert fsr_incoming.waiting_files(folder) == []
+
+    # Yes: received as with Receive Hand-over
+    fsr_incoming.queue(folder, files[1])
+    answers.calls.clear()
+    result = g["receive_incoming_handover"]()
+    assert result["result"] == "added" and result["control"] == numbers[1]
+    asked = [c for c in answers.calls if c[0] == "askyesno"]
+    assert "handed over by Opening Inspector" in asked[0][2]
+    assert fsr_incoming.waiting_files(folder) == []
+    assert files[1].exists()                # the inspector's own file stays
+    assert g["receive_incoming_handover"]() is None     # nothing waiting
+
+
+def test_hand_over_saves_the_new_file_type(app, tmp_path, monkeypatch):
+    g, answers = app
+    asked = {}
+
+    def save_as(**options):
+        asked.update(options)
+        return ""                           # Cancel
+
+    monkeypatch.setattr(g["filedialog"], "asksaveasfilename", save_as)
+    number = "FSR-TST-209901-0600"
+    g["data_store"](g["excel_state"]["path"]).write_report(
+        invented(number), False)
+    g["load_report_into_form"](number)
+    dialog = g["open_hand_over"]()
+    fill_in(dialog, "Next Inspector")
+    press(dialog, "Hand Over...")
+    dialog.destroy()
+    assert asked["defaultextension"] == ".fsrhandover"
+    assert asked["initialfile"].endswith(".fsrhandover")

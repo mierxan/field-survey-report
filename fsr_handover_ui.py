@@ -13,6 +13,7 @@ from tkinter import filedialog, messagebox, ttk
 
 import fsr_draft_form
 import fsr_handover
+import fsr_incoming
 import fsr_storage as storage
 
 TITLE = "Hand Over"
@@ -251,10 +252,11 @@ def open_hand_over(h):
             return
         target = filedialog.asksaveasfilename(
             parent=dialog, title="Save the hand-over file",
-            defaultextension=".json",
-            initialfile=(f"FSR_Handover_{_safe(item['control'] or 'Draft')}"
-                         f"_{date.today():%Y-%m-%d}.json"),
-            filetypes=[("Hand-over file", "*.json")])
+            defaultextension=fsr_incoming.SUFFIX,
+            initialfile=fsr_handover.file_name(
+                item["control"] or "Draft", sender(h).get("initials"),
+                date.today(), fsr_incoming.SUFFIX),
+            filetypes=[("Hand-over file", "*" + fsr_incoming.SUFFIX)])
         if not target:
             return
         note = note_entry.get().strip()
@@ -336,7 +338,9 @@ def receive(h, chosen=None):
     if chosen is None:
         chosen = filedialog.askopenfilename(
             parent=window, title="Select the hand-over file",
-            filetypes=[("Hand-over file", "*.json"), ("All files", "*.*")])
+            filetypes=[("Hand-over file", " ".join(
+                "*" + suffix for suffix in fsr_incoming.SUFFIXES)),
+                ("All files", "*.*")])
     if not chosen:
         return None
     try:
@@ -410,6 +414,9 @@ def receive(h, chosen=None):
     elif result["result"] == "updated":
         lines.append(f"Report {control} was updated with the received copy; "
                      "it can be saved here again.")
+    elif (result["result"] == "unchanged"
+          and result.get("own_file") is not None):
+        lines.append(fsr_handover.own_file_text(result["own_file"]))
     elif result["result"] == "unchanged" and control:
         lines.append(f"Nothing changed: this PC already has this copy of "
                      f"{control}, or a newer one.")

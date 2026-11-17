@@ -116,7 +116,11 @@ def _save_index(entries):
     temp = path.with_name(path.name + ".tmp")
     temp.write_text(json.dumps({"version": 1, "databases": entries},
                                indent=2), encoding="utf-8")
-    os.replace(temp, path)
+    # tried again for about two seconds: a reader that has the index open
+    # for a moment (this program, a virus scanner) must not stop the move
+    # into the database ("Access is denied")
+    from fsr_storage import replace_file
+    replace_file(temp, path)
 
 
 def register(db_path, excel_path, database_id):

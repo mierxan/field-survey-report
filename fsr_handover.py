@@ -32,6 +32,7 @@ import copy
 import hashlib
 import json
 import logging
+import re
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -492,6 +493,27 @@ def _write_report(excel_path, store, report, editing, journal, stores,
     return control, lists_failed
 
 
+def file_name(control, initials, day, suffix):
+    """FSR_Handover_<Control #>_<date>_from_<initials><suffix>: the file sent
+    back carries the other inspector's initials, so it is never confused
+    with the one sent out (same report, same day). As the phone app."""
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "_",
+                  str(control or "").strip()) or "report"
+    initials = "".join(c for c in str(initials or "") if c.isalnum()).upper()
+    sender = f"_from_{initials}" if initials else ""
+    return f"FSR_Handover_{safe}_{day:%Y-%m-%d}{sender}{suffix}"
+
+
+def own_file_text(to):
+    """The file this PC sent out was chosen instead of the one sent back
+    (same report, same day: the names differ only in "from_<initials>")."""
+    who = (to or "").strip() or "the next inspector"
+    back = (to or "").strip() or "they"
+    return (f"This is the file you sent to {who}. Open the file {back} "
+            "sent back to you instead (its name ends in \"from\" and "
+            "their initials).")
+
+
 def _receive_report(excel_path, payload, journal, stores, mysql,
                     owner_edition, replace):
     import fsr_store
@@ -528,6 +550,10 @@ def _receive_report(excel_path, payload, journal, stores, mysql,
               "result": None, "lists_failed": None}
     if local is not None and revision <= known_revision:
         result["result"] = "unchanged"
+        if (entry is not None and entry.get("state") == HANDED_OVER
+                and entry.get("handover_id") == payload["handover_id"]):
+            # the file this PC sent out, chosen instead of the one sent back
+            result["own_file"] = entry.get("to") or ""
         return result
     if local is not None and working and not replace:
         current = store.read_report(local)
@@ -860,6 +886,11 @@ def _receive_draft(excel_path, payload, draft_store, owner_label, control,
     from fsr_renumber import _walk_refs
     draft = payload["draft"]
     found, _ = draft_store.list()
+    sent = next((value["handed_over"] for value in found
+                 if (value.get("handed_over") or {}).get("handover_id")
+                 == payload["handover_id"]), None)
+    if sent is not None:
+        raise HandoverError(own_file_text(sent.get("to")))
     if any((value.get("received") or {}).get("handover_id")
            == payload["handover_id"] for value in found):
         return None             # received before: one draft, not two

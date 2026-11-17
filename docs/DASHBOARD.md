@@ -69,6 +69,28 @@ Weekly Summary > **All (interactive)** (`InteractiveDashboard.kt`, its own
 xlsx writer). It also saves every formula's value for the first choices,
 so phone viewers that do not calculate still show the cards and charts.
 
+## Owner Dashboard: Top 10 Suppliers by Total Value (PHP)
+
+On the Owner edition's **Dashboard** page (not an Excel sheet): the ten
+suppliers whose Receiving deliveries in the chosen period and warehouse
+are worth the most, in Philippine pesos. Withdrawal reports are never
+counted.
+
+- A cargo line's value: its **Total Price**, or **Unit Price x Quantity**
+  when the Total Price is empty, in the line's **Currency** (a code typed
+  with the price, as in `jpy 4,000.-`, is used when the Currency column is
+  empty).
+- **Exchange Rates to PHP...**: one rate per currency (1 USD = n PHP),
+  entered by the owner and kept in the warehouse settings file with the
+  date and user. The program is offline and never fetches rates.
+- Left out and counted in the note under the chart: lines in a currency
+  without a rate, lines with a price but no currency, lines without a
+  price.
+- Suppliers are grouped by their name as typed: two spellings of one
+  supplier are two bars.
+- Code: `warehouse/values.py` (the figures), `DashboardPage` in
+  `warehouse_ui/pages.py` and `ask_php_rates` in `warehouse_ui/dialogs.py`.
+
 ## Periods
 
 - PC: a week is Monday to Sunday; a month is the calendar month.

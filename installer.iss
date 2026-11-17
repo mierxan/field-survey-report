@@ -42,6 +42,8 @@ PrivilegesRequired=admin
 PrivilegesRequiredOverridesAllowed=dialog
 ArchitecturesInstallIn64BitMode=x64compatible
 CloseApplications=yes
+; a hand-over file (.fsrhandover) opens the program - [Registry]
+ChangesAssociations=yes
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Shortcuts:"
@@ -50,8 +52,8 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 ; remove files left over from the previous version of the program
 Type: filesandordirs; Name: "{app}\_internal"
 ; Nothing outside {app} is ever removed - neither by Setup nor by the
-; uninstaller: the reports database (%LOCALAPPDATA%\FieldSurveyReport\
-; Databases), the accounts and settings (%APPDATA%\FieldSurveyReport) and
+; uninstaller, except the .fsrhandover file type in [Registry]: the
+; reports database (%LOCALAPPDATA%\FieldSurveyReport\Databases), the accounts and settings (%APPDATA%\FieldSurveyReport) and
 ; the data in Documents\Field Survey Report stay. (Tested on a scratch
 ; install on 14 November 2026: install, reinstall, uninstall - docs\SQLITE.md.)
 
@@ -68,6 +70,17 @@ Source: "data\schema\migrations\*.sql"; DestDir: "{app}\sql\migrations"; Flags: 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
+
+[Registry]
+; Double-clicking a hand-over file opens the program, which asks the
+; inspector before bringing it in (fsr_incoming.py, docs\HANDOVER.md).
+; Each edition has its own file type; the last edition installed opens
+; the files. Uninstalling one edition keeps the other under Open with.
+Root: HKA; Subkey: "Software\Classes\.fsrhandover"; ValueType: string; ValueName: ""; ValueData: "FieldSurveyReport.Handover.{#Edition}"; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\.fsrhandover\OpenWithProgids"; ValueType: string; ValueName: "FieldSurveyReport.Handover.{#Edition}"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\FieldSurveyReport.Handover.{#Edition}"; ValueType: string; ValueName: ""; ValueData: "Field Survey Report Hand-over"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\FieldSurveyReport.Handover.{#Edition}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExe},0"
+Root: HKA; Subkey: "Software\Classes\FieldSurveyReport.Handover.{#Edition}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"" ""%1"""
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "Start {#AppName}"; Flags: nowait postinstall skipifsilent

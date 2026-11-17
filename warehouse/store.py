@@ -171,6 +171,41 @@ class SideStore:
             pass
         return DEFAULT_AGING_THRESHOLDS
 
+    def php_rates(self):
+        """The owner's exchange rates: {'USD': 58.5, ...} = PHP per unit."""
+        rates = self.data["settings"].get("php_rates") or {}
+        clean = {}
+        for code, value in rates.items():
+            try:
+                value = float(value)
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                clean[str(code).strip().upper()] = value
+        return clean
+
+    def php_rates_updated(self):
+        """(timestamp, user) of the last change, or None."""
+        info = self.data["settings"].get("php_rates_updated")
+        return (info.get("timestamp", ""), info.get("user", ""))             if isinstance(info, dict) else None
+
+    def set_php_rates(self, rates, user=""):
+        clean = {}
+        for code, value in rates.items():
+            code = str(code).strip().upper()
+            if value in (None, ""):
+                continue
+            value = float(value)
+            if not value > 0:
+                raise ValueError(f"The rate for {code} must be above 0.")
+            clean[code] = value
+        with self._lock:
+            self.data["settings"]["php_rates"] = clean
+            self.data["settings"]["php_rates_updated"] = {
+                "timestamp": datetime.now().isoformat(timespec="seconds"),
+                "user": user}
+            self._save()
+
     def set_aging_thresholds(self, values):
         values = sorted({int(v) for v in values})
         if not values or values[0] <= 0:

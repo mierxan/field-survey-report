@@ -600,3 +600,38 @@ def test_a_phone_draft_without_any_item_list_is_received(tmp_path):
                         to_form=lambda value: seen.append(value) or snapshot())
     assert result["draft"]["received"]["control"] == PHONE
     assert seen[0]["item_lists"] == []
+
+
+def test_the_senders_own_file_is_named_when_it_is_chosen_by_mistake(
+        tmp_path):
+    """The file sent back has the same report and day as the one sent out;
+    choosing your own says so instead of only "nothing changed"."""
+    a = pc(tmp_path, "a", invented())
+    ho.hand_over_report(a, NUMBER, tmp_path / "1.json", A,
+                        to="Inspector Bravo")
+    result = ho.receive(a, ho.read_file(tmp_path / "1.json"))
+    assert result["result"] == "unchanged"
+    assert result["own_file"] == "Inspector Bravo"
+    assert ho.handed_over(a, NUMBER) is not None        # still with Bravo
+    assert "the file you sent to Inspector Bravo" in ho.own_file_text(
+        result["own_file"])
+
+
+def test_the_senders_own_draft_file_is_refused_with_a_clear_message(
+        tmp_path):
+    a = pc(tmp_path, "a")
+    mine = drafts(tmp_path, "a")
+    file = tmp_path / "draft.json"
+    ho.hand_over_draft(a, draft_value(mine, a), mine, file, A, to="Bravo")
+    with pytest.raises(ho.HandoverError, match="the file you sent to Bravo"):
+        ho.receive(a, ho.read_file(file), draft_store=mine)
+    assert len(mine.list()[0]) == 1                     # no second draft
+
+
+def test_the_file_name_carries_the_senders_initials():
+    day = date(2026, 11, 17)
+    named = ho.file_name("FSR-ALP-202611-0001", "alp", day, ".fsrhandover")
+    assert named == \
+        "FSR_Handover_FSR-ALP-202611-0001_2026-11-17_from_ALP.fsrhandover"
+    unnamed = ho.file_name("Draft", "", day, ".fsrhandover")
+    assert unnamed == "FSR_Handover_Draft_2026-11-17.fsrhandover"

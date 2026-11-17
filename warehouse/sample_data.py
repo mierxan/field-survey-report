@@ -348,6 +348,23 @@ def build_sample_set(anchor=None, seed=2026):
 
 # ---------- spec -> report data (collect_report_data() shape) ----------
 
+# invented prices on Receiving lines (the Owner's Top Suppliers by Value):
+# a PHP price of 50..949 per unit, written in one of these currencies
+PRICE_CURRENCIES = ("PHP", "USD", "PHP", "JPY", "EUR")
+PESOS_PER_UNIT = {"PHP": 1, "USD": 58, "JPY": 0.38, "EUR": 63}
+
+
+def sample_price(spec, line):
+    """(currency, unit price, total price) texts, or blanks."""
+    if spec.activity != "Receiving" or \
+            not isinstance(line.quantity, (int, float)):
+        return "", "", ""
+    seed = sum(map(ord, spec.control_no + line.description))
+    currency = PRICE_CURRENCIES[seed % len(PRICE_CURRENCIES)]
+    unit = round((50 + seed * 37 % 900) / PESOS_PER_UNIT[currency], 2)
+    return currency, f"{unit:,.2f}", f"{unit * line.quantity:,.2f}"
+
+
 def report_data(spec):
     goods = fsr_storage.empty_goods_types()
     goods[spec.goods_type] = True
@@ -368,6 +385,10 @@ def report_data(spec):
             "Cargo ID": line.cargo_id,
             "Receiving Ref": line.receiving_ref,
         })
+        currency, unit, total = sample_price(spec, line)
+        if currency:
+            row.update({"Currency": currency, "Unit Price": unit,
+                        "Total Price": total})
         rows.append(row)
     date_text = spec.day.strftime(fsr_storage.DATE_FORMAT)
     return {

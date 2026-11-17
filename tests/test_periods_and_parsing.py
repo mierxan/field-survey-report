@@ -98,6 +98,10 @@ def test_quantity_uom_column(qty, pack, uom, expected):
     ("12 pcs", ("12", "pcs")), ("1,250.5 Wooden Crates", ("1,250.5",
                                                          "Wooden Crates")),
     ("12", ("12", "")), ("n/a", ("n/a", "")), ("", ("", "")),
+    # a number with thousands or decimals and no unit stays whole (it was
+    # split into "18" + ",400" and saved back as "18 ,400")
+    ("18,400", ("18,400", "")), ("1,250.50", ("1,250.50", "")),
+    ("18,400 KG", ("18,400", "KG")), ("5-10", ("5-10", "")),
 ])
 def test_split_quantity_unit(text, expected):
     assert fsr_storage.split_quantity_unit(text) == expected

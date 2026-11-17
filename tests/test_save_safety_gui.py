@@ -384,3 +384,30 @@ def test_unreadable_record_file_warns_once_and_saving_still_works(app):
         assert len(boxes(answers)) == 1         # said once
     finally:
         path.write_bytes(original)
+
+
+
+# ---------- a price without a currency ----------
+
+def test_a_price_without_a_currency_asks_before_saving(app):
+    g, answers = app
+    fill_form(g, "SO-NO-CURRENCY-1")
+    section = g["item_frames"][0]
+    cols = g["ITEM_FORM_HEADERS"]
+    g["set_entry"](section.rows[0][cols.index("Total Price")], "6,585")
+    g["set_entry"](section.rows[0][cols.index("Currency")], "")
+    asked = len(answers.calls)
+    answers.yes = False
+    try:
+        assert g["save_report"]() is False          # "Go back"
+    finally:
+        answers.yes = True
+    question = [c for c in answers.calls[asked:]
+                if c[1] == "Price Without a Currency"]
+    assert len(question) == 1 and "Item List 1: line 1" in question[0][2]
+
+    g["set_entry"](section.rows[0][cols.index("Currency")], "PHP")
+    asked = len(answers.calls)
+    assert g["save_report"]() is True
+    assert "Price Without a Currency" not in [c[1] for c in
+                                              answers.calls[asked:]]

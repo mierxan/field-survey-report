@@ -102,6 +102,10 @@ def save_report():
     if not fsr_text_flow.validate(host_globals()):
         return False
 
+    # a price with no Currency cannot be counted in the value reports
+    if not host.prices_have_currency():
+        return False
+
     if host.condition_var.get() == CONDITION_BAD and not host.incidents_have_content():
         host.notebook.select(host.incident_tab)
         if not messagebox.askyesno(
