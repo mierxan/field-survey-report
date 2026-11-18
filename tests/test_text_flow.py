@@ -164,7 +164,8 @@ def test_goods_continuation_preserves_quantity_packaging_and_following_item(form
         fsr_draft_form.put(widget, value)
     for widget, value in zip(g['declared_goods_rows'][1], ['Other goods', '7', 'Boxes']):
         fsr_draft_form.put(widget, value)
-    text = 'Lengthy invented description ' * 4
+    # longer than the two small printed lines of one Description
+    text = 'Lengthy invented description ' * 7
     paste(entry, text)
     rows = [[w.get() for w in row] for row in g['declared_goods_rows']]
     assert rows[0][1:] == ['25', 'Crates']
@@ -173,6 +174,20 @@ def test_goods_continuation_preserves_quantity_packaging_and_following_item(form
     assert rows[later] == ['Other goods', '7', 'Boxes']
     assert ''.join(row[0] for row in rows[:later]) == text
     assert all(row[1:] == ['', ''] for row in rows[1:later])
+
+
+@pytest.mark.gui
+def test_a_description_that_fits_two_printed_lines_stays_on_its_line(form):
+    """Too long for one line of the form's font but within two small lines
+    (as the Findings of a shipment line): it stays on its own Declared
+    Goods line and prints there on two lines - no continuation, no warning."""
+    g = form
+    entry, flow = focus(g, 'goods')
+    text = 'Digital Pressure gauge -30 to 300 psi Digital Pressure gauge -30 to 300 psi'
+    paste(entry, text)
+    rows = [[w.get() for w in row] for row in g['declared_goods_rows']]
+    assert rows[0][0] == text and not rows[1][0]
+    assert flow.warning.get() == ''
 
 
 @pytest.mark.gui
@@ -258,7 +273,8 @@ def test_normal_save_printed_copies_and_reopen_keep_flowed_lines(form):
     book = load_workbook(path.parent / 'Report Forms' / f'{control}_Report.xlsx')
     first = book['First Page']
     assert first['A22'].value == data['declared_goods'][0]['description']
-    assert first['A22'].font.sz == 12
+    # the flowed Description fills two small printed lines, as Findings
+    assert first['A22'].font.sz == 9 and first['A22'].alignment.wrap_text
     assert first['G21'].font.sz == 12
     incident = next(book[name] for name in book.sheetnames if 'Incident' in name)
     assert incident['A18'].font.sz == incident['A19'].font.sz == 17

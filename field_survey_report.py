@@ -115,6 +115,7 @@ from fsr_forms import (  # the official report forms (moved)
     form_date,
     create_report_form,
     item_forms_to_print,
+    too_long_notes,
     create_cargo_form,
     create_incident_form,
     merge_workbooks,
@@ -2487,6 +2488,10 @@ def create_report_forms(excel_path, data):
                 )
             else:
                 pieces.append(cargo)
+                # a Description too long for two printed lines
+                for note in too_long_notes(item_lists, pages["too_long"]):
+                    notes.append(note if form == ITEM_FORM_DEFAULT
+                                 else f"{form} {note}")
                 summary += f" + {name} ({pages['cargo']} page"
                 summary += "s)" if pages["cargo"] != 1 else ")"
                 if pages["blank"]:

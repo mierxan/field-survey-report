@@ -1,5 +1,26 @@
 # Field Survey Report changelog
 
+## Phase 19 - Long Descriptions print on two lines (unreleased, 19 November 2026)
+
+- A Description too long for one line of the form's font now prints on two
+  wrapped 9 pt lines, like the Findings of a shipment line, instead of one
+  shrunken line: the Item List Description on the Cargo Details page of
+  every Item List form (Default, Containerized, Loading) and the Declared
+  Goods Description on the First Page. One only a little too long stays on
+  one line, shrunk, while that keeps it at 9 pt or bigger (it reads better
+  than two 9 pt lines). A Description still too long for two
+  lines shrinks to fit as before (nothing is cut off). Short Descriptions
+  print exactly as before.
+- Measured with Calibri's own letter widths (the templates' font), stored in
+  the new `fsr_print_fit.py`: the same answer on every PC, with no window
+  needed. Checked with Excel's own PDF of the three forms.
+- **Warnings**: the Item List shows a red line under the list, and marks the
+  box, while a Description is too long for two printed lines. After Save or
+  Print / PDF the notes list each such line ("Item List 1, line 3: ...",
+  "Declared Goods line 2: ...").
+- Declared Goods typing: a Description continues on the next line only
+  when it does not fit two printed lines (it used to continue after one).
+
 ## Phase 18 - Withdrawal-to-Receiving sharing, part 5: Windows and Android together (18 November 2026)
 
 - Tested every way round: Windows -> Windows, Windows -> Android, Android ->

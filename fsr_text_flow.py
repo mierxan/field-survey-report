@@ -94,6 +94,13 @@ class Metrics:
         return self.lines[key]
 
     def measure(self, key, text):
+        if key == 'goods':
+            # A Declared Goods Description prints on two small lines when
+            # too long for one (as the Findings of a shipment line): it
+            # continues on the next line only when it does not fit two.
+            import fsr_forms as forms
+            import fsr_print_fit
+            return 2.0 if forms.goods_description_fit(text) == fsr_print_fit.LONG else 1.0
         return max(font.measure(text) / width for font, width in self.line(key))
 
 

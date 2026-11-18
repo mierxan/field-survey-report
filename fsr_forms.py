@@ -8,6 +8,7 @@ used and tested without the program's window. The window code imports
 these names. `print_name["value"]` is the name printed as the preparer;
 the program sets it.
 """
+import functools
 import html
 import os
 import posixpath
@@ -20,6 +21,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
+import fsr_print_fit
 from fsr_storage import (
     printed_findings,
     clean_incident_reports, DATE_FORMAT, INCIDENT_MAX_LINES, incident_title,
@@ -80,6 +82,17 @@ CALC_CHAIN_PART = "xl/calcChain.xml"
 
 GOODS_FIRST_ROW = 22                                   # A22:E26 on the form
 GOODS_ROW_COUNT = 5
+# the Description of each Declared Goods line: two small lines when long
+GOODS_DESCRIPTION_CELLS = tuple(f"A{GOODS_FIRST_ROW + i}"
+                                for i in range(GOODS_ROW_COUNT))
+
+
+def too_long_note(where):
+    """The note shown after printing when a Description does not fit two
+    printed lines."""
+    return (f"{where}: the Description is too long for two printed lines, "
+            "so it prints in a smaller font. Shorten it to keep it "
+            "readable.")
 # Remark lines on the form: rows 21-26 and 28-33 (row 27 is a thin spacer).
 REMARK_CELLS = [f"G{row}" for row in (*range(21, 27), *range(28, 34))]
 
@@ -309,6 +322,17 @@ class StyleCloner:
         self.cache[key] = len(self.fonts) - 1
         return self.cache[key]
 
+    def font_size(self, index):
+        """The point size of the font of style `index` (11 when unknown)."""
+        found = re.search(r'fontId="(\d+)"', self.xfs[index])
+        block = re.search(r"<fonts\b[^>]*>(.*?)</fonts>", self.xml, re.S)
+        fonts = re.findall(r"<font\b[^>]*?(?:/>|>.*?</font>)",
+                           block.group(1), re.S) if block else []
+        font_id = int(found.group(1)) if found else 0
+        size = (re.search(r'<sz val="([\d.]+)"', fonts[font_id])
+                if font_id < len(fonts) else None)
+        return float(size.group(1)) if size else 11.0
+
     def same_font_as(self, index, model):
         """Copy of style `index` that uses the font of style `model`."""
         key = ("font", index, model)
@@ -358,6 +382,66 @@ def set_cell_text(sheet_xml, ref, text, styles):
         cell = f'<c r="{ref}" s="{style_index}"/>' if style else f'<c r="{ref}"/>'
 
     return sheet_xml[:match.start()] + cell + sheet_xml[match.end():], True
+
+
+def column_letters_number(letters):
+    number = 0
+    for char in letters:
+        number = number * 26 + ord(char) - ord("A") + 1
+    return number
+
+
+def column_widths(sheet_xml, first, last=None):
+    """The widths (in characters) of the columns first..last of a sheet."""
+    default = re.search(r'<sheetFormatPr\b[^>]*defaultColWidth="([\d.]+)"',
+                        sheet_xml)
+    default = float(default.group(1)) if default else 8.43
+    defined = [(int(m.group(1)), int(m.group(2)), float(m.group(3)))
+               for m in re.finditer(
+                   r'<col\b[^>]*?min="(\d+)"[^>]*?max="(\d+)"[^>]*?'
+                   r'width="([\d.]+)"', sheet_xml)]
+    widths = []
+    for column in range(column_letters_number(first),
+                        column_letters_number(last or first) + 1):
+        widths.append(next((w for low, high, w in defined
+                            if low <= column <= high), default))
+    return tuple(widths)
+
+
+def merged_widths(sheet_xml, ref):
+    """The column widths of the cell `ref`: every column of the merged
+    cell that starts there, or its own column."""
+    start = re.match(r"[A-Z]+", ref).group(0)
+    merge = re.search(rf'<mergeCell ref="{ref}:([A-Z]+)\d+"/>', sheet_xml)
+    return column_widths(sheet_xml, start, merge.group(1) if merge else None)
+
+
+def two_line_style(style, text, widths, styles):
+    """(style index, layout) of a text that may print on two lines: as the
+    Findings of a shipment line, a text too long for one line of the cell's
+    own font prints on two wrapped lines of fsr_print_fit.SMALL_SIZE
+    points; one still longer shrinks to fit on one line (as every cell)."""
+    fit = fsr_print_fit.layout(text, widths, styles.font_size(style))
+    if fit == fsr_print_fit.TWO:
+        return styles.wrap_small_index(style, fsr_print_fit.SMALL_SIZE), fit
+    return styles.shrink_index(style), fit
+
+
+def set_two_line_text(sheet_xml, ref, text, styles):
+    """set_cell_text for a text that may print on two lines (a Declared
+    Goods Description). -> (xml, found, layout)"""
+    pattern = re.compile(rf'<c r="{ref}"([^>]*?)(?:/>|>.*?</c>)', re.S)
+    match = pattern.search(sheet_xml)
+    if not match or not text:
+        xml, found = set_cell_text(sheet_xml, ref, text, styles)
+        return xml, found, fsr_print_fit.ONE
+    style = re.search(r'\bs="(\d+)"', match.group(1))
+    new_style, fit = two_line_style(int(style.group(1)) if style else 0,
+                                    text, merged_widths(sheet_xml, ref),
+                                    styles)
+    cell = (f'<c r="{ref}" s="{new_style}" t="inlineStr">'
+            f'<is><t xml:space="preserve">{xml_text(text)}</t></is></c>')
+    return sheet_xml[:match.start()] + cell + sheet_xml[match.end():], True, fit
 
 
 PLACEHOLDER_PATTERN = re.compile(r"^\s*entry\s+for\b", re.I)
@@ -492,7 +576,7 @@ def tick_form_checkboxes(source, sheet_xml, keys):
 
 
 def fill_first_page_form(template_path, output_path, values, by_label=(),
-                         checked=()):
+                         checked=(), two_lines=(), too_long=None):
     """
     Copy the template and fill the cells. Everything else is kept.
 
@@ -501,6 +585,9 @@ def fill_first_page_form(template_path, output_path, values, by_label=(),
                placeholder matches the regex (e.g. "Entry for control #"),
                wherever you put it on the form.
     checked  : keys of the Types of Goods check boxes to tick.
+    two_lines: cells whose text may print on two small lines (the
+               Declared Goods Descriptions); the ones still too long for
+               two lines are added to the list `too_long`.
     Returns the placeholders that matched nothing (they are cleared).
     """
     template_path = Path(template_path)
@@ -524,7 +611,13 @@ def fill_first_page_form(template_path, output_path, values, by_label=(),
 
         missing = []
         for ref, text in values.items():
-            sheet_xml, found = set_cell_text(sheet_xml, ref, text, styles)
+            if ref in two_lines:
+                sheet_xml, found, fit = set_two_line_text(sheet_xml, ref,
+                                                          text, styles)
+                if fit == fsr_print_fit.LONG and too_long is not None:
+                    too_long.append(ref)
+            else:
+                sheet_xml, found = set_cell_text(sheet_xml, ref, text, styles)
             if not found:
                 missing.append(ref)
 
@@ -605,11 +698,17 @@ def create_report_form(excel_path, data, folder=None):
     output = folder / f"{safe_filename(data['control_no'])}_First_Page.xlsx"
 
     values, notes = build_first_page_values(data)
+    too_long = []
     leftover = fill_first_page_form(
         FORM_TEMPLATE, output, values,
         by_label=[(r"control", data["control_no"])],
-        checked=checked_goods_keys(data)
+        checked=checked_goods_keys(data),
+        two_lines=GOODS_DESCRIPTION_CELLS, too_long=too_long,
     )
+    for ref in too_long:
+        notes.append(too_long_note(
+            f"Declared Goods line "
+            f"{GOODS_DESCRIPTION_CELLS.index(ref) + 1}"))
 
     if leftover:
         notes.append(
@@ -862,9 +961,17 @@ def fill_page_header(sheet_xml, period, consignee, styles):
 
 
 def build_cargo_page_xml(sheet_xml, page, period, consignee, styles,
-                         form=ITEM_FORM_DEFAULT):
+                         form=ITEM_FORM_DEFAULT, too_long=None):
+    """too_long: a list the item lines whose Description does not fit two
+    printed lines are added to."""
     sheet_xml = fill_page_header(sheet_xml, period, consignee, styles)
     _, _, columns, item_merges = CARGO_LAYOUTS[item_form_name(form)]
+    # the Description: two small lines when too long for one, as Findings
+    description = next(col for col, header in columns.items()
+                       if header == "Description of Goods")
+    merged = next((merge.format("").split(":") for merge in item_merges
+                   if merge.startswith(description)), (description,))
+    description_widths = column_widths(sheet_xml, *merged)
 
     attrs, item_styles = read_template_row(sheet_xml, CARGO_FIRST_ROW)
     _, ruled_styles = read_template_row(sheet_xml, 18)
@@ -886,11 +993,20 @@ def build_cargo_page_xml(sheet_xml, page, period, consignee, styles,
         texts["G"] = " ".join(t for t in split_quantity_unit(
             item.get("Quantity"), item.get("UOM")) if t)
         cell_styles, fixed = item_styles, ()
-        if item and str(item.get("Packing List No.") or "").strip() and                 FINDINGS_ONE_LINE < len(texts["K"]) <= FINDINGS_TWO_LINES:
+        if item and str(item.get("Packing List No.") or "").strip() and \
+                FINDINGS_ONE_LINE < len(texts["K"]) <= FINDINGS_TWO_LINES:
             # two readable lines instead of one shrunken line
             cell_styles = dict(item_styles, K=styles.wrap_small_index(
                 item_styles["K"], FINDINGS_SMALL_SIZE))
             fixed = ("K",)
+        if texts[description].strip():
+            style, fit = two_line_style(item_styles[description],
+                                        texts[description],
+                                        description_widths, styles)
+            cell_styles = dict(cell_styles, **{description: style})
+            fixed += (description,)
+            if fit == fsr_print_fit.LONG and too_long is not None:
+                too_long.append(item)
         rows.append(row_xml(row, attrs, cell_styles, texts, styles,
                             fixed=fixed))
         merges += [merge.format(row) for merge in item_merges]
@@ -1147,6 +1263,58 @@ def printable_items(form, item_lists):
     return items
 
 
+@functools.lru_cache(maxsize=8)
+def _description_cell(form):
+    """(column widths, font size) of the Description cell of the Cargo
+    Details page of an Item List form, read from its template."""
+    sheet_name, _, columns, item_merges = CARGO_LAYOUTS[item_form_name(form)]
+    with zipfile.ZipFile(cargo_template_for(form)) as source:
+        xml, _, _ = locate_template_sheet(source, sheet_name)
+        styles = StyleCloner(source.read(FORM_STYLES_XML).decode("utf-8"))
+    description = next(col for col, header in columns.items()
+                       if header == "Description of Goods")
+    merged = next((merge.format("").split(":") for merge in item_merges
+                   if merge.startswith(description)), (description,))
+    _, row_styles = read_template_row(xml, CARGO_FIRST_ROW)
+    return (column_widths(xml, *merged),
+            styles.font_size(row_styles[description]))
+
+
+@functools.lru_cache(maxsize=1)
+def _goods_description_cell():
+    """(column widths, font size) of a Declared Goods Description cell of
+    the First Page."""
+    with zipfile.ZipFile(FORM_TEMPLATE) as source:
+        xml = source.read(FORM_SHEET_XML).decode("utf-8")
+        styles = StyleCloner(source.read(FORM_STYLES_XML).decode("utf-8"))
+    ref = GOODS_DESCRIPTION_CELLS[0]
+    style = re.search(rf'<c r="{ref}"[^>]*?\bs="(\d+)"', xml)
+    return (merged_widths(xml, ref),
+            styles.font_size(int(style.group(1)) if style else 0))
+
+
+def description_fit(text, form=ITEM_FORM_DEFAULT):
+    """fsr_print_fit.ONE / TWO / LONG: how an Item List Description prints
+    on the Cargo Details page of `form`."""
+    return fsr_print_fit.layout(text, *_description_cell(item_form_name(form)))
+
+
+def goods_description_fit(text):
+    """fsr_print_fit.ONE / TWO / LONG for a Declared Goods Description."""
+    return fsr_print_fit.layout(text, *_goods_description_cell())
+
+
+def too_long_notes(item_lists, too_long):
+    """The notes for the item lines (of `item_lists`) printed with a
+    Description too long for two lines: "Item List 1, line 3: ..."."""
+    notes = []
+    for number, item_list in enumerate(item_lists, start=1):
+        for line, row in enumerate(item_list["rows"], start=1):
+            if any(row is long for long in too_long):
+                notes.append(too_long_note(f"Item List {number}, line {line}"))
+    return notes
+
+
 def item_forms_to_print(data):
     """[(form, item lists)] of every Item List form that has lines, in the
     order of the form buttons."""
@@ -1161,7 +1329,9 @@ def build_cargo_workbook(template_path, output_path, data,
                          cargo_name="Cargo Details"):
     """
     Write the Cargo Details workbook for this report.
-    Returns the number of pages as {"cargo": n, "blank": n}.
+    Returns the number of pages as {"cargo": n, "blank": n}, and under
+    "too_long" the item lines whose Description is too long for two
+    printed lines.
     """
     template_path = Path(template_path)
     output_path = Path(output_path)
@@ -1199,6 +1369,7 @@ def build_cargo_workbook(template_path, output_path, data,
         new_parts = {}
         names = []
         counters = {"cargo": 0, "blank": 0}
+        too_long = []
 
         for number, page in enumerate(pages, start=1):
             kind = page["kind"]
@@ -1210,7 +1381,7 @@ def build_cargo_workbook(template_path, output_path, data,
             if kind == "cargo":
                 xml = build_cargo_page_xml(
                     cargo_xml, page, period, general["consignee"], styles,
-                    form)
+                    form, too_long)
                 drawing, drawing_rels = cargo_drawing, cargo_drawing_rels
             else:
                 xml = build_blank_page_xml(
@@ -1235,7 +1406,7 @@ def build_cargo_workbook(template_path, output_path, data,
         write_pages_package(source, output_path, new_parts, names, styles,
                             "$A$1:$K$53")
 
-    return {"cargo": cargo_total, "blank": blank_total}
+    return {"cargo": cargo_total, "blank": blank_total, "too_long": too_long}
 
 
 def create_cargo_form(excel_path, data, folder=None,

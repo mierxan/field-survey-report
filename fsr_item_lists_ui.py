@@ -15,7 +15,9 @@ from fsr_storage import UOM_CHOICES
 from fsr_storage import WEIGHT_UNIT_CHOICES
 from fsr_storage import split_quantity_unit
 from fsr_storage import to_number
+import fsr_forms
 import fsr_price_checks
+import fsr_print_fit
 import fsr_withdrawal
 import fsr_withdrawal_ui
 
@@ -109,6 +111,14 @@ class ItemListSection:
         if self.priced:
             self.subtotal_label.grid(row=0, column=3, sticky="e")
 
+        # a Description too long for two printed lines (shown only then)
+        self.description_warning = host.tb.Label(
+            toolbar, bootstyle="danger", anchor="w", justify="left",
+            wraplength=900)
+        self.description_warning.grid(row=1, column=0, columnspan=4,
+                                      sticky="w", pady=(6, 0))
+        self.description_warning.grid_remove()
+
         for _ in range(5):
             self.create_row()
         self.update_buttons()
@@ -187,6 +197,7 @@ class ItemListSection:
             self.update_buttons()
             self.update_subtotal()
             host.refresh_findings_counter()
+            self.check_descriptions()
             host.mark_dirty()
 
     def set_row_count(self, count):
@@ -251,6 +262,46 @@ class ItemListSection:
         self.update_subtotal()
         self.update_buttons()
         host.refresh_findings_counter()
+        if header == "Description of Goods":
+            self.check_descriptions()
+
+    def too_long_lines(self):
+        """Line numbers (1, 2, ...) whose Description does not fit two
+        printed lines on this form's Cargo Details page."""
+        lines = []
+        for number, widgets in enumerate(self.rows, start=1):
+            text = self.cell(widgets, "Description of Goods").get().strip()
+            try:
+                fit = (fsr_forms.description_fit(text, self.form) if text
+                       else fsr_print_fit.ONE)
+            except (OSError, ValueError, KeyError, StopIteration):
+                fit = fsr_print_fit.ONE      # no template: nothing to warn
+            if fit == fsr_print_fit.LONG:
+                lines.append(number)
+        return lines
+
+    def check_descriptions(self):
+        """Warn under the lines (and mark the boxes) of a Description too
+        long for two printed lines: it would print in a smaller font."""
+        lines = self.too_long_lines()
+        for number, widgets in enumerate(self.rows, start=1):
+            box = self.cell(widgets, "Description of Goods")
+            try:
+                box.configure(bootstyle="danger" if number in lines
+                              else "default")
+            except Exception:       # a box without styles: the text warns
+                pass
+        if not lines:
+            self.description_warning.configure(text="")
+            self.description_warning.grid_remove()
+            return
+        which = (f"Line {lines[0]}: the Description is" if len(lines) == 1
+                 else "Lines " + ", ".join(map(str, lines))
+                 + ": the Descriptions are")
+        self.description_warning.configure(
+            text=f"{which} too long for two printed lines and will print in "
+                 "a smaller font. Shorten it to keep it readable.")
+        self.description_warning.grid()
 
     def default_currency(self, widgets):
         """A line given a price takes the currency of the line above."""
@@ -334,6 +385,7 @@ class ItemListSection:
             self.fill_line(widgets, row)
         self.update_subtotal()
         host.refresh_findings_counter()
+        self.check_descriptions()
 
     def fill_line(self, widgets, row):
         """Fill one line from a {header: text} dictionary."""
@@ -361,6 +413,7 @@ class ItemListSection:
                 widget.manual_total = False
             widgets.hidden = {}
         self.update_subtotal()
+        self.check_descriptions()
 
     def destroy(self):
         self.frame.destroy()
