@@ -1,5 +1,19 @@
 # Field Survey Report changelog
 
+## Phase 18 - Withdrawal-to-Receiving sharing, part 5: Windows and Android together (18 November 2026)
+
+- Tested every way round: Windows -> Windows, Windows -> Android, Android ->
+  Windows, Android -> Android, for the shipment file and for a hand-over of
+  the received report (`tests/test_shipment_interop.py`, the app's
+  InteropTest and ShipmentFlowTest). Shared samples:
+  `tests/data/handover_receiving_from_windows.json` (read by the app) and
+  `handover_from_android_receiving.json` (written by the app).
+- Older shipment files without prices still read and import (empty
+  prices). The format stays version 1.
+- docs/SHIPMENT.md: the explicit field mapping (file - Windows - phone) and
+  the table of tested combinations.
+- Released together with the phone app 1.12.0 (database version 3).
+
 ## Phase 17 - Withdrawal-to-Receiving sharing, part 4: items not on the list (unreleased, 18 November 2026)
 
 - **+ Add Received Item** ("Not on the list:" row above the Item Lists): a

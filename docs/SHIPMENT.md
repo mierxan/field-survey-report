@@ -255,6 +255,53 @@ A reader also refuses:
 - an empty Item List
 - a list of Packing Lists that does not match the lines
 
+## Field mapping: the file, Windows and the phone (Phase 5)
+
+The file uses the Windows field names (`fsr-shipment` version 1). Each app
+maps them explicitly to its own storage; neither assumes the other's
+internal structure.
+
+| In the file (a line) | Windows (Item List row / sheet column) | Phone (`ItemLine`, Room `item_lines`) |
+|---|---|---|
+| `Description of Goods` | Description of Goods | `description` |
+| `PO Number` | PO Number | `poNumber` |
+| `Packaging` | Packaging | `packaging` |
+| `Quantity` | Quantity | `quantity` |
+| `UOM` | UOM | `uom` |
+| `Dimensions` | Dimensions | `dimensions` |
+| `Weights` ("1,250 KG") | Weights (number and unit together) | `weights` + `weightUnit` (split at the last word; joined on export) |
+| `Container / Truck No.` | Container / Truck No. | `unitNo` |
+| `Currency`, `Unit Price`, `Total Price` | Currency, Unit Price, Total Price | `currency`, `unitPrice`, `totalPrice` |
+| `Packing List No.` | Packing List No. (hidden; last Item List column) | `packingListNo` (hidden; database 3) |
+| `Origin Line` | Origin Line (hidden; last column) | `originLine` (hidden; database 3) |
+
+| In the file (header) | Windows | Phone |
+|---|---|---|
+| `origin.control_no`, `location`, `inspection_date`, `item_form` | the origin reference shown before importing; `item_form` chooses the draft's Item List form | the same (`ShipmentFile`) |
+| `destination` | checked against this PC's destination (`settings.json`: `site_destination`) | checked against Settings > This phone's destination |
+| `transfer_id` | recorded in `<workbook>_shipments.json` | - (duplicates are found by origin line) |
+
+Reading: Windows `fsr_shipment.decode` / `receiving_data`; phone
+`ShipmentCodec.parse` / `receivingReport`. Writing: Windows
+`fsr_shipment.build_payload`; phone `ShipmentCodec.encode`. The same two
+fields travel in Master Data, hand-over and phone backup files under the
+same names (only on lines that have them).
+
+**Every way round, tested:**
+
+| From -> to | Shipment file | Hand-over of the received report |
+|---|---|---|
+| Windows -> Windows | test_shipment_import_gui | test_shipment_interop (another PC) |
+| Windows -> Android | ShipmentFlowTest (device), ShipmentCodecTest | InteropTest reads the Windows sample |
+| Android -> Windows | test_shipment_import_gui (the phone's sample) | test_shipment_interop reads the phone's sample |
+| Android -> Android | ShipmentFlowTest (device), InteropTest | HandoverCodecTest (as for any report) |
+
+**Older files:** a shipment file made before prices travelled (no
+Currency / Unit Price / Total Price) reads and imports with empty prices
+(tested on both). Master Data, hand-over and backup files without the two
+line fields read as before (blank). The format stays version 1: a reader
+refuses a newer version with "please update the program / app".
+
 ## Tests
 
 - **Windows** (`tests/test_shipment.py`, `tests/test_shipment_gui.py`):
