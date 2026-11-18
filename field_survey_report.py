@@ -87,7 +87,9 @@ import fsr_import                  # Master Data files from the sites/phones
 import fsr_master_export           # one Master Data file for the owner
 import fsr_handover                # a report or draft for the next inspector
 import fsr_handover_ui
-import fsr_incoming                # a hand-over file opened from Windows
+import fsr_shipment_ui             # a Withdrawal's item list to its destinations
+import fsr_findings_ui             # one-click Findings of the Item Lists
+import fsr_incoming               # a hand-over file opened from Windows
 import fsr_mysql_guard             # never overwrite another copy's report
 import fsr_mysql_sender            # MySQL in the background
 import fsr_save_journal            # finishes a save that stopped halfway
@@ -3926,13 +3928,34 @@ def open_hand_over():
     return fsr_handover_ui.open_hand_over(globals())
 
 
+def open_share_shipment():
+    """Storage > Share with Destination...: the Packing Lists of a saved
+    Withdrawal report, one shipment file per destination (fsr_shipment)."""
+    if reports_are_moving("Share with Destination"):
+        return None
+    return fsr_shipment_ui.open_share(globals())
+
+
+def open_receive_shipment(chosen=None):
+    """Storage > Receive Shipment...: a shipment file for this PC's
+    destination becomes a new Receiving draft (fsr_shipment)."""
+    if reports_are_moving("Receive Shipment"):
+        return None
+    return fsr_shipment_ui.open_receive(globals(), chosen)
+
+
 def receive_handover(chosen=None):
-    """Storage > Receive Hand-over...: a file from the previous inspector."""
+    """Storage > Receive Hand-over...: a file from the previous inspector.
+    A shipment file (opened from Windows, or chosen here) goes to Receive
+    Shipment instead."""
     if Workbook is None:
         excel_missing_message()
         return None
     if reports_are_moving("Receive Hand-over"):
         return None
+    if chosen and str(chosen).lower().endswith(
+            fsr_incoming.SHIPMENT_SUFFIX):
+        return open_receive_shipment(chosen)
     return fsr_handover_ui.receive(globals(), chosen)
 
 
@@ -4995,6 +5018,8 @@ def build_window():
     global goods_type_vars, goods_types_frame, hauler_combobox
     global import_master_button, import_review_button, import_state
     global hand_over_button, receive_handover_button, hand_over_state
+    global share_shipment_button, receive_shipment_button, shipment_state
+    global findings_row, all_good_button, with_issues_button
     global incident_actions
     global incident_body, incident_cards, incident_cards_frame
     global incident_hint, incident_info, incident_tab, index
@@ -5606,17 +5631,43 @@ def build_window():
         command=lambda: export_master_data()
     )
     export_master_button.pack(fill="x", pady=3)
-    # a report or draft for the inspector who finishes it (fsr_handover)
+    # a report or draft for the inspector who finishes it (fsr_handover);
+    # side by side, so the panel is no taller with Share with Destination
+    handover_row = tb.Frame(panel)
+    handover_row.pack(fill="x", pady=3)
+    handover_row.columnconfigure(1, weight=1)      # the longer name
     hand_over_button = tb.Button(
-        panel, text="Hand Over...", bootstyle="secondary-outline",
-        command=lambda: open_hand_over()
+        handover_row, text="Hand Over...", bootstyle="secondary-outline",
+        padding=(10, 6), command=lambda: open_hand_over()
     )
-    hand_over_button.pack(fill="x", pady=3)
+    hand_over_button.grid(row=0, column=0, sticky="we", padx=(0, 3))
     receive_handover_button = tb.Button(
-        panel, text="Receive Hand-over...", bootstyle="secondary-outline",
+        handover_row, text="Receive Hand-over...",
+        bootstyle="secondary-outline", padding=(2, 6),
         command=lambda: receive_handover()
     )
-    receive_handover_button.pack(fill="x", pady=3)
+    receive_handover_button.grid(row=0, column=1, sticky="we", padx=(3, 0))
+    # a Withdrawal's Packing Lists to their destinations, and a shipment
+    # into a Receiving draft at the destination (fsr_shipment)
+    shipment_row = tb.Frame(panel)
+    shipment_row.pack(fill="x", pady=3)
+    shipment_row.columnconfigure(1, weight=1)      # the longer name
+    share_shipment_button = tb.Button(
+        shipment_row, text="Share Shipment...",
+        bootstyle="secondary-outline", padding=(2, 6),
+        command=lambda: open_share_shipment()
+    )
+    share_shipment_button.grid(row=0, column=0, sticky="we", padx=(0, 3))
+    receive_shipment_button = tb.Button(
+        shipment_row, text="Receive Shipment...",
+        bootstyle="secondary-outline", padding=(2, 6),
+        command=lambda: open_receive_shipment()
+    )
+    receive_shipment_button.grid(row=0, column=1, sticky="we", padx=(3, 0))
+    add_tip(share_shipment_button, "Share with Destination: the Packing "
+            "Lists of a saved Withdrawal report, one file per destination.")
+    add_tip(receive_shipment_button, "A shipment file for this PC's "
+            "destination becomes a new Receiving draft.")
 
     # MySQL: three circles. All three colours = MySQL works,
     # three red circles = it does not. Click them to check again.
@@ -6006,6 +6057,28 @@ def build_window():
     )
     items_hint.grid(row=1, column=2, padx=16)
 
+    # one-click Findings: every line Good Order and Complete, or only the
+    # lines with an issue get their own findings (fsr_findings_ui)
+    findings_row = tb.Frame(items_toolbar)
+    findings_row.grid(row=2, column=0, columnspan=3, sticky="w",
+                      pady=(8, 0))
+    tb.Label(findings_row, text="Findings:", font=bold_font).pack(
+        side="left", padx=(0, 6))
+    all_good_button = tb.Button(
+        findings_row, text="All Good Order and Complete",
+        bootstyle="success-outline",
+        command=lambda: fsr_findings_ui.accept_all(globals()))
+    all_good_button.pack(side="left")
+    with_issues_button = tb.Button(
+        findings_row, text="With Issues...", bootstyle="warning-outline",
+        command=lambda: fsr_findings_ui.with_issues(globals()))
+    with_issues_button.pack(side="left", padx=6)
+    add_tip(all_good_button, "Every item line's Findings becomes "
+            "\"Good Order and Complete\".")
+    add_tip(with_issues_button, "Tick the lines with an issue and type their "
+            "findings; every other line becomes \"Good Order and "
+            "Complete\".")
+
 
     withdrawal_panel = WithdrawalPanel(items_body, SimpleNamespace(
         window=window, activity_entry=schedule_entries["activity"],
@@ -6264,6 +6337,7 @@ def build_window():
 
     import_state = {"running": False}
     hand_over_state = {"dialog": None}
+    shipment_state = {"dialog": None}
 
 
     for _key, _func in (("s", save_report),

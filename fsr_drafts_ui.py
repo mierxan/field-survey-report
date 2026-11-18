@@ -87,6 +87,8 @@ class Controller:
         # A received draft's hand-over details; a phone draft keeps its
         # Control # and identity in them until its first save (fsr_handover).
         self.received = None
+        # a draft made from a shipment file: where it came from (fsr_shipment)
+        self.shipment = None
         self.warning = False
         self.pending = None
         self.dialog = None
@@ -216,7 +218,8 @@ class Controller:
                 'control': self.h['control_entry'].get().strip() if self.h['report_state']['editing'] else '',
                 'source': self.source, 'baseline': copy.deepcopy(self.baseline),
                 'form': form.capture(self.h),
-                **({'received': copy.deepcopy(self.received)} if self.received else {})}
+                **({'received': copy.deepcopy(self.received)} if self.received else {}),
+                **({'shipment': copy.deepcopy(self.shipment)} if self.shipment else {})}
 
     def checkpoint(self):
         value = self.value()
@@ -287,6 +290,7 @@ class Controller:
         self.source = source
         self.restored = False
         self.received = None
+        self.shipment = None
         self.base_control = data.get('control_no', '') if data else ''
         # No store read during ordinary Save; keep Phase 3's write/read counts.
         self.baseline = {'data': copy.deepcopy(data)} if data else {}
@@ -356,6 +360,7 @@ class Controller:
             kept = None if value['editing'] else self.kept_number(value)
             self.h['set_control_number'](value['control'] if value['editing'] else kept or self.h['next_new_control_number']())
             self.received = copy.deepcopy(value.get('received')) or None
+            self.shipment = copy.deepcopy(value.get('shipment')) or None
             self.draft_id, self.revision = value['id'], value['revision'] + 1
             self.changed_text = value['changed']
             self.base_control = value['control']
@@ -468,6 +473,8 @@ class Controller:
             elif value.get('received'):
                 sender = value['received'].get('from') or {}
                 state = f"Received from {sender.get('inspector') or sender.get('initials') or 'an inspector'}"
+            elif value.get('shipment'):
+                state = f"Shipment from {value['shipment'].get('origin_control') or 'a Withdrawal'} for {value['shipment'].get('destination') or ''}".strip()
             if value.get('session') != self.session and fsr_windows_session.draft_is_running(value):
                 state = 'Open in another session'
             kept = (value.get('received') or {}).get('control') if (value.get('received') or {}).get('identity') else ''

@@ -285,7 +285,9 @@ def report_changes(previous, imported):
         if before != after:
             add(path, before, after)
 
-    walk(previous, imported, ())
+    # an empty Packing List No. / Origin Line is the same as none
+    walk(storage.without_empty_shipment_fields(previous),
+         storage.without_empty_shipment_fields(imported), ())
     return result
 
 
@@ -411,7 +413,10 @@ def report_fingerprint(report):
 
 def _whole_fingerprint(report):
     """The fingerprint of the whole report as it was sent (how the first
-    Phase 7 build recorded it; still recognised)."""
+    Phase 7 build recorded it; still recognised). Empty shipment fields
+    (Packing List No., Origin Line) do not count, so a report saved before
+    they existed keeps its fingerprint."""
+    report = storage.without_empty_shipment_fields(report)
     text = json.dumps(report, sort_keys=True, ensure_ascii=False,
                       separators=(",", ":"), default=str)
     return hashlib.sha256(text.encode("utf-8")).hexdigest()

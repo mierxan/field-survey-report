@@ -468,7 +468,9 @@ def reports_from_rows(path, header_rows, grouped):
     and the SQLite store."""
     sheet_for = {"Item List": LINE_SHEET, "Declared Goods": GOODS_SHEET,
                  "Remarks": REMARK_SHEET}
-    extra_at = len(storage.ITEM_SHEET_HEADERS)
+    # this workbook's own columns follow the line fields (it has no
+    # shipment columns: storage.SHIPMENT_HEADERS)
+    extra_at = storage.SHIPMENT_AT
     reports = []
     for values in header_rows:
         if not values.get("Control #"):
@@ -476,7 +478,8 @@ def reports_from_rows(path, header_rows, grouped):
         key = str(values["Control #"]).strip().casefold()
         report = storage.report_from_rows(
             path, values,
-            lambda sheet, key=key: grouped[sheet_for[sheet]].get(key, []))
+            lambda sheet, key=key: grouped[sheet_for[sheet]].get(key, []),
+            shipment=False)
         lines = sorted(grouped[LINE_SHEET].get(key, []),
                        key=lambda row: (int(str(row[1]).split()[-1]), row[2] or 0))
         rows = [row for section in report["item_lists"]

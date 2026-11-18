@@ -43,14 +43,20 @@ ITEM_COLUMNS = [                      # (key in the form data, MySQL column)
 # these columns yet: the program then saves everything else, and
 # upgrade_schema() (Settings > Upgrade MySQL tables) adds them.
 # UOM, Currency and Container / Truck No. were added the same way later.
+# Packing List No. and Origin Line (a line received from a shipment file,
+# fsr_shipment) came the same way after that: optional, NULL when empty.
 LINK_COLUMNS = [("Cargo ID", "cargo_id"), ("Receiving Ref", "receiving_ref"),
                 ("UOM", "uom"), ("Currency", "currency"),
-                ("Container / Truck No.", "unit_no")]
+                ("Container / Truck No.", "unit_no"),
+                ("Packing List No.", "packing_list_no"),
+                ("Origin Line", "origin_line")]
 LINK_COLUMN_SQL = {"cargo_id": "VARCHAR(100) NULL",
                    "receiving_ref": "VARCHAR(100) NULL",
                    "uom": "VARCHAR(30) NULL",
                    "currency": "VARCHAR(3) NULL",
-                   "unit_no": "VARCHAR(100) NULL"}
+                   "unit_no": "VARCHAR(100) NULL",
+                   "packing_list_no": "VARCHAR(120) NULL",
+                   "origin_line": "VARCHAR(120) NULL"}
 MASTER_KEYS = ["consignee_list", "supplier_list", "broker_list", "hauler_list",
                "location_list", "destination_list", "country_of_origin_list"]
 
@@ -814,6 +820,10 @@ def load_report(control_no, connection=None):
             row = {key: "" for key, _ in ITEM_COLUMNS + LINK_COLUMNS}
             row.update({key: _show(value)
                         for (key, _), value in zip(columns_used, values)})
+            # as from the workbook: only a line with a value carries these
+            for key in ("Packing List No.", "Origin Line"):
+                if not row.get(key):
+                    row.pop(key, None)
             lists.setdefault(name, []).append(row)
         item_lists = [{"name": name, "rows": rows}
                       for name, rows in lists.items()]

@@ -343,6 +343,9 @@ def receive(h, chosen=None):
                 ("All files", "*.*")])
     if not chosen:
         return None
+    if str(chosen).lower().endswith(fsr_incoming.SHIPMENT_SUFFIX) and \
+            h.get("open_receive_shipment"):
+        return h["open_receive_shipment"](chosen)
     try:
         payload = fsr_handover.read_file(chosen)
     except fsr_handover.HandoverError as error:

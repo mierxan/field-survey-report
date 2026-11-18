@@ -211,3 +211,24 @@ def test_a_server_that_is_not_there_is_reported_as_away(database):
     ok, message, away = db_mysql.check_connection(config)
     assert not ok and away is True
     assert "cannot reach" in message or "2003" in message
+
+
+def test_the_shipment_fields_are_kept_and_old_lines_carry_none(conn):
+    """Packing List No. / Origin Line (a line received from a shipment
+    file) in the real test database: written, read back, and a line without
+    them reads exactly as before (no empty keys)."""
+    number = control()
+    data = full_report(number, condition="Good Order")
+    rows = data["item_lists"][0]["rows"]
+    rows[0].update({"Packing List No.": "NOR111126-001 & 002",
+                    "Origin Line": "FSR-ORG-202611-0001/1/1",
+                    "Findings": "Good Order and Complete"})
+    notes = db_mysql.write_report(conn, data)
+    conn.commit()
+    assert not any("Packing List" in n for n in notes)   # the columns exist
+    back = db_mysql.load_report(number, conn)["item_lists"][0]["rows"]
+    assert (back[0]["Packing List No."], back[0]["Origin Line"],
+            back[0]["Findings"]) == ("NOR111126-001 & 002",
+                                     "FSR-ORG-202611-0001/1/1",
+                                     "Good Order and Complete")
+    assert "Packing List No." not in back[1] and "Origin Line" not in back[1]

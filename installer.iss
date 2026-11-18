@@ -81,6 +81,14 @@ Root: HKA; Subkey: "Software\Classes\.fsrhandover\OpenWithProgids"; ValueType: s
 Root: HKA; Subkey: "Software\Classes\FieldSurveyReport.Handover.{#Edition}"; ValueType: string; ValueName: ""; ValueData: "Field Survey Report Hand-over"; Flags: uninsdeletekey
 Root: HKA; Subkey: "Software\Classes\FieldSurveyReport.Handover.{#Edition}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExe},0"
 Root: HKA; Subkey: "Software\Classes\FieldSurveyReport.Handover.{#Edition}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"" ""%1"""
+; A shipment file (.fsrshipment, a Withdrawal's Packing Lists for this
+; destination) opens the program the same way: it asks before making the
+; Receiving draft (fsr_shipment.py, docs\SHIPMENT.md).
+Root: HKA; Subkey: "Software\Classes\.fsrshipment"; ValueType: string; ValueName: ""; ValueData: "FieldSurveyReport.Shipment.{#Edition}"; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\.fsrshipment\OpenWithProgids"; ValueType: string; ValueName: "FieldSurveyReport.Shipment.{#Edition}"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\FieldSurveyReport.Shipment.{#Edition}"; ValueType: string; ValueName: ""; ValueData: "Field Survey Report Shipment"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\FieldSurveyReport.Shipment.{#Edition}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExe},0"
+Root: HKA; Subkey: "Software\Classes\FieldSurveyReport.Shipment.{#Edition}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"" ""%1"""
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "Start {#AppName}"; Flags: nowait postinstall skipifsilent

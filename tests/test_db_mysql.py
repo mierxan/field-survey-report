@@ -108,7 +108,7 @@ def test_upgrade_adds_only_missing_columns():
     conn = FakeConnection(BASE + ["cargo_id"])
     added = db_mysql.upgrade_schema(conn)
     assert added == ["receiving_ref", "uom", "currency", "unit_no",
-                     "item_form"]
+                     "packing_list_no", "origin_line", "item_form"]
     alters = [s for s, _ in conn.statements if s.startswith("ALTER")]
     assert alters == ["ALTER TABLE item_lines ADD COLUMN receiving_ref "
                       "VARCHAR(100) NULL",
@@ -117,6 +117,10 @@ def test_upgrade_adds_only_missing_columns():
                       "VARCHAR(3) NULL",
                       "ALTER TABLE item_lines ADD COLUMN unit_no "
                       "VARCHAR(100) NULL",
+                      "ALTER TABLE item_lines ADD COLUMN packing_list_no "
+                      "VARCHAR(120) NULL",
+                      "ALTER TABLE item_lines ADD COLUMN origin_line "
+                      "VARCHAR(120) NULL",
                       "ALTER TABLE reports ADD COLUMN item_form "
                       "VARCHAR(20) NULL"]
 

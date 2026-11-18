@@ -253,6 +253,10 @@ def read_file(path):
         raise HandoverError(
             "This is a Master Data file, not a hand-over file. The Owner "
             "brings it in with Import Master Data.")
+    if isinstance(root, dict) and root.get("format") == "fsr-shipment":
+        raise HandoverError(
+            "This is a shipment file (a Withdrawal's Packing Lists), not a "
+            "hand-over file. Bring it in with Receive Shipment.")
     if not isinstance(root, dict) or root.get("format") != FORMAT:
         raise HandoverError("This is not a Field Survey Report hand-over "
                             "file.")
@@ -662,9 +666,15 @@ def phone_report_data(phone):
         weight = " ".join(part for part in (
             _phone_text(value.get("weights")).strip(),
             _phone_text(value.get("weightUnit")).strip()) if part)
-        return {header: weight if key is None
-                else _phone_text(value.get(key))
-                for header, key in _PHONE_LINE}
+        row = {header: weight if key is None
+               else _phone_text(value.get(key))
+               for header, key in _PHONE_LINE}
+        # a line received from a shipment file (only when it has them)
+        for header, key in (("Packing List No.", "packingListNo"),
+                            ("Origin Line", "originLine")):
+            if _phone_text(value.get(key)).strip():
+                row[header] = _phone_text(value.get(key))
+        return row
 
     def filled(value):
         return any(_phone_text(value.get(key)).strip()

@@ -1,5 +1,130 @@
 # Field Survey Report changelog
 
+## Phase 15 - Withdrawal-to-Receiving sharing, part 2: the destination (unreleased, 18 November 2026)
+
+- **Findings in one click** (18 November 2026, after the first manual test):
+  above the Item Lists, **All Good Order and Complete** writes "Good Order
+  and Complete" on every item line (asks before replacing other Findings),
+  and **With Issues...** lists every line with its Packing List: tick the
+  lines with an issue, type their findings, and Apply writes "Good Order and
+  Complete" on every other line (`fsr_findings_ui.py`). The Packing List
+  numbers are not touched.
+- **Prices travel**: Unit Price, Total Price and Currency are now in the
+  shipment file and in the Receiving draft (the owner's decision, reversing
+  Phase 1 decision 5 for these three). SO Number, Supplier and the other
+  First Page fields still never travel.
+- Side panel: Share Shipment... / Receive Shipment... sized so both names
+  show.
+
+- **Storage > Receive Shipment...** (Owner and User edition), and a
+  double-click on a `.fsrshipment` file: a shipment for THIS PC's destination
+  becomes a **new Receiving draft** of the signed-in account, offered to open
+  at once (`fsr_shipment.import_shipment`, `fsr_shipment_ui.open_receive`).
+  Activity = Receiving, every other First Page field empty; the Item Lists
+  hold the shipment's lines; Findings empty for the receiving condition. The
+  summary (origin, sender, Packing Lists, lines, POs, "matches") is shown
+  before anything is made.
+- **This PC's destination**, set once (Receive Shipment, with Change...),
+  from the Destination master list: a file for another destination is
+  refused with a clear message. A check against mistakes, not security.
+- **Duplicates refused**: a shipment whose origin lines are already in a
+  draft from an earlier import or in a saved report. A draft discarded by
+  mistake can be imported again. Every import is recorded in
+  `<workbook>_shipments.json`.
+- **Two hidden line fields, Packing List No. and Origin Line** (saved, never
+  printed in the Item List columns), kept when Findings is edited; carried by
+  the form, drafts, Master Data and hand-over files, MySQL (two optional
+  columns via Upgrade MySQL tables). The main workbook's Item List sheet gets
+  them as its last two columns on the next save; the Withdrawal workbook is
+  unchanged. A line carries them only when they have a value, so existing
+  reports read, export and fingerprint exactly as before.
+- Unfinished work lists an imported draft as "Shipment from <origin> for
+  <destination>". Storage: Share Shipment... and Receive Shipment... share a
+  row; a shipment file chosen in Receive Hand-over goes to Receive Shipment.
+- The installer registers `.fsrshipment` (opens the program, which asks).
+- Tests against the previous version's own code (git archive of the last
+  commit): its workbooks and databases read the same; it still reads a
+  database this version wrote to; it refuses a workbook this version saved
+  (the accepted caveat). The real reports read the same by both versions (67
+  reports, 386 lines, all Owner fingerprints) - read only.
+- Not yet: the verification screen and printing "<Packing List> ·
+  <Findings>" (Phase 3), items added at the destination (Phase 4).
+
+## Phase 14 - Withdrawal-to-Receiving sharing, part 1: the origin (unreleased, 18 November 2026)
+
+- **Storage > Share with Destination...** (Owner and User edition): choose a
+  saved Withdrawal report (normal or PO-linked), give each of its Packing
+  Lists a destination, and get **one shipment file per destination**
+  holding only that destination's Packing Lists and their item lines
+  (`fsr_shipment.py`, `fsr_shipment_ui.py`, format in
+  [docs/SHIPMENT.md](docs/SHIPMENT.md)).
+- The Packing List No. of a line is read from its Findings, the whole cell
+  exactly as written (`BAC111126-001 & 002` stays one entry; never split or
+  guessed). Lines without one form the group "(no Packing List)".
+- Only the cargo details travel, with the origin reference (Control #,
+  location, Inspection Date, inspector, device), a random transfer id, the
+  destination, each line's Packing List No. and its Origin Line. No prices,
+  Currency, SO Number, Supplier, Cargo ID, Receiving Ref or other First Page
+  fields. A file holding any other line field is refused when read.
+- The Withdrawal report is only read; nothing in the workbook, the
+  database, PO_Master, Withdrawn_Item or MySQL changes. Each file is read
+  back and checked; if one cannot be written, the files of that click are
+  removed again. An existing file is never overwritten.
+- Side panel: Hand Over... and Receive Hand-over... share one row, so the
+  panel is no taller with the new button.
+- Not yet: importing the file at the destination, verification, items added
+  there, the Android screens (later phases). The Android app already reads
+  and writes the same file (its `ShipmentCodec`), checked against this
+  program's file both ways.
+
+## Phase 13 - Futuristic Dashboard, as on the phone (unreleased, 18 November 2026)
+
+- **Dashboard, Receiving / Withdrawal Transactions and Bad Order
+  Monitoring** have the phone app's futuristic look: deep navy, cards whose
+  edge glows in their colour, neon icons, glowing bars and lines, rings
+  (`theme.NEO`, `neo=True` on Card, KpiGrid, PeriodBar, DataTable and
+  ChartPanel). The same in the light and dark theme; the other pages and
+  the report form are unchanged.
+- **Dashboard:** six cards - Total Inspection Reports, Good Order Reports,
+  Bad Order Reports, Bad Order Percentage, Receiving Transactions,
+  Withdrawal Transactions (the second row of four, which repeated them, is
+  gone). Charts: Overall Transactions, Receiving Transactions, Withdrawal
+  Transactions, Warehouse Items / Cargo Status (ring), Bad Order (ring with
+  the count and share), Inventory Aging.
+- **Receiving / Withdrawal Transactions:** the cards are Total
+  Transactions, Total Packages (the Declared Goods quantities added up) and
+  Items Inspected (the Item List quantities added up), with the change
+  against the period before (`analytics.activity_kpis`), on the Daily /
+  Weekly / Monthly Summary and All Transactions. Weekly Breakdown and
+  Breakdowns and Comparison in the new look; long week labels tilt.
+- **Bad Order Monitoring:** a chart of Bad Order reports per month and a
+  list of the reports by month (latest month open; double-click opens the
+  report; `analytics.bad_order_by_month`). Good Order vs Bad Order is a
+  ring.
+- **18 November 2026, revised:** Dashboard: Warehouse Items / Cargo
+  Status shows Total Line Items Stored and Total Line Items Withdrawn (the
+  Item List lines of the period's Receiving and Withdrawal reports).
+  On screen a Bad Order report is an **Incident Report**: the Bad Order
+  Monitoring page is now **Incident Reports** (sidebar), and the Dashboard
+  cards and ring say Incident Reports / Incident Report Percentage. The
+  report's Cargo Condition stays "Bad Order" (data). The page no longer
+  shows Affected Cargo Lines, Unresolved Bad Order Cases, Bad Order by
+  Cargo Type or the Bad Order Records table; Set Case Status, Open
+  Inspection Report and the summary exports work from the list by month.
+- **Stored vs In Stock made clear:** Warehouse Items / Cargo Status adds a
+  third bar, **Total Line Items In Stock** - the Item List lines with cargo
+  left today, all dates - which equals the Inventory Aging total. Stored
+  and Withdrawn stay the lines of the selected period. Inventory Aging now
+  counts "Item List lines in stock" and says that a fully withdrawn line is
+  not counted and that the period does not apply.
+- **Inventory Aging List:** under Inventory Aging on the Dashboard. Click a
+  bar (e.g. 0-7 Days) and the list shows that age group's Item List lines
+  still in stock: Control Number, Date, Line Item (List / Line), Description,
+  PO, Qty in Stock, UOM and Age (Days), oldest first. "Show All Ages" lists
+  every age group; double-click a line to open its report. The Warehouse
+  filter applies, as on the chart.
+- The Excel and PDF exports are unchanged.
+
 ## Phase 12 - Dashboards that fit (unreleased, 17 November 2026)
 
 - **Excel Dashboards (Weekly / Monthly reports and the interactive

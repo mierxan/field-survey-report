@@ -8,7 +8,7 @@ by the window module)."""
 from fsr_typeahead import Combobox as TypeaheadCombobox
 from fsr_storage import CURRENCIES
 from fsr_storage import ITEM_FORM_DEFAULT
-from fsr_storage import ITEM_LINE_HEADERS
+from fsr_storage import ITEM_ROW_HEADERS
 from fsr_storage import UNIT_NO_HEADER
 from fsr_storage import UNIT_NO_LABELS
 from fsr_storage import UOM_CHOICES
@@ -63,7 +63,7 @@ class ItemListSection:
     def __init__(self, parent, number):
         self.form = host.item_form_var.get()
         self.headers, self.widths = host.ITEM_FORM_COLUMNS[self.form]
-        self.hidden_headers = [h for h in ITEM_LINE_HEADERS
+        self.hidden_headers = [h for h in ITEM_ROW_HEADERS
                                if h not in self.headers]
         self.priced = "Total Price" in self.headers
 

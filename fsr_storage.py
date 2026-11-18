@@ -9,6 +9,7 @@ automated tests can use the real storage code without opening a window.
 field_survey_report.py imports everything from this module.
 """
 
+import copy
 import fsr_drafts
 import io
 import json
@@ -374,6 +375,34 @@ ITEM_LINK_HEADERS = ["Cargo ID", "Receiving Ref"]
 UNIT_NO_HEADER = "Container / Truck No."
 ITEM_EXTRA_HEADERS = ["UOM", "Currency", UNIT_NO_HEADER]
 ITEM_LINE_HEADERS = ITEM_HEADERS + ITEM_LINK_HEADERS + ITEM_EXTRA_HEADERS
+# A line received from a Withdrawal's shipment file (fsr_shipment): its
+# Packing List No. and the origin line it came from. Hidden like the links
+# (saved, never printed in the Item List columns). They are the LAST columns
+# of the main workbook's Item List sheet; the Withdrawal workbook does not
+# have them (its own columns follow ITEM_LINE_HEADERS by position). A line
+# carries them only when they have a value, so every report without them
+# reads, exports and compares exactly as before they existed.
+SHIPMENT_HEADERS = ["Packing List No.", "Origin Line"]
+ITEM_ROW_HEADERS = ITEM_LINE_HEADERS + SHIPMENT_HEADERS
+
+
+def without_empty_shipment_fields(report):
+    """A copy of `report` whose lines carry the shipment fields only when
+    they have a value (for fingerprints and comparisons)."""
+    result = copy.deepcopy(report)
+
+    def tidy(item_lists):
+        for item_list in item_lists or []:
+            for row in item_list.get("rows") or []:
+                for header in SHIPMENT_HEADERS:
+                    if header in row and not str(row[header] or "").strip():
+                        del row[header]
+
+    if isinstance(result, dict):
+        tidy(result.get("item_lists"))
+        for lists in (result.get("other_item_forms") or {}).values():
+            tidy(lists)
+    return result
 
 # The Item List form of a report (one for all its Item Lists):
 #   Default       - the original columns (PO Number, prices ...)
@@ -509,7 +538,10 @@ def legacy_header(value, expected):
     return renamed if renamed == expected else value
 
 GOODS_HEADERS = ["Control #", "Description", "Quantity", "Packaging"]
-ITEM_SHEET_HEADERS = ["Control #", "Item List", "Line No"] + ITEM_LINE_HEADERS
+ITEM_SHEET_HEADERS = (["Control #", "Item List", "Line No"] + ITEM_LINE_HEADERS
+                      + SHIPMENT_HEADERS)
+# where the shipment fields start on an Item List row (after the line fields)
+SHIPMENT_AT = 3 + len(ITEM_LINE_HEADERS)
 REMARK_HEADERS = ["Control #", "Section", "Line No", "Remark"]
 
 # The quantity columns, kept as typed (0-based columns of the sheet).
@@ -1102,9 +1134,12 @@ def read_all_reports(path):
     return reports
 
 
-def report_from_rows(path, r, rows_for):
+def report_from_rows(path, r, rows_for, shipment=True):
     """One report from its Reports row `r` (a {column: value} dict) and
-    rows_for(sheet name) -> that report's rows of a child sheet."""
+    rows_for(sheet name) -> that report's rows of a child sheet.
+    `shipment`: the Item List rows end with the SHIPMENT_HEADERS columns
+    (the main workbook; not the Withdrawal workbook, whose own columns
+    follow at that place)."""
 
     def text(header, **options):
         return cell_text(r.get(header), **options)
@@ -1135,6 +1170,12 @@ def report_from_rows(path, r, rows_for):
         }
         for header in ITEM_LINE_HEADERS:     # older files: no Findings / links
             values.setdefault(header, "")
+        if shipment:
+            # older rows end before these columns; a line carries them only
+            # when they hold something
+            for header, value in zip(SHIPMENT_HEADERS, row[SHIPMENT_AT:]):
+                if cell_text(value).strip():
+                    values[header] = cell_text(value)
         lines_by_list.setdefault(list_no, []).append((row[2] or 0, values))
 
     item_lists = []
@@ -1492,6 +1533,8 @@ def report_child_rows(data, control_no):
                     values.append(to_number(row.get(header, "")))
                 else:
                     values.append(text_or_none(row.get(header, "")))
+            for header in SHIPMENT_HEADERS:          # the last columns
+                values.append(text_or_none(row.get(header, "")))
             items.append(values)
 
     remarks = []

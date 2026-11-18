@@ -20,7 +20,8 @@ from pathlib import Path
 
 SUFFIX = ".fsrhandover"         # hand-over files from now on
 OLD_SUFFIX = ".json"            # the files made before
-SUFFIXES = (SUFFIX, OLD_SUFFIX)
+SHIPMENT_SUFFIX = ".fsrshipment"    # a Withdrawal's shipment (fsr_shipment)
+SUFFIXES = (SUFFIX, OLD_SUFFIX, SHIPMENT_SUFFIX)
 FOLDER_NAME = "Incoming hand-overs"
 MAX_BYTES = 20 * 1024 * 1024    # as fsr_handover.MAX_BYTES
 _WAITING = ".waiting"           # a file being copied in: not taken yet
