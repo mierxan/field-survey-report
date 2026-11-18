@@ -19,8 +19,11 @@ Status:
   Good Order and Complete** and **With Issues...** (see below), on PC and
   phone. Unit Price, Total Price and Currency now travel with the lines
   (the owner's decision, reversing Phase 1 decision 5 for these three).
-- **Not yet:** printing `<Packing List> · <Findings>` (Phase 3), items added
-  at the destination (Phase 4), the released phone version (Phase 5).
+- **Phase 3 (done):** verification - printing `<Packing List> · <Findings>`,
+  the Packing Lists review, and a question before completing a report whose
+  received lines have no Findings yet (see below).
+- **Not yet:** items added at the destination (Phase 4), the released phone
+  version (Phase 5).
 
 ## Receiving (Phase 2)
 
@@ -71,6 +74,34 @@ phone: the **Findings** card at the top of the Item Lists tab):
 Only the Findings change (the report is saved as usual); the Packing List
 No. of each line is never touched. Blank spare lines are left blank. Works
 on any report's Item Lists, not only on drafts made from a shipment.
+
+## Verification and printing (Phase 3)
+
+**Reviewing the Packing Lists.** PC: **Packing Lists...** in the Findings
+row; phone: the list under the Findings buttons. One row per Packing List of
+the lines: its PO numbers, its lines, and how many say "Good Order and
+Complete", have other findings (issues) or none yet - shown in orange / red
+while some lines have no Findings. The inspector checks them against the
+papers received.
+
+**Finishing.** Saving (PC) or Complete (phone) a report whose lines came
+from a shipment, while some of those lines still have no Findings, asks
+first ("Verification not finished", naming the lines); the default is to go
+back. Nothing is ever marked automatically. Lines typed at the destination
+and ordinary reports are not asked about. Drafts save as before.
+
+**Printing (the owner's Option B).** On the printed Cargo Details page
+(Default, Containerized and Loading forms; PDF, print and the report's
+Excel form), the Findings column of a line received from a shipment shows
+`<Packing List No.> · <Findings>`, e.g. `BAC111126-009 · Good Order and
+Complete` or `NOR181126-003 · 1 crate dented`; with no Findings yet, only the
+Packing List. Every other line prints its Findings exactly as before.
+The cell is one line of the form's font (about 23 characters): a longer
+`<Packing List> · <Findings>` of up to 56 characters prints on **two wrapped
+lines of 9 points** (rendered by Excel itself and checked); anything longer
+shrinks to fit, as every form cell always did - nothing is cut off. The
+phone draws the same (its PDF also wraps, then shrinks only if needed). The
+data itself is unchanged: Findings and the Packing List No. stay separate.
 - If anything fails, no draft is made (the PC removes a draft whose import
   record could not be written).
 
@@ -102,7 +133,7 @@ stored, exported, handed over and compared exactly as before.
 | Owner's import | fingerprints and change lists ignore empty new fields | no report looks changed |
 
 **The way back** (tests/test_shipment_migration.py runs the previous
-version's own code, from the last commit):
+version's own code, from the newest commit before these fields):
 - The previous version still reads a **reports database** this version
   wrote to: every report; it simply does not know the two fields.
 - The previous version **refuses a workbook** this version saved

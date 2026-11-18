@@ -21,6 +21,7 @@ from datetime import datetime
 from pathlib import Path
 
 from fsr_storage import (
+    printed_findings,
     clean_incident_reports, DATE_FORMAT, INCIDENT_MAX_LINES, incident_title,
     ITEM_FORM_CONTAINERIZED, ITEM_FORM_DEFAULT, ITEM_FORM_LOADING,
     item_form_name, ITEM_FORMS, LEGACY_DATE_FORMAT, safe_filename,
@@ -253,6 +254,61 @@ class StyleCloner:
             self.cache[key] = len(self.xfs) - 1
         return self.cache[key]
 
+    def wrap_small_index(self, index, size):
+        """Copy of style `index` that WRAPS its text (no shrinking) in a
+        font of `size` points: two readable lines in a one-line cell."""
+        key = ("wrap", index, size)
+        if key not in self.cache:
+            xf = self.xfs[index]
+            found = re.search(r'fontId="(\d+)"', xf)
+            font = self._sized_font(int(found.group(1)) if found else 0, size)
+            if xf.endswith("/>"):
+                opening, body = xf[:-2], ""
+            else:
+                end = xf.index(">")
+                opening, body = xf[:end], xf[end + 1:-len("</xf>")]
+            opening = re.sub(r'\s+apply(?:Alignment|Font)="[^"]*"', "",
+                             opening)
+            if 'fontId="' in opening:
+                opening = re.sub(r'fontId="\d+"', f'fontId="{font}"', opening)
+            else:
+                opening += f' fontId="{font}"'
+            opening += ' applyAlignment="1" applyFont="1"'
+            if "<alignment" in body:
+                body = re.sub(
+                    r"<alignment\b([^>]*?)(/?)>",
+                    lambda m: "<alignment" + re.sub(
+                        r'\s+(?:shrinkToFit|wrapText)="[^"]*"', "",
+                        m.group(1)) + ' wrapText="1"' + m.group(2) + ">",
+                    body, count=1)
+            else:
+                body += '<alignment wrapText="1"/>'
+            self.xfs.append(f"{opening}>{body}</xf>")
+            self.added.append(len(self.xfs) - 1)
+            self.cache[key] = len(self.xfs) - 1
+        return self.cache[key]
+
+    def _sized_font(self, font_id, size):
+        """The index of a copy of font `font_id` at `size` points (added to
+        the template's fonts)."""
+        key = ("font-size", font_id, size)
+        if key in self.cache:
+            return self.cache[key]
+        if not hasattr(self, "fonts"):
+            block = re.search(r"<fonts\b[^>]*>(.*?)</fonts>", self.xml, re.S)
+            self.fonts = re.findall(r"<font\b[^>]*?(?:/>|>.*?</font>)",
+                                    block.group(1), re.S)
+            self.fonts_added = False
+        font = self.fonts[font_id]
+        if "<sz " in font:
+            font = re.sub(r'<sz val="[^"]*"/>', f'<sz val="{size}"/>', font)
+        else:
+            font = font.replace("<font>", f'<font><sz val="{size}"/>', 1)
+        self.fonts.append(font)
+        self.fonts_added = True
+        self.cache[key] = len(self.fonts) - 1
+        return self.cache[key]
+
     def same_font_as(self, index, model):
         """Copy of style `index` that uses the font of style `model`."""
         key = ("font", index, model)
@@ -273,7 +329,13 @@ class StyleCloner:
             + "".join(self.xfs) + "</cellXfs>"
         )
         start, end = self.block.span()
-        return self.xml[:start] + block + self.xml[end:]
+        xml = self.xml[:start] + block + self.xml[end:]
+        if getattr(self, "fonts_added", False):
+            xml = re.sub(r"<fonts\b[^>]*>.*?</fonts>",
+                         lambda m: f'<fonts count="{len(self.fonts)}">'
+                         + "".join(self.fonts) + "</fonts>",
+                         xml, count=1, flags=re.S)
+        return xml
 
 
 def set_cell_text(sheet_xml, ref, text, styles):
@@ -611,6 +673,14 @@ UNIT_CARGO_COLUMNS = {
     "J": "Weights",
     "K": "Findings",
 }
+# The Findings column of a line with a Packing List ("<Packing List> ·
+# <Findings>"): what fits one line of the form's font; up to
+# FINDINGS_TWO_LINES characters it is printed on two wrapped lines of
+# FINDINGS_SMALL_SIZE points instead of one shrunken line (longer text still
+# shrinks to fit, as every cell does).
+FINDINGS_ONE_LINE = 23
+FINDINGS_TWO_LINES = 56
+FINDINGS_SMALL_SIZE = 9
 # Item List form -> (template sheet, blank form sheet, columns, merged
 # cells of an item row)
 CARGO_LAYOUTS = {
@@ -733,9 +803,10 @@ def read_template_row(sheet_xml, row):
     return match.group(1), styles
 
 
-def cell_xml(ref, style, text, styles, horizontal=None):
+def cell_xml(ref, style, text, styles, horizontal=None, fixed=False):
     if text:
-        shrunk = styles.shrink_index(style, horizontal)
+        # fixed: the style is used as it is (already a wrapping variant)
+        shrunk = style if fixed else styles.shrink_index(style, horizontal)
         return (
             f'<c r="{ref}" s="{shrunk}" t="inlineStr">'
             f'<is><t xml:space="preserve">{xml_text(text)}</t></is></c>'
@@ -743,10 +814,11 @@ def cell_xml(ref, style, text, styles, horizontal=None):
     return f'<c r="{ref}" s="{style}"/>'
 
 
-def row_xml(row, attrs, cell_styles, texts, styles, horizontal=None):
+def row_xml(row, attrs, cell_styles, texts, styles, horizontal=None,
+            fixed=()):
     cells = "".join(
         cell_xml(f"{col}{row}", cell_styles[col], texts.get(col, ""),
-                 styles, horizontal)
+                 styles, horizontal, fixed=col in fixed)
         for col in "ABCDEFGHIJK"
     )
     return f'<row r="{row}"{attrs}>{cells}</row>'
@@ -809,9 +881,18 @@ def build_cargo_page_xml(sheet_xml, page, period, consignee, styles,
         texts = {
             col: item.get(header, "") for col, header in columns.items()
         }
+        # a line received from a shipment: "<Packing List> · <Findings>"
+        texts["K"] = printed_findings(item) if item else ""
         texts["G"] = " ".join(t for t in split_quantity_unit(
             item.get("Quantity"), item.get("UOM")) if t)
-        rows.append(row_xml(row, attrs, item_styles, texts, styles))
+        cell_styles, fixed = item_styles, ()
+        if item and str(item.get("Packing List No.") or "").strip() and                 FINDINGS_ONE_LINE < len(texts["K"]) <= FINDINGS_TWO_LINES:
+            # two readable lines instead of one shrunken line
+            cell_styles = dict(item_styles, K=styles.wrap_small_index(
+                item_styles["K"], FINDINGS_SMALL_SIZE))
+            fixed = ("K",)
+        rows.append(row_xml(row, attrs, cell_styles, texts, styles,
+                            fixed=fixed))
         merges += [merge.format(row) for merge in item_merges]
         row += 1
 

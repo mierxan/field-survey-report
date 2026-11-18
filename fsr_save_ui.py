@@ -106,6 +106,11 @@ def save_report():
     if not host.prices_have_currency():
         return False
 
+    # lines received from a shipment: the receiving condition of each one
+    # (Phase 3); asks, never fills anything in
+    if not host.fsr_findings_ui.verified_before_save(host_globals()):
+        return False
+
     if host.condition_var.get() == CONDITION_BAD and not host.incidents_have_content():
         host.notebook.select(host.incident_tab)
         if not messagebox.askyesno(

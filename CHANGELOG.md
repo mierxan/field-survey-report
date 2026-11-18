@@ -1,5 +1,19 @@
 # Field Survey Report changelog
 
+## Phase 16 - Withdrawal-to-Receiving sharing, part 3: verification (unreleased, 18 November 2026)
+
+- **Printing (Option B)**: on the printed Cargo Details page the Findings
+  column of a line received from a shipment shows "<Packing List> ·
+  <Findings>" (e.g. "BAC111126-009 · Good Order and Complete"); other lines
+  print as before (`fsr_storage.printed_findings`, `fsr_forms`). Up to 56
+  characters print on two wrapped 9 pt lines (a new wrapping style variant
+  with its own font, `StyleCloner.wrap_small_index`), longer ones shrink to
+  fit as before. Checked with Excel's own rendering.
+- **Packing Lists...** (Findings row): each Packing List of the lines with
+  its PO numbers and counts of Good Order / with issues / no Findings.
+- **Save asks** while lines received from a shipment have no Findings yet
+  ("Verification not finished", default No); nothing is filled in by it.
+
 ## Phase 15 - Withdrawal-to-Receiving sharing, part 2: the destination (unreleased, 18 November 2026)
 
 - **Findings in one click** (18 November 2026, after the first manual test):
@@ -42,8 +56,8 @@
   <destination>". Storage: Share Shipment... and Receive Shipment... share a
   row; a shipment file chosen in Receive Hand-over goes to Receive Shipment.
 - The installer registers `.fsrshipment` (opens the program, which asks).
-- Tests against the previous version's own code (git archive of the last
-  commit): its workbooks and databases read the same; it still reads a
+- Tests against the previous version's own code (git archive of the newest
+  commit before the fields): its workbooks and databases read the same; it still reads a
   database this version wrote to; it refuses a workbook this version saved
   (the accepted caveat). The real reports read the same by both versions (67
   reports, 386 lines, all Owner fingerprints) - read only.

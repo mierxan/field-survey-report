@@ -1,6 +1,6 @@
 """The two new hidden line fields (Packing List No., Origin Line) against the
-PREVIOUS version of the program: its own code, taken from the last commit
-(git archive HEAD) and run as a separate program. Invented data only, in
+PREVIOUS version of the program: its own code, taken from the newest commit
+before the fields existed (git archive) and run as a separate program. Invented data only, in
 temporary folders.
 
   * workbooks and reports databases written by the previous version read the
@@ -33,14 +33,31 @@ from test_withdrawal import linked_report
 ROOT = Path(__file__).resolve().parent.parent
 
 
+def last_commit_before_the_fields():
+    """The newest commit whose fsr_storage.py has no shipment fields yet: the
+    version before Phase 2 (HEAD itself until the fields were committed)."""
+    commits = subprocess.run(
+        ["git", "log", "--format=%H", "--", "fsr_storage.py"], cwd=ROOT,
+        capture_output=True, text=True, check=True).stdout.split()
+    for commit in commits:
+        text = subprocess.run(["git", "show", f"{commit}:fsr_storage.py"],
+                              cwd=ROOT, capture_output=True, text=True,
+                              encoding="utf-8", check=True).stdout
+        if "SHIPMENT_HEADERS" not in text:
+            return commit
+    raise LookupError("no commit before the shipment fields")
+
+
 @pytest.fixture(scope="module")
 def previous(tmp_path_factory):
-    """The previous version's program files (the last commit)."""
+    """The previous version's program files: the newest commit before the
+    shipment fields existed."""
     folder = tmp_path_factory.mktemp("previous_version")
     try:
-        archive = subprocess.run(["git", "archive", "HEAD"], cwd=ROOT,
+        commit = last_commit_before_the_fields()
+        archive = subprocess.run(["git", "archive", commit], cwd=ROOT,
                                  capture_output=True, check=True).stdout
-    except (OSError, subprocess.CalledProcessError) as error:
+    except (OSError, LookupError, subprocess.CalledProcessError) as error:
         pytest.skip(f"git is not available: {error}")
     with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
         tar.extractall(folder, filter="data")

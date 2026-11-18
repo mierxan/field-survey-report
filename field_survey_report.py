@@ -5020,6 +5020,7 @@ def build_window():
     global hand_over_button, receive_handover_button, hand_over_state
     global share_shipment_button, receive_shipment_button, shipment_state
     global findings_row, all_good_button, with_issues_button
+    global packing_lists_button
     global incident_actions
     global incident_body, incident_cards, incident_cards_frame
     global incident_hint, incident_info, incident_tab, index
@@ -6073,6 +6074,13 @@ def build_window():
         findings_row, text="With Issues...", bootstyle="warning-outline",
         command=lambda: fsr_findings_ui.with_issues(globals()))
     with_issues_button.pack(side="left", padx=6)
+    packing_lists_button = tb.Button(
+        findings_row, text="Packing Lists...", bootstyle="secondary-outline",
+        command=lambda: fsr_findings_ui.review_window(globals()))
+    packing_lists_button.pack(side="left")
+    add_tip(packing_lists_button, "Each Packing List of the lines with its PO "
+            "numbers and how far its Findings are (lines received from a "
+            "shipment).")
     add_tip(all_good_button, "Every item line's Findings becomes "
             "\"Good Order and Complete\".")
     add_tip(with_issues_button, "Tick the lines with an issue and type their "

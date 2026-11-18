@@ -121,3 +121,92 @@ def test_no_lines_no_change(app):
     assert fu.accept_all(g) == 0
     assert fu.with_issues(g) is None
     assert [c for c in answers.calls if c[0] == "showinfo"]
+
+
+# ---------- Phase 3: printing, reviewing, and saving only when verified -----
+
+def test_the_printed_form_shows_packing_list_and_findings(app, tmp_path):
+    from openpyxl import load_workbook
+    g, answers = app
+    imported(g, tmp_path, "FSR-ORG-202611-0306")
+    dialog = fu.with_issues(g)
+    dialog.rows[1][0].set(True)
+    dialog.rows[1][1].set("1 crate dented")
+    dialog.apply()
+    g["choose_condition"]("Good Order")
+    forms, notes, _ = g["create_report_forms"](g["excel_state"]["path"],
+                                               g["collect_report_data"]())
+    sheet = load_workbook(forms[0])["Cargo Details"]
+    import fsr_forms
+    first = fsr_forms.CARGO_FIRST_ROW
+    assert [sheet[f"K{row}"].value for row in range(first, first + 4)] == [
+        "NOR111126-001 & 002 · Good Order and Complete",
+        "NOR111126-003 · 1 crate dented",
+        "NOR111126-003 · Good Order and Complete",
+        "Good Order and Complete"]                 # no Packing List: as before
+    assert sheet[f"A{first}"].value == "Diaphragm"
+    # a Packing List line longer than one line: two wrapped 9 pt lines;
+    # the line without a Packing List shrinks to fit, as every cell did
+    long_cell, plain = sheet[f"K{first}"], sheet[f"K{first + 3}"]
+    assert long_cell.alignment.wrap_text and not long_cell.alignment.shrink_to_fit
+    assert long_cell.font.sz == 9
+    assert plain.alignment.shrink_to_fit and not plain.alignment.wrap_text
+
+
+def test_an_ordinary_report_prints_its_findings_as_before():
+    import fsr_storage
+    assert fsr_storage.printed_findings({"Findings": "Dented"}) == "Dented"
+    assert fsr_storage.printed_findings(
+        {"Findings": "", "Packing List No.": "BAC111126-009"}) == \
+        "BAC111126-009"
+    assert fsr_storage.printed_findings(
+        {"Findings": "Good Order and Complete",
+         "Packing List No.": "BAC111126-009"}) == \
+        "BAC111126-009 · Good Order and Complete"
+
+
+def test_the_packing_lists_window_counts_the_findings(app, tmp_path):
+    g, answers = app
+    imported(g, tmp_path, "FSR-ORG-202611-0307")
+    lines = fu.item_lines(g)
+    g["set_entry"](lines[0][4], fu.GOOD)
+    g["set_entry"](lines[1][4], "1 crate dented")
+    found = {p["number"]: p for p in fu.packing_lists(g)}
+    assert (found["NOR111126-003"]["po_numbers"],
+            found["NOR111126-003"]["lines"], found["NOR111126-003"]["issues"],
+            found["NOR111126-003"]["empty"]) == (["PO-100", "PO-200"], 2, 1, 1)
+    assert found["NOR111126-001 & 002"]["good"] == 1
+    dialog = fu.review_window(g)
+    rows = [dialog.tree.item(i, "values") for i in dialog.tree.get_children()]
+    assert rows[1] == ("NOR111126-003", "PO-100, PO-200", "2", "0", "1", "1")
+    dialog.destroy()
+
+
+def test_saving_asks_while_received_lines_have_no_findings(app, tmp_path):
+    g, answers = app
+    imported(g, tmp_path, "FSR-ORG-202611-0308")
+    g["choose_condition"]("Good Order")
+    g["SO_number_entry"].insert(0, "SO-VERIFY-1")
+    g["set_inspection_date"]("18-Nov-2026")
+    answers.calls.clear()
+    answers.yes = False                    # "Save anyway?" - No
+    try:
+        assert g["save_report"]() is False
+    finally:
+        answers.yes = True
+    asked = [c for c in answers.calls if c[0] == "askyesno"]
+    assert asked and "4 line(s) received from the shipment have no Findings" \
+        in asked[0][2]
+    assert g["report_state"]["dirty"]      # nothing saved
+    fu.accept_all(g)                       # verified: no question
+    answers.calls.clear()
+    assert g["save_report"]() is True
+    assert not [c for c in answers.calls
+                if c[0] == "askyesno" and "Verification" in str(c[1])]
+
+
+def test_an_ordinary_report_is_saved_without_the_question(app):
+    g, answers = app
+    g["new_report"](confirm=False)
+    assert not fu.from_shipment(g)
+    assert fu.verified_before_save(g) is True

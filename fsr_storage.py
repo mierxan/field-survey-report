@@ -386,6 +386,21 @@ SHIPMENT_HEADERS = ["Packing List No.", "Origin Line"]
 ITEM_ROW_HEADERS = ITEM_LINE_HEADERS + SHIPMENT_HEADERS
 
 
+PRINTED_SEPARATOR = " · "          # BAC111126-009 · Good Order and Complete
+
+
+def printed_findings(row):
+    """What the Findings column of the printed form shows for a line: a line
+    received from a shipment prints its Packing List No. with the receiving
+    findings ("BAC111126-009 · 1 crate dented"); every other line its
+    Findings, as before."""
+    findings = str(row.get("Findings") or "").strip()
+    packing = str(row.get("Packing List No.") or "").strip()
+    if not packing:
+        return findings
+    return PRINTED_SEPARATOR.join(filter(None, (packing, findings)))
+
+
 def without_empty_shipment_fields(report):
     """A copy of `report` whose lines carry the shipment fields only when
     they have a value (for fingerprints and comparisons)."""
