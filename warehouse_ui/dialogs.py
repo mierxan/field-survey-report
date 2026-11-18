@@ -13,11 +13,11 @@ from .components import Card
 class DetailPanel(Card):
     """Label: value pairs of the selected record (read-only)."""
 
-    def __init__(self, parent, title="Details", actions=()):
-        super().__init__(parent, title)
-        self.grid_frame = ttk.Frame(self.content, style="CardPlain.TFrame")
+    def __init__(self, parent, title="Details", actions=(), neo=False):
+        super().__init__(parent, title, neo=neo)
+        self.grid_frame = ttk.Frame(self.content, style=self.st["plain"])
         self.grid_frame.grid(row=0, column=0, sticky="we")
-        self.buttons = ttk.Frame(self.content, style="CardPlain.TFrame")
+        self.buttons = ttk.Frame(self.content, style=self.st["plain"])
         self.buttons.grid(row=1, column=0, sticky="w", pady=(10, 0))
         self.action_buttons = []
         for text, command, style in actions:
@@ -32,19 +32,19 @@ class DetailPanel(Card):
             child.destroy()
         if not pairs:
             ttk.Label(self.grid_frame, text="Select a row to see its details.",
-                      style="CardMuted.TLabel").grid(row=0, column=0,
+                      style=self.st["muted"]).grid(row=0, column=0,
                                                      sticky="w")
             enabled = False
         columns = 3
         for index, (label, value) in enumerate(pairs):
             row, col = divmod(index, columns)
-            cell = ttk.Frame(self.grid_frame, style="CardPlain.TFrame")
+            cell = ttk.Frame(self.grid_frame, style=self.st["plain"])
             cell.grid(row=row, column=col, sticky="nw", padx=(0, 24),
                       pady=(0, 6))
-            ttk.Label(cell, text=label, style="CardMuted.TLabel").pack(
+            ttk.Label(cell, text=label, style=self.st["muted"]).pack(
                 anchor="w")
             ttk.Label(cell, text=value if value not in (None, "") else "-",
-                      style="Card.TLabel", wraplength=300,
+                      style=self.st["label"], wraplength=300,
                       justify="left").pack(anchor="w")
         for col in range(columns):
             self.grid_frame.columnconfigure(col, weight=1, uniform="detail")

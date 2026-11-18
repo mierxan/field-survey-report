@@ -35,8 +35,9 @@ class ScrollPage(ttk.Frame):
 
     instances = []
 
-    def __init__(self, parent):
-        super().__init__(parent, style="Page.TFrame")
+    def __init__(self, parent, neo=False):
+        self.neo = neo
+        super().__init__(parent, style=theme.styles(neo)["page"])
         self.canvas = tkinter.Canvas(self, highlightthickness=0, bd=0,
                                      yscrollincrement=20)
         self.vsb = ttk.Scrollbar(self, orient="vertical",
@@ -44,7 +45,7 @@ class ScrollPage(ttk.Frame):
         self.canvas.configure(yscrollcommand=self.vsb.set)
         self.vsb.pack(side="right", fill="y")
         self.canvas.pack(side="left", fill="both", expand=True)
-        self.body = ttk.Frame(self.canvas, style="Page.TFrame",
+        self.body = ttk.Frame(self.canvas, style=theme.styles(neo)["page"],
                               padding=(20, 14, 20, 20))
         self.body.columnconfigure(0, weight=1)
         self._win = self.canvas.create_window((0, 0), window=self.body,
@@ -58,7 +59,8 @@ class ScrollPage(ttk.Frame):
 
     def apply_theme(self):
         try:
-            self.canvas.configure(background=theme.tokens(tb.Style())["page"])
+            self.canvas.configure(background=theme.NEO["page"] if self.neo
+                                  else theme.tokens(tb.Style())["page"])
         except tkinter.TclError:
             pass
 
@@ -95,29 +97,43 @@ def on_page_wheel(event):
 class Card(ttk.Frame):
     """A white content panel with an optional title row."""
 
-    def __init__(self, parent, title=None, subtitle=None, padding=14):
-        super().__init__(parent, style="Card.TFrame", padding=padding)
+    def __init__(self, parent, title=None, subtitle=None, padding=14,
+                 neo=False, accent=None):
+        self.neo = neo
+        st = theme.styles(neo)
+        self.st = st
+        # neo + accent: the card's edge glows in that colour
+        frame_style = f"NeoKpi{accent.title()}.TFrame" if neo and accent \
+            else st["card"]
+        super().__init__(parent, style=frame_style, padding=padding)
         self.columnconfigure(0, weight=1)
         self.header = None
         if title:
-            self.header = ttk.Frame(self, style="CardPlain.TFrame")
+            self.header = ttk.Frame(self, style=st["plain"])
             self.header.grid(row=0, column=0, sticky="we", pady=(0, 8))
             self.header.columnconfigure(0, weight=1)
-            ttk.Label(self.header, text=title, style="CardTitle.TLabel").grid(
-                row=0, column=0, sticky="w")
+            title_text = f"●  {title}" if neo else title
+            self.title_label = ttk.Label(
+                self.header, text=title_text, style=f"NeoAccent{accent.title()}"
+                ".TLabel" if neo and accent else st["title"])
+            if neo and accent:
+                self.title_label.configure(font=(theme.FONT, 11, "bold"))
+            self.title_label.grid(row=0, column=0, sticky="w")
             if subtitle:
                 self.subtitle = ttk.Label(self.header, text=subtitle,
-                                          style="CardMuted.TLabel",
+                                          style=st["muted"],
                                           wraplength=900, justify="left")
                 self.subtitle.grid(row=1, column=0, sticky="w")
-        self.content = ttk.Frame(self, style="CardPlain.TFrame")
+        self.content = ttk.Frame(self, style=st["plain"])
         self.content.grid(row=1, column=0, sticky="nsew")
         self.content.columnconfigure(0, weight=1)
         self.rowconfigure(1, weight=1)
 
 
-def section_label(parent, text, row, pady=(16, 6)):
-    label = ttk.Label(parent, text=text.upper(), style="PageMuted.TLabel",
+def section_label(parent, text, row, pady=(16, 6), neo=False):
+    label = ttk.Label(parent, text=("◆  " if neo else "") + text.upper(),
+                      style="NeoSection.TLabel" if neo
+                      else "PageMuted.TLabel",
                       font=(theme.FONT, 9, "bold"))
     label.grid(row=row, column=0, sticky="w", pady=pady)
     return label
@@ -169,13 +185,101 @@ class KpiCard(ttk.Frame):
                 label.configure(wraplength=wrap)
 
 
+class NeoKpiCard(ttk.Frame):
+    """A KPI in the Neo look: a card whose edge glows in its colour, a
+    neon icon and name, a big white value, what it counts and the change.
+    .texts[0] is the name and .texts[1] the value, as on KpiCard."""
+
+    # (icon, colour) by the KPI's name; a name not listed: by its tone
+    LOOKS = {
+        "Total Inspection Reports": ("▣", "cyan"),
+        "Good Order Reports": ("✔", "green"),
+        "Bad Order Reports": ("⚠", "red"),
+        "Bad Order Percentage": ("%", "amber"),
+        "Receiving Transactions": ("⬇", "green"),
+        "Withdrawal Transactions": ("⬆", "violet"),
+        "Total Transactions": ("⇄", "cyan"),
+        "Total Packages": ("▦", "amber"),
+        "Items Inspected": ("◈", "blue"),
+        "Bad Order Records": ("⚠", "red"),
+        "Total Bad Order Reports": ("⚠", "red"),
+        "Bad Order Receiving Transactions": ("⬇", "green"),
+        "Bad Order Withdrawal Transactions": ("⬆", "violet"),
+        "Affected Cargo Lines": ("◈", "blue"),
+        "Unresolved Bad Order Cases": ("⏳", "amber"),
+        "Incident Reports": ("⚠", "red"),
+        "Incident Report Percentage": ("%", "amber"),
+        "Total Incident Reports": ("⚠", "red"),
+        "Incident Reports - Receiving": ("⬇", "green"),
+        "Incident Reports - Withdrawal": ("⬆", "violet"),
+    }
+    TONES = {"success": "green", "danger": "red", "warning": "amber",
+             "primary": "cyan"}
+
+    def __init__(self, parent, kpi):
+        icon, accent = self.LOOKS.get(
+            kpi.name, ("◆", self.TONES.get(kpi.tone, "cyan")))
+        name = accent.title()
+        super().__init__(parent, style=f"NeoKpi{name}.TFrame",
+                         padding=(0, 0, 14, 12))
+        self.columnconfigure(1, weight=1)
+        ttk.Frame(self, style=f"NeoBar{name}.TFrame", width=4).grid(
+            row=0, column=0, rowspan=5, sticky="ns", padx=(0, 12))
+        top = ttk.Frame(self, style="NeoPlain.TFrame")
+        top.grid(row=0, column=1, sticky="we", pady=(12, 0))
+        top.columnconfigure(1, weight=1)
+        ttk.Label(top, text=icon, style=f"NeoIcon{name}.TLabel").grid(
+            row=0, column=0, sticky="w", padx=(0, 8))
+        self.texts = [ttk.Label(top, text=kpi.name,
+                                style=f"NeoAccent{name}.TLabel")]
+        self.texts[0].grid(row=0, column=1, sticky="w")
+        long = len(kpi.display) > 14
+        self.texts.append(ttk.Label(
+            self, text=kpi.display, justify="left",
+            style="NeoKpiValueSmall.TLabel" if long else "NeoKpiValue.TLabel"))
+        self.texts[1].grid(row=1, column=1, sticky="w", pady=(4, 0))
+        detail = kpi.unit
+        if kpi.period:
+            detail = f"{detail}  ·  {kpi.period}" if detail else kpi.period
+        self.texts.append(ttk.Label(self, text=detail, justify="left",
+                                    style="NeoCardMuted.TLabel"))
+        self.texts[2].grid(row=2, column=1, sticky="w")
+        for row, text in ((3, kpi.comparison), (4, kpi.note)):
+            if text:
+                color = theme.NEO["text"]
+                if row == 3 and text.startswith("+"):
+                    color = theme.NEO["green"]
+                elif row == 3 and text.startswith("-"):
+                    color = theme.NEO["red"]
+                label = ttk.Label(self, text=("▲ " if text.startswith("+")
+                                              else "▼ " if text.startswith("-")
+                                              else "") + text if row == 3
+                                  else text,
+                                  style="NeoCardMuted.TLabel", justify="left",
+                                  foreground=color)
+                label.grid(row=row, column=1, sticky="w", pady=(4, 0))
+                self.texts.append(label)
+        self._wrap = 0
+        self.bind("<Configure>", self._fit)
+
+    def _fit(self, event):
+        wrap = max(event.width - 34, 80)
+        if wrap != self._wrap:
+            self._wrap = wrap
+            # the name sits beside its icon: a little less room
+            self.texts[0].configure(wraplength=max(wrap - 56, 60))
+            for label in self.texts[1:]:
+                label.configure(wraplength=wrap)
+
+
 class KpiGrid(ttk.Frame):
     """KPI cards in a grid that re-flows with the window width."""
 
     MIN_WIDTH = 230
 
-    def __init__(self, parent):
-        super().__init__(parent, style="Page.TFrame")
+    def __init__(self, parent, neo=False):
+        self.neo = neo
+        super().__init__(parent, style=theme.styles(neo)["page"])
         self.cards = []
         self._columns = 0
         self.bind("<Configure>", self._reflow)
@@ -183,7 +287,8 @@ class KpiGrid(ttk.Frame):
     def show(self, kpis):
         for card in self.cards:
             card.destroy()
-        self.cards = [KpiCard(self, k) for k in kpis]
+        make = NeoKpiCard if self.neo else KpiCard
+        self.cards = [make(self, k) for k in kpis]
         self._columns = 0
         self._reflow()
 
@@ -191,6 +296,10 @@ class KpiGrid(ttk.Frame):
         width = self.winfo_width() if event is None else event.width
         columns = max(1, min(len(self.cards) or 1,
                              max(width, 1) // self.MIN_WIDTH))
+        if self.neo and self.cards:
+            # even rows: 6 cards as 3 + 3 (or 2 + 2 + 2), never 5 + 1
+            while len(self.cards) % columns:
+                columns -= 1
         if columns == self._columns and event is not None:
             return
         self._columns = columns
@@ -238,13 +347,14 @@ class PeriodBar(ttk.Frame):
     on_change(filters) runs when anything changes."""
 
     def __init__(self, parent, on_change, filters=("warehouse",),
-                 default="this_month", with_search=False):
-        super().__init__(parent, style="Card.TFrame", padding=(12, 10))
+                 default="this_month", with_search=False, neo=False):
+        self.st = st = theme.styles(neo)
+        super().__init__(parent, style=st["card"], padding=(12, 10))
         self.on_change = on_change
         self.period_var = tkinter.StringVar(value=pr.PERIOD_LABELS[default])
         self.combos = {}
         self.fields = []                # field frames, re-flowed to fit
-        self.flow = ttk.Frame(self, style="CardPlain.TFrame")
+        self.flow = ttk.Frame(self, style=st["plain"])
         self.flow.grid(row=0, column=0, sticky="we")
         self.columnconfigure(0, weight=1)
         self._flow_width = 0
@@ -258,14 +368,14 @@ class PeriodBar(ttk.Frame):
         self.period_combo.pack(anchor="w")
         self.period_combo.bind("<<ComboboxSelected>>", self._period_chosen)
         self.custom = self._field("Custom range (dd-MMM-yyyy)")
-        holder = ttk.Frame(self.custom, style="CardPlain.TFrame")
+        holder = ttk.Frame(self.custom, style=st["plain"])
         holder.pack(anchor="w")
         self.start_entry = tb.DateEntry(holder, dateformat=DATE_FORMAT,
                                         firstweekday=0, width=12)
         self.end_entry = tb.DateEntry(holder, dateformat=DATE_FORMAT,
                                       firstweekday=0, width=12)
         self.start_entry.pack(side="left")
-        ttk.Label(holder, text=" to ", style="Card.TLabel").pack(side="left")
+        ttk.Label(holder, text=" to ", style=st["label"]).pack(side="left")
         self.end_entry.pack(side="left")
         tb.Button(holder, text="Apply", bootstyle="primary-outline",
                   command=self._changed).pack(side="left", padx=(6, 0))
@@ -292,13 +402,13 @@ class PeriodBar(ttk.Frame):
             entry.bind("<Return>", self._changed)
             self._after = None
             self.search_var.trace_add("write", self._search_typed)
-        self.range_label = ttk.Label(self, text="", style="CardMuted.TLabel")
+        self.range_label = ttk.Label(self, text="", style=st["muted"])
         self.range_label.grid(row=1, column=0, sticky="w", pady=(6, 0))
         self._show_custom()
 
     def _field(self, label):
-        frame = ttk.Frame(self.flow, style="CardPlain.TFrame")
-        ttk.Label(frame, text=label, style="CardMuted.TLabel").pack(
+        frame = ttk.Frame(self.flow, style=self.st["plain"])
+        ttk.Label(frame, text=label, style=self.st["muted"]).pack(
             anchor="w")
         self.fields.append(frame)
         return frame
@@ -419,8 +529,10 @@ class DataTable(ttk.Frame):
     PAGE = 500
 
     def __init__(self, parent, columns, height=12, on_select=None,
-                 on_open=None, export=None, search=True, title_for_export=""):
-        super().__init__(parent, style="CardPlain.TFrame")
+                 on_open=None, export=None, search=True, title_for_export="",
+                 neo=False):
+        st = theme.styles(neo)
+        super().__init__(parent, style=st["plain"])
         self.columns = columns
         self.on_select = on_select
         self.on_open = on_open
@@ -432,17 +544,17 @@ class DataTable(ttk.Frame):
         self.columnconfigure(0, weight=1)
         self.rowconfigure(1, weight=1)
 
-        top = ttk.Frame(self, style="CardPlain.TFrame")
+        top = ttk.Frame(self, style=st["plain"])
         top.grid(row=0, column=0, columnspan=2, sticky="we", pady=(0, 6))
         top.columnconfigure(1, weight=1)
         self.search_var = tkinter.StringVar()
         if search:
-            ttk.Label(top, text="Find in table:", style="CardMuted.TLabel"
+            ttk.Label(top, text="Find in table:", style=st["muted"]
                       ).grid(row=0, column=0, sticky="w", padx=(0, 6))
             entry = tb.Entry(top, textvariable=self.search_var, width=28)
             entry.grid(row=0, column=1, sticky="w")
             self.search_var.trace_add("write", lambda *_: self._apply())
-        self.count_label = ttk.Label(top, text="", style="CardMuted.TLabel")
+        self.count_label = ttk.Label(top, text="", style=st["muted"])
         self.count_label.grid(row=0, column=2, sticky="e", padx=8)
         self.prev_btn = tb.Button(top, text="‹ Prev", width=7,
                                   bootstyle="secondary-outline",
@@ -462,7 +574,8 @@ class DataTable(ttk.Frame):
 
         ids = [f"c{i}" for i in range(len(columns))]
         self.tree = ttk.Treeview(self, columns=ids, show="headings",
-                                 height=height, selectmode="browse")
+                                 height=height, selectmode="browse",
+                                 style=st["tree"])
         for cid, (heading, kind, width) in zip(ids, columns):
             self.tree.heading(cid, text=heading,
                               command=lambda c=cid: self._sort(c))
@@ -478,8 +591,8 @@ class DataTable(ttk.Frame):
         self.tree.grid(row=1, column=0, sticky="nsew")
         vsb.grid(row=1, column=1, sticky="ns")
         hsb.grid(row=2, column=0, sticky="we")
-        self.tree.tag_configure("odd", background=theme.tokens(
-            tb.Style())["page"])
+        self.tree.tag_configure("odd", background=theme.NEO["card"] if neo
+                                else theme.tokens(tb.Style())["page"])
         self.tree.bind("<<TreeviewSelect>>", self._selected)
         self.tree.bind("<Double-1>", self._double)
         self.tree.bind("<Return>", lambda e: self._open_selected())
@@ -611,8 +724,10 @@ class ChartPanel(Card):
     """A titled chart card. One measure per chart, one y-axis, a legend for
     two or more series, values read out on hover."""
 
-    def __init__(self, parent, title, subtitle=None, height=250):
-        super().__init__(parent, title, subtitle, padding=12)
+    def __init__(self, parent, title, subtitle=None, height=250, neo=False,
+                 accent=None):
+        super().__init__(parent, title, subtitle, padding=12, neo=neo,
+                         accent=accent)
         mpl = _matplotlib()
         scaling = float(self.tk.call("tk", "scaling"))
         self.figure = mpl["Figure"](figsize=(5, height / 96), dpi=72 * scaling,
@@ -625,10 +740,14 @@ class ChartPanel(Card):
         self.ax = None
         self.hover = []                 # (artist, text)
         self.note = None
+        # on_bar_click(index, category): a click on a bar's column (bars())
+        self.on_bar_click = None
+        self.clickable = None           # (categories, horizontal)
         self.canvas.mpl_connect("motion_notify_event", self._motion)
+        self.canvas.mpl_connect("button_press_event", self._click)
 
     def _start(self):
-        t = theme.tokens(tb.Style())
+        t = theme.NEO if self.neo else theme.tokens(tb.Style())
         self.t = t
         self.figure.clear()
         self.figure.set_facecolor(t["card"])
@@ -642,6 +761,7 @@ class ChartPanel(Card):
         ax.grid(axis="y", color=t["grid"], linewidth=0.8)
         ax.set_axisbelow(True)
         self.hover = []
+        self.clickable = None
         self.note = ax.annotate("", (0, 0), xytext=(8, 8),
                                 textcoords="offset points", fontsize=8,
                                 color=t["text"], zorder=10,
@@ -674,8 +794,14 @@ class ChartPanel(Card):
             color = self.t.get(color, color)
             offsets = [p + (index - (n - 1) / 2) * width for p in positions]
             draw = ax.barh if horizontal else ax.bar
+            if self.neo:
+                # a soft glow behind each bar
+                draw(offsets, values, width * 1.25, color=color, alpha=0.16,
+                     linewidth=0, zorder=1)
             bars = draw(offsets, values, width * 0.92, color=color,
-                        label=name, edgecolor=self.t["card"], linewidth=1)
+                        label=name, edgecolor=color if self.neo
+                        else self.t["card"], linewidth=1,
+                        alpha=0.9 if self.neo else 1, zorder=2)
             for bar, cat, value in zip(bars, categories, values):
                 self.hover.append((bar, f"{cat}\n{name}: {fmt(value)}"))
             if label_values and not many:
@@ -691,17 +817,42 @@ class ChartPanel(Card):
         else:
             ax.set_xticks(list(positions), categories)
             step = max(1, len(categories) // 12)
+            # many labels, or long ones ("Wk 44 (26-Oct)"): tilted, so they
+            # never run into each other
+            tilt = len(categories) > 6 or \
+                sum(len(str(c)) for c in categories) > 40
             for i, label in enumerate(ax.get_xticklabels()):
                 label.set_visible(i % step == 0)
-                label.set_rotation(30 if len(categories) > 6 else 0)
-                label.set_ha("right" if len(categories) > 6 else "center")
+                label.set_rotation(30 if tilt else 0)
+                label.set_ha("right" if tilt else "center")
             ax.set_ylabel(value_label, fontsize=8, color=self.t["text_muted"])
         ax.margins(x=0.02 if not horizontal else 0.12,
                    y=0.12 if not horizontal else 0.02)
         if n > 1:
             ax.legend(frameon=False, fontsize=8, labelcolor=self.t["text"],
                       loc="upper left", ncols=n)
+        self.clickable = (list(categories), horizontal)
         self.canvas.draw_idle()
+
+    def category_at(self, x, y):
+        """The (index, category) of the bar column at data point (x, y), or
+        None: anywhere in a bar's column counts, so short bars are easy to
+        click."""
+        if self.clickable is None or x is None or y is None:
+            return None
+        categories, horizontal = self.clickable
+        position = y if horizontal else x
+        index = round(position)
+        if 0 <= index < len(categories) and abs(position - index) <= 0.45:
+            return index, categories[index]
+        return None
+
+    def _click(self, event):
+        if self.on_bar_click is None or event.inaxes is not self.ax:
+            return
+        found = self.category_at(event.xdata, event.ydata)
+        if found is not None:
+            self.on_bar_click(*found)
 
     def lines(self, categories, series, value_label="", fmt=an.fmt_number):
         if not categories or not any(any(v for v in vals)
@@ -712,6 +863,10 @@ class ChartPanel(Card):
         x = list(range(len(categories)))
         for name, values, color in series:
             color = self.t.get(color, color)
+            if self.neo:
+                # a neon line: a wide faint glow and a soft fill under it
+                ax.plot(x, values, color=color, linewidth=7, alpha=0.14)
+                ax.fill_between(x, values, color=color, alpha=0.10)
             ax.plot(x, values, color=color, linewidth=2, label=name,
                     marker="o", markersize=4 if len(x) > 30 else 6)
             for xi, cat, v in zip(x, categories, values):
@@ -729,6 +884,42 @@ class ChartPanel(Card):
                       loc="upper left", ncols=len(series))
         self.canvas.draw_idle()
 
+    def donut(self, labels, values, colors, center="", center_note=""):
+        """A ring of parts with a figure in its middle and a key beside it.
+        colors: tokens or hex; values that are all 0 show the empty note."""
+        if not values or not any(values):
+            self.empty()
+            return
+        ax = self._start()
+        ax.set_axis_off()
+        colors = [self.t.get(c, c) for c in colors]
+        shown = [(l, v, c) for l, v, c in zip(labels, values, colors) if v]
+        if self.neo:
+            # the glow: a wider, faint ring behind the ring
+            ax.pie([v for _, v, _ in shown], colors=[c for _, _, c in shown],
+                   radius=1.08, startangle=90, counterclock=False,
+                   wedgeprops=dict(width=0.46, alpha=0.18, linewidth=0))
+        wedges, _ = ax.pie([v for _, v, _ in shown],
+                           colors=[c for _, _, c in shown], radius=1.0,
+                           startangle=90, counterclock=False,
+                           wedgeprops=dict(width=0.30, edgecolor=self.t["card"],
+                                           linewidth=2))
+        total = sum(v for _, v, _ in shown)
+        for wedge, (label, value, _) in zip(wedges, shown):
+            self.hover.append((wedge, f"{label}: {an.fmt_number(value)} "
+                                      f"({value / total:.0%})"))
+        if center:
+            ax.text(0, 0.08, center, ha="center", va="center", fontsize=16,
+                    fontweight="bold", color=self.t["text"])
+        if center_note:
+            ax.text(0, -0.2, center_note, ha="center", va="center",
+                    fontsize=8, color=self.t["text_muted"])
+        ax.legend(wedges, [f"{l}  {an.fmt_number(v)}" for l, v, _ in shown],
+                  frameon=False, fontsize=8, labelcolor=self.t["text"],
+                  loc="center left", bbox_to_anchor=(1.0, 0.5))
+        ax.set_aspect("equal")
+        self.canvas.draw_idle()
+
     def trend(self, categories, series, value_label=""):
         """Columns for short ranges, lines for long ones."""
         if len(categories) > 20:
@@ -739,6 +930,11 @@ class ChartPanel(Card):
     def _motion(self, event):
         if self.ax is None or self.note is None:
             return
+        if self.on_bar_click is not None:
+            over = event.inaxes is self.ax and self.category_at(
+                event.xdata, event.ydata) is not None
+            self.canvas.get_tk_widget().configure(
+                cursor="hand2" if over else "")
         found = None
         if event.inaxes is self.ax:
             for target, text in self.hover:

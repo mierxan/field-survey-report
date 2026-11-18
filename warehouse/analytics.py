@@ -562,6 +562,44 @@ def good_vs_bad(transactions, filters):
             BAD_ORDER: sum(1 for t in base if t.condition == BAD_ORDER)}
 
 
+def activity_kpis(transactions, previous=None, period_label=""):
+    """The three cards of the Receiving / Withdrawal pages, as on the phone's
+    Dashboard: Total Transactions (reports), Total Packages (the Declared
+    Goods quantities added up) and Items Inspected (the Item List quantities
+    added up, every unit together). previous: the period before (None: no
+    comparison)."""
+    def figures(txs):
+        if txs is None:
+            return None
+        declared = [t.packages for t in txs if t.packages is not None]
+        qty = qty_by_unit(lines_of(txs))
+        return (len(txs), sum(declared) if declared else None,
+                sum(qty.values()) if qty else None)
+
+    now, before = figures(transactions), figures(previous)
+    cards = (("Total Transactions", "transactions (reports)"),
+             ("Total Packages", "from the Declared Goods quantities"),
+             ("Items Inspected", "Item List quantities, all units"))
+    return [KPI(name, now[i], fmt_number(now[i]), unit, period_label,
+                change_text(now[i], before[i] if before else None))
+            for i, (name, unit) in enumerate(cards)]
+
+
+def bad_order_by_month(transactions):
+    """[(first day of the month or None, [transactions])], the latest month
+    first; a transaction without a date goes last ('No date')."""
+    months = {}
+    for tx in transactions:
+        key = tx.date.replace(day=1) if tx.date else None
+        months.setdefault(key, []).append(tx)
+    dated = sorted((k for k in months if k is not None), reverse=True)
+    result = [(k, sorted(months[k], key=lambda t: (t.date, t.control_no),
+                         reverse=True)) for k in dated]
+    if None in months:
+        result.append((None, months[None]))
+    return result
+
+
 def bad_order_breakdowns(transactions, filters):
     bad = filter_transactions(transactions, Filters(
         **{**filters.__dict__, "condition": BAD_ORDER}))

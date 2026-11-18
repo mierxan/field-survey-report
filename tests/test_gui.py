@@ -4,6 +4,7 @@ workflow (create, save, open, edit, numbering, report forms, Bad Order
 incident report) plus the new warehouse links. Everything happens in a
 temporary FSR_HOME folder; the real files are not touched."""
 
+from collections import Counter
 import time
 from pathlib import Path
 
@@ -108,13 +109,104 @@ def test_dashboard_kpis_match_the_analytics(app):
     expected = an.inspection_kpis(snap.transactions, page.bar.filters())
     shown = [[w.cget("text") for w in card.texts[:2]]
              for card in page.inspection.cards]
-    assert shown == [[k.name, k.display] for k in expected]
-    activity = an.warehouse_kpis(snap.transactions, snap.inventory,
-                                 page.bar.filters())[:4]
-    assert [[w.cget("text") for w in card.texts[:2]]
-            for card in page.activity.cards] == \
-        [[k.name, k.display] for k in activity]
-    assert not hasattr(page, "balance")
+    # the same figures; a Bad Order report is shown as an Incident Report
+    names = ["Total Inspection Reports", "Good Order Reports",
+             "Incident Reports", "Incident Report Percentage",
+             "Receiving Transactions", "Withdrawal Transactions"]
+    assert shown == [[name, k.display] for name, k in zip(names, expected)]
+    assert [k.name for k in expected] == [
+        "Total Inspection Reports", "Good Order Reports", "Bad Order Reports",
+        "Bad Order Percentage", "Receiving Transactions",
+        "Withdrawal Transactions"]
+    # Warehouse Items / Cargo Status: the period's Item List lines (This
+    # Year: the test reports are dated up to October)
+    from warehouse import periods as pr
+    page.bar.period_var.set(pr.PERIOD_LABELS["this_year"])
+    page.bar._changed()
+    settle(g, 0.5)
+    f = page.bar.filters()
+    stored = len(an.lines_of(an.filter_transactions(snap.transactions, an.Filters(
+        **{**f.__dict__, "activity": "Receiving"}))))
+    bars = [b.get_width() for b in page.status.ax.patches][-3:]
+    assert bars[0] == stored and stored > 0
+    # In Stock = the Inventory Aging total (all dates, stock left today)
+    in_stock = len(snap.inventory.aging_rows)
+    assert bars[2] == in_stock
+    aging = [b.get_height() for b in page.aging.ax.patches]
+    assert sum(aging) == 2 * in_stock          # each bar has its glow
+    # the Inventory Aging List: every in-stock line, then one bar's lines
+    assert len(page.aging_table.all_rows) == in_stock
+    labels, _ = page.aging.clickable
+    counts = Counter(r.bucket for r in snap.inventory.aging_rows)
+    index = next(i for i, label in enumerate(labels) if counts[label])
+    assert page.aging.category_at(index + 0.3, 0) == (index, labels[index])
+    assert page.aging.category_at(index + 0.5, 0) is None   # between bars
+    page.aging.on_bar_click(index, labels[index])
+    settle(g, 0.2)
+    rows = page.aging_table.all_rows
+    assert len(rows) == counts[labels[index]]
+    assert [c[0] for c in page.aging_table.columns][:3] == [
+        "Control Number", "Date", "Line Item"]
+    assert all(row[2].startswith("List ") for row in rows)
+    assert str(page.aging_all_btn.cget("state")) == "normal"
+    assert labels[index] in page.aging_shown.cget("text")
+    page.show_aging(None)
+    assert len(page.aging_table.all_rows) == in_stock
+    assert not hasattr(page, "activity") and not hasattr(page, "balance")
+    for chart in (page.trend, page.receiving, page.withdrawal, page.status,
+                  page.good_bad, page.aging):
+        assert chart.neo and chart.ax is not None
+
+
+def test_transaction_pages_show_transactions_packages_and_items(app):
+    g, answers = app
+    shell = g["app_shell"]
+    wait_for_data(g)
+    for key in ("receiving", "withdrawal"):
+        shell.show(key)
+        settle(g, 0.8)
+        page = shell.pages[key]
+        page.set_mode("monthly")
+        settle(g, 0.5)
+        summary = page.current_summary()
+        expected = an.activity_kpis(
+            summary.transactions,
+            summary.previous.transactions if summary.previous else None,
+            summary.period.describe())
+        assert [[w.cget("text") for w in card.texts[:2]]
+                for card in page.kpis.cards] == \
+            [[k.name, k.display] for k in expected]
+        assert [k.name for k in expected] == [
+            "Total Transactions", "Total Packages", "Items Inspected"]
+    assert not errors_shown(answers), answers.calls
+
+
+def test_incident_reports_page_lists_the_reports_by_month(app):
+    g, answers = app
+    shell = g["app_shell"]
+    snap = wait_for_data(g)
+    shell.show("bad_order")
+    settle(g, 1.0)
+    page = shell.pages["bad_order"]
+    assert page.title == "Incident Reports Monitoring"
+    months = page.months.get_children()
+    shown = sum(len(page.months.get_children(m)) for m in months)
+    bad, _ = page.reports(page.bar.filters())
+    assert shown == len(bad) > 0
+    assert len(page.month_reports) == shown
+    assert page.per_month.ax is not None
+    # four cards: no Affected Cargo Lines, no Unresolved cases; no cargo type
+    # chart and no Bad Order Records table
+    assert [c.texts[0].cget("text") for c in page.kpis.cards] == [
+        "Total Incident Reports", "Incident Reports - Receiving",
+        "Incident Reports - Withdrawal", "Incident Report Percentage"]
+    assert not hasattr(page, "by_type") and not hasattr(page, "table")
+    # a report chosen in the month list: its case status can be set
+    first = page.months.get_children(months[0])[0]
+    page.months.selection_set(first)
+    settle(g, 0.3)
+    assert str(page.status_btn.cget("state")) == "normal"
+    assert not errors_shown(answers), answers.calls
 
 
 def test_theme_toggle(app):

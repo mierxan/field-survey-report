@@ -15,7 +15,7 @@ MODULES = [
     ("receiving", "Receiving Transactions", "↓"),
     ("withdrawal", "Withdrawal Transactions", "↑"),
     ("warehouse", "Warehouse Monitoring", "▤"),
-    ("bad_order", "Bad Order Monitoring", "⚠"),
+    ("bad_order", "Incident Reports", "⚠"),
     ("analytics", "Analytics and Reports", "▲"),
     ("settings", "Master Lists and Settings", "⚙"),
 ]

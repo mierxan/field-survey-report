@@ -45,6 +45,95 @@ TOKENS = {
     },
 }
 
+# The futuristic "Neo" look of the Dashboard, Receiving / Withdrawal and Bad
+# Order pages - the phone app's Dashboard on the PC: deep navy space, cards
+# with a glowing edge, neon accents. The same in the light and dark theme
+# (the other pages and the report form keep the theme's own colours). It
+# carries the chart tokens ChartPanel uses, so a chart draws itself in it.
+NEO = {
+    "page": "#070d22", "card": "#0e1a3a", "card2": "#0a1530",
+    "card_border": "#1f3b6e", "text": "#e8eefa", "text_muted": "#8e9dbc",
+    "grid": "#1b2a52",
+    "cyan": "#22d3ee", "blue": "#60a5fa", "violet": "#a78bfa",
+    "green": "#34d399", "amber": "#fbbf24", "red": "#f87171",
+    "pink": "#f472b6", "slate": "#64748b",
+    # chart tokens (as in TOKENS): Receiving green, Withdrawal violet
+    "receiving": "#34d399", "withdrawal": "#a78bfa", "good": "#34d399",
+    "warning": "#fbbf24", "critical": "#f87171", "neutral": "#64748b",
+    "ramp": ["#22d3ee", "#60a5fa", "#a78bfa", "#f472b6", "#f87171"],
+}
+NEO_ACCENTS = ("cyan", "blue", "violet", "green", "amber", "red")
+
+# Style names of a page, plain or Neo (Card, PeriodBar, DataTable ... take
+# neo=True and use the second set).
+STYLES = {
+    False: {"page": "Page.TFrame", "page_label": "Page.TLabel",
+            "page_muted": "PageMuted.TLabel", "card": "Card.TFrame",
+            "plain": "CardPlain.TFrame", "label": "Card.TLabel",
+            "muted": "CardMuted.TLabel", "title": "CardTitle.TLabel",
+            "radio": "Card.TRadiobutton", "tree": "Treeview",
+            "kpi_name": "KpiName.TLabel"},
+    True: {"page": "Neo.TFrame", "page_label": "Neo.TLabel",
+           "page_muted": "NeoPageMuted.TLabel", "card": "NeoCard.TFrame",
+           "plain": "NeoPlain.TFrame", "label": "NeoCard.TLabel",
+           "muted": "NeoCardMuted.TLabel", "title": "NeoCardTitle.TLabel",
+           "radio": "NeoCard.TRadiobutton", "tree": "Neo.Treeview",
+           "kpi_name": "NeoKpiName.TLabel"},
+}
+
+
+def styles(neo):
+    return STYLES[bool(neo)]
+
+
+def apply_neo_styles(style):
+    """The Neo styles; the same colours whatever the theme."""
+    n = NEO
+    s = style.configure
+    s("Neo.TFrame", background=n["page"])
+    s("Neo.TLabel", background=n["page"], foreground=n["text"])
+    s("NeoPageMuted.TLabel", background=n["page"],
+      foreground=n["text_muted"], font=(FONT, 9))
+    s("NeoSection.TLabel", background=n["page"], foreground=n["cyan"],
+      font=(FONT, 9, "bold"))
+    s("NeoCard.TFrame", background=n["card"], bordercolor=n["card_border"],
+      lightcolor=n["card_border"], darkcolor=n["card_border"],
+      relief="solid", borderwidth=1)
+    s("NeoPlain.TFrame", background=n["card"])
+    s("NeoCard.TLabel", background=n["card"], foreground=n["text"],
+      font=(FONT, 9))
+    s("NeoCardMuted.TLabel", background=n["card"],
+      foreground=n["text_muted"], font=(FONT, 8))
+    s("NeoCardTitle.TLabel", background=n["card"], foreground=n["text"],
+      font=(FONT, 11, "bold"))
+    s("NeoKpiName.TLabel", background=n["card"], foreground=n["text_muted"],
+      font=(FONT, 9, "bold"))
+    s("NeoKpiValue.TLabel", background=n["card"], foreground="#ffffff",
+      font=(FONT, 22, "bold"))
+    s("NeoKpiValueSmall.TLabel", background=n["card"], foreground="#ffffff",
+      font=(FONT, 13, "bold"))
+    s("NeoCard.TRadiobutton", background=n["card"], foreground=n["text"])
+    style.map("NeoCard.TRadiobutton", background=[("active", n["card"])])
+    for accent in NEO_ACCENTS:
+        color = n[accent]
+        name = accent.title()
+        # a card whose edge glows in its colour, its bar and its words
+        s(f"NeoKpi{name}.TFrame", background=n["card"], bordercolor=color,
+          lightcolor=color, darkcolor=color, relief="solid", borderwidth=1)
+        s(f"NeoBar{name}.TFrame", background=color)
+        s(f"NeoAccent{name}.TLabel", background=n["card"], foreground=color,
+          font=(FONT, 9, "bold"))
+        s(f"NeoIcon{name}.TLabel", background=n["card"], foreground=color,
+          font=(FONT, 15, "bold"))
+    s("Neo.Treeview", background=n["card2"], fieldbackground=n["card2"],
+      foreground=n["text"], bordercolor=n["card_border"], rowheight=24)
+    style.map("Neo.Treeview", background=[("selected", "#155e75")],
+              foreground=[("selected", "#ffffff")])
+    s("Neo.Treeview.Heading", background="#13224a", foreground=n["cyan"],
+      bordercolor=n["card_border"], font=(FONT, 9, "bold"))
+    style.map("Neo.Treeview.Heading", background=[("active", "#1b2f63")])
+
+
 STATUS_TONES = {        # inventory status -> token (always shown with text)
     "In Stock": "receiving", "Partially Withdrawn": "withdrawal",
     "Fully Withdrawn": "neutral", "Over-Withdrawn": "critical",
@@ -141,4 +230,5 @@ def apply_styles(style):
       font=(FONT, 9, "bold"))
     s("Treeview", rowheight=24)
     s("Treeview.Heading", font=(FONT, 9, "bold"))
+    apply_neo_styles(style)
     return t
