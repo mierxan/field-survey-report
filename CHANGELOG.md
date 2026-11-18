@@ -1,5 +1,16 @@
 # Field Survey Report changelog
 
+## Phase 17 - Withdrawal-to-Receiving sharing, part 4: items not on the list (unreleased, 18 November 2026)
+
+- **+ Add Received Item** ("Not on the list:" row above the Item Lists): a
+  new line right after the last line of the last Item List (the next empty
+  row, a new row, or a new Item List when 30 lines are used), with the
+  cursor in it (`fsr_findings_ui.add_received_item`). Imported lines are not
+  touched; the line is saved in this Receiving report only.
+- In a report made from a shipment such a line (no Origin Line) is shown as
+  "Added at destination" in With Issues and as its own row in Packing
+  Lists...; it prints its Findings as typed.
+
 ## Phase 16 - Withdrawal-to-Receiving sharing, part 3: verification (unreleased, 18 November 2026)
 
 - **Printing (Option B)**: on the printed Cargo Details page the Findings

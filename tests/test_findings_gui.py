@@ -210,3 +210,84 @@ def test_an_ordinary_report_is_saved_without_the_question(app):
     g["new_report"](confirm=False)
     assert not fu.from_shipment(g)
     assert fu.verified_before_save(g) is True
+
+
+# ---------- Phase 4: items received that are not on the shipment ----------
+
+def type_line(g, list_no, line_no, **cells):
+    section = g["item_frames"][list_no - 1]
+    widgets = section.rows[line_no - 1]
+    for header, text in cells.items():
+        g["set_entry"](widgets[section.headers.index(header)], text)
+
+
+def test_several_received_items_go_after_the_last_line(app, tmp_path):
+    import fsr_storage
+    g, answers = app
+    imported(g, tmp_path, "FSR-ORG-202611-0401")
+    g["choose_condition"]("Good Order")
+    before = [(box.get(), w.hidden.get("Origin Line"))
+              for _, _, _, w, box in fu.item_lines(g)]
+    # the imported Item List has 4 lines: the received items follow them
+    assert fu.add_received_item(g) == (1, 5)
+    type_line(g, 1, 5, **{"Description of Goods": "Extra pallet",
+                          "Quantity": "1", "UOM": "PALLET",
+                          "Findings": "Not on the packing list"})
+    assert fu.add_received_item(g) == (1, 6)
+    type_line(g, 1, 6, **{"Description of Goods": "Loose carton",
+                          "Quantity": "2", "UOM": "BOX"})
+    assert fu.add_received_item(g) == (1, 7)          # a new row
+    type_line(g, 1, 7, **{"Description of Goods": "Spare bolts",
+                          "Quantity": "50", "UOM": "PCS"})
+    lines = fu.item_lines(g)
+    # the imported lines are exactly as they were
+    assert [(box.get(), w.hidden.get("Origin Line"))
+            for _, _, _, w, box in lines[:4]] == before
+    # the added ones are the destination's own
+    assert [fu.is_added(g, w) for _, _, _, w, _ in lines] == \
+        [False] * 4 + [True] * 3
+    rows = {p["number"] if not p["added"] else fu.ADDED: p
+            for p in fu.packing_lists(g)}
+    assert rows[fu.ADDED]["lines"] == 3 and rows[fu.ADDED]["issues"] == 1
+    dialog = fu.with_issues(g)
+    assert len(dialog.rows) == 7
+    dialog.destroy()
+    # saved in this report only, with no Packing List on the added lines
+    fu.accept_all(g)                      # "Yes": every line, as asked
+    g["SO_number_entry"].insert(0, "SO-ADDED-1")
+    g["set_inspection_date"]("18-Nov-2026")
+    assert g["save_report"]() is True
+    saved = fsr_storage.read_report(g["excel_state"]["path"],
+                                    g["control_entry"].get())
+    rows = saved["item_lists"][0]["rows"]
+    assert [r["Description of Goods"] for r in rows[4:]] == [
+        "Extra pallet", "Loose carton", "Spare bolts"]
+    assert all("Origin Line" not in r and "Packing List No." not in r
+               for r in rows[4:])
+    assert all(r.get("Origin Line") for r in rows[:4])
+    assert [fsr_storage.printed_findings(r) for r in rows[4:]] == [
+        fu.GOOD] * 3                          # printed as typed, no dot
+
+
+def test_a_full_item_list_continues_in_a_new_one(app, tmp_path):
+    g, answers = app
+    imported(g, tmp_path, "FSR-ORG-202611-0402")
+    section = g["item_frames"][-1]
+    while len(section.rows) < g["MAX_ROWS"]:
+        section.add_line()
+    for line_no in range(5, g["MAX_ROWS"] + 1):
+        type_line(g, 1, line_no, **{"Description of Goods": f"Item {line_no}"})
+    assert fu.add_received_item(g) == (2, 1)
+    assert len(g["item_frames"]) == 2
+    assert [w.hidden.get("Packing List No.") for w in
+            g["item_frames"][0].rows[:2]] == ["NOR111126-001 & 002",
+                                               "NOR111126-003"]
+
+
+def test_an_ordinary_report_has_no_added_marking(app):
+    g, answers = app
+    g["new_report"](confirm=False)
+    type_line(g, 1, 1, **{"Description of Goods": "Typed", "Quantity": "1"})
+    assert fu.add_received_item(g) == (1, 2)
+    assert not any(fu.is_added(g, w) for _, _, _, w, _ in fu.item_lines(g))
+    assert [p["added"] for p in fu.packing_lists(g)] == [False]

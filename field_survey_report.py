@@ -5020,7 +5020,7 @@ def build_window():
     global hand_over_button, receive_handover_button, hand_over_state
     global share_shipment_button, receive_shipment_button, shipment_state
     global findings_row, all_good_button, with_issues_button
-    global packing_lists_button
+    global packing_lists_button, add_received_button, received_row
     global incident_actions
     global incident_body, incident_cards, incident_cards_frame
     global incident_hint, incident_info, incident_tab, index
@@ -6078,6 +6078,19 @@ def build_window():
         findings_row, text="Packing Lists...", bootstyle="secondary-outline",
         command=lambda: fsr_findings_ui.review_window(globals()))
     packing_lists_button.pack(side="left")
+    # an item received that is not on the shipment's list (Phase 4); its own
+    # row, so the Findings row fits beside the side panel
+    received_row = tb.Frame(items_toolbar)
+    received_row.grid(row=3, column=0, columnspan=3, sticky="w",
+                      pady=(6, 0))
+    tb.Label(received_row, text="Not on the list:", font=bold_font).pack(
+        side="left", padx=(0, 6))
+    add_received_button = tb.Button(
+        received_row, text="+ Add Received Item", bootstyle="info-outline",
+        command=lambda: fsr_findings_ui.add_received_item(globals()))
+    add_received_button.pack(side="left")
+    add_tip(add_received_button, "A line for an item received that is not "
+            "on the list: added after the last line of the last Item List.")
     add_tip(packing_lists_button, "Each Packing List of the lines with its PO "
             "numbers and how far its Findings are (lines received from a "
             "shipment).")

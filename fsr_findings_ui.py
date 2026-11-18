@@ -151,7 +151,8 @@ def with_issues(h):
             row=index, column=0, padx=4, pady=2)
         ttk.Label(table, text=f"List {list_no} · {line_no}").grid(
             row=index, column=1, sticky="w", padx=4)
-        ttk.Label(table, text=widgets.hidden.get("Packing List No.") or "-"
+        ttk.Label(table, text=widgets.hidden.get("Packing List No.") or (
+            ADDED if is_added(h, widgets) else "-")
                   ).grid(row=index, column=2, sticky="w", padx=4)
         ttk.Label(table, text=_describe(section, widgets), width=40).grid(
             row=index, column=3, sticky="w", padx=4)
@@ -190,11 +191,14 @@ def packing_lists(h):
     """[{"number", "po_numbers", "lines", "good", "issues", "empty"}] of the
     lines on the form, in order ("" = lines without a Packing List)."""
     found = {}
+    shipment = from_shipment(h)
     for _, _, section, widgets, box in item_lines(h):
         number = widgets.hidden.get("Packing List No.", "")
-        entry = found.setdefault(number, {"number": number, "po_numbers": [],
-                                          "lines": 0, "good": 0, "issues": 0,
-                                          "empty": 0})
+        added = shipment and not widgets.hidden.get("Origin Line")
+        key = (number, added)
+        entry = found.setdefault(key, {"number": number, "added": added,
+                                       "po_numbers": [], "lines": 0,
+                                       "good": 0, "issues": 0, "empty": 0})
         entry["lines"] += 1
         po = widgets[section.headers.index("PO Number")].get().strip() \
             if "PO Number" in section.headers else ""
@@ -272,6 +276,7 @@ def review_window(h):
     tree.tag_configure("open", foreground="#b45309")
     for index, entry in enumerate(found):
         tree.insert("", "end", iid=str(index), values=(
+            ADDED if entry["added"] else
             entry["number"] or "(no Packing List)",
             ", ".join(entry["po_numbers"]), entry["lines"], entry["good"],
             entry["issues"], entry["empty"]),
@@ -280,3 +285,40 @@ def review_window(h):
     dialog.bind("<Escape>", lambda e: dialog.destroy())
     dialog.tree = tree
     return dialog
+
+
+# ---------- items received that are not on the shipment (Phase 4) ----------
+
+ADDED = "Added at destination"
+
+
+def is_added(h, widgets):
+    """A line typed at the destination in a report made from a shipment (it
+    has no origin line). False in every other report."""
+    return from_shipment(h) and not widgets.hidden.get("Origin Line")
+
+
+def add_received_item(h):
+    """Add Received Item: a new line right after the last line of the LAST
+    Item List - the next empty row, a new row, or a new Item List when that
+    one is full - and put the cursor in it. The lines already there are not
+    touched. Returns (Item List no., line no.)."""
+    h["notebook"].select(h["items_tab"])
+    section = h["item_frames"][-1]
+    filled = [index for index, widgets in enumerate(section.rows)
+              if section.line_values(widgets)]
+    position = (filled[-1] + 1) if filled else 0
+    if position >= len(section.rows):
+        if len(section.rows) < h["MAX_ROWS"]:
+            section.add_line()
+        else:
+            h["add_item_frame"]()
+            section, position = h["item_frames"][-1], 0
+    widgets = section.rows[position]
+    target = widgets[0]
+    target.focus_set()
+    h["scroll_to_widget"](target)
+    list_no = len(h["item_frames"])
+    h["notify"](f"Received item: line {position + 1} of Item List {list_no} "
+                "- type its details and Findings.")
+    return list_no, position + 1

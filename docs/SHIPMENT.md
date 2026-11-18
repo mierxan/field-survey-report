@@ -22,8 +22,10 @@ Status:
 - **Phase 3 (done):** verification - printing `<Packing List> · <Findings>`,
   the Packing Lists review, and a question before completing a report whose
   received lines have no Findings yet (see below).
-- **Not yet:** items added at the destination (Phase 4), the released phone
-  version (Phase 5).
+- **Phase 4 (done):** items received that are not on the shipment
+  (**Add Received Item**, see below).
+- **Not yet:** the released phone version and the four Windows/Android
+  combinations in released apps (Phase 5).
 
 ## Receiving (Phase 2)
 
@@ -74,6 +76,24 @@ phone: the **Findings** card at the top of the Item Lists tab):
 Only the Findings change (the report is saved as usual); the Packing List
 No. of each line is never touched. Blank spare lines are left blank. Works
 on any report's Item Lists, not only on drafts made from a shipment.
+
+## Items received that are not on the list (Phase 4)
+
+**+ Add Received Item** (PC: the "Not on the list:" row above the Item
+Lists; phone: the Findings card) adds a line **right after the last line of
+the last Item List**: its next empty row, a new row, or - when that list
+holds 30 lines - a new Item List. The cursor goes to it (PC) / a message says
+where it is (phone). The inspector types every field as on any line
+(description, PO, packaging, quantity, UOM, dimensions, weights, prices,
+Findings). The imported lines are never touched.
+
+Such a line has no Origin Line and no Packing List No.; in a report made
+from a shipment it is shown as **Added at destination** - in the With
+Issues list, as its own row of the Packing Lists review, and on the phone's
+line card ("Line 5 · added at destination"). It is saved in this Receiving
+report only; nothing goes back to the origin Withdrawal report. It prints its
+Findings as typed (no Packing List). All Good Order and Complete and With
+Issues include it like any line.
 
 ## Verification and printing (Phase 3)
 
