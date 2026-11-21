@@ -43,6 +43,11 @@ LibreOffice (unchanged).
 
 ## 2. Run
 
+Saved reports can be deleted and recovered from **Open Saved Report** using
+**Delete Selected** and **Deleted History**. Deletion updates MySQL (when
+enabled), this PC's local reports, and Excel. See [delete and recovery
+instructions](docs/DELETED_REPORTS.md) for interrupted operations and scope.
+
 | Start with | What it opens |
 |---|---|
 | `START_FSR.bat` (or `main.py` in PyCharm) | The program with the **real data** |

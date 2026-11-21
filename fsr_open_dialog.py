@@ -115,14 +115,6 @@ def open_saved_report_dialog(initial_search=""):
 
     load_index()
 
-    if not reports and not use_mysql:
-        messagebox.showinfo(
-            "No Saved Reports",
-            f"There are no saved reports yet in:\n{path}",
-            parent=host.window
-        )
-        return
-
     dialog = host.tb.Toplevel(host.window)
     dialog.title("Open Saved Report")
     dialog.transient(host.window)
@@ -237,8 +229,85 @@ def open_saved_report_dialog(initial_search=""):
         dialog.destroy()
         host.load_report_into_form(control_no, chosen_source)
 
+    def delete_selected():
+        selection = tree.selection()
+        if not selection:
+            return
+        control = selection[0]
+        if control in withdrawal_labels:
+            messagebox.showinfo('Delete Report', 'PO-linked Withdrawal reports cannot be deleted here.', parent=dialog)
+            return
+        if not messagebox.askyesno(
+                'Delete Report',
+                f'Delete report {control} and all its lines?\n\n'
+                + ('This removes it from MySQL and this PC\'s Excel file.\n' if use_mysql else
+                   'This removes it from this PC\'s saved reports and Excel file.\n')
+                + 'A recovery copy will be kept in Deleted History.', parent=dialog):
+            return
+        import fsr_deletions
+        try:
+            host.busy(lambda: fsr_deletions.delete(
+                host.data_store(path), control, host.db_mysql if use_mysql else None,
+                user=getattr(host, 'USER_FULL_NAME', '')))
+        except Exception as error:
+            host.log.exception('Deleting report failed')
+            messagebox.showerror('Delete Report', f'{error}\n\nIf a history entry was created, use Deleted History to finish the deletion.', parent=dialog)
+        switch_source()
+
+    def deleted_history():
+        import fsr_deletions
+        history_dialog = host.tb.Toplevel(dialog)
+        history_dialog.title('Deleted History — Restore Reports')
+        history_dialog.geometry('900x400')
+        history_dialog.transient(dialog)
+        listing = ttk.Treeview(history_dialog, columns=('control', 'date', 'user', 'state', 'restored'), show='headings', selectmode='browse')
+        for key, title in zip(listing['columns'], ('Control #', 'Deleted At', 'Deleted By', 'Status', 'Restored At')):
+            listing.heading(key, text=title)
+            listing.column(key, width=165)
+        scroll = ttk.Scrollbar(history_dialog, command=listing.yview)
+        listing.configure(yscrollcommand=scroll.set)
+        scroll.pack(side='right', fill='y')
+        listing.pack(fill='both', expand=True, padx=12, pady=12)
+
+        def populate():
+            listing.delete(*listing.get_children())
+            for row in fsr_deletions.history(path):
+                listing.insert('', 'end', iid=str(row['id']), values=(
+                    row['control_no'], row['deleted_at'], row['deleted_by'],
+                    row['state'], row['restored_at'] or ''))
+
+        def perform(action):
+            chosen = listing.selection()
+            if not chosen:
+                return
+            if not messagebox.askyesno('Deleted History',
+                    'Restore this report?' if action == 'restore' else 'Finish this incomplete deletion?', parent=history_dialog):
+                return
+            try:
+                host.busy(lambda: getattr(fsr_deletions, action)(
+                    host.data_store(path), int(chosen[0]), host.db_mysql if use_mysql else None))
+            except Exception as error:
+                host.log.exception('Deleted history action failed')
+                messagebox.showerror('Deleted History', str(error), parent=history_dialog)
+            populate()
+            switch_source()
+
+        actions = host.tb.Frame(history_dialog)
+        actions.pack(fill='x', padx=12, pady=(0, 12))
+        host.tb.Button(actions, text='Restore Selected', command=lambda: perform('restore')).pack(side='left')
+        host.tb.Button(actions, text='Retry Incomplete Deletion', command=lambda: perform('retry')).pack(side='left', padx=8)
+        host.tb.Button(actions, text='Close', command=history_dialog.destroy).pack(side='right')
+        populate()
+        history_dialog.grab_set()
+        history_dialog.wait_window()
+        dialog.grab_set()
+
     buttons = host.tb.Frame(dialog)
     buttons.pack(fill="x", padx=15, pady=(5, 15))
+    host.tb.Button(buttons, text='Delete Selected', command=delete_selected,
+                   bootstyle='danger-outline').pack(side='left')
+    host.tb.Button(buttons, text='Deleted History', command=deleted_history,
+                   bootstyle='secondary-outline').pack(side='left', padx=8)
     host.tb.Button(
         buttons, text="Open Report", width=14, command=load_selected,
         bootstyle="primary"

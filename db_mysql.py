@@ -498,6 +498,28 @@ def write_report(conn, data):
     return _write_report(conn, data)
 
 
+def delete_report(control_no, connection=None):
+    """Remove a report and its children in one transaction.
+
+    Called by fsr_deletions only after a durable recovery snapshot exists.
+    The caller holds this report's advisory lock.
+    """
+    own = connection is None
+    conn = connection or connect()
+    cur = conn.cursor()
+    try:
+        for table in ('declared_goods', 'item_lines', 'remarks', 'incident_reports', 'reports'):
+            cur.execute(f'DELETE FROM {table} WHERE control_no = %s', (control_no,))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        if own:
+            conn.close()
+
+
 def save_report(data, connection=None):
     """Insert or update ONE report (all its lines) in a single transaction.
     NOTE: this overwrites whatever MySQL holds under that Control #. The

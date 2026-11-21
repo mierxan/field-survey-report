@@ -463,6 +463,8 @@ class SqliteStore:
         return index
 
     def write_report(self, data, editing, saved_at=None, expected_stamp=fsr_drafts._UNSET, expected_revision=fsr_drafts._UNSET):
+        import fsr_deletions
+        fsr_deletions.check_write(self.excel_path, data)
         if expected_stamp is not fsr_drafts._UNSET:
             return self._write(lambda conn: self._apply_report(conn, data, editing, saved_at),
                                (MAIN, data["control_no"], expected_stamp, expected_revision))
@@ -471,6 +473,10 @@ class SqliteStore:
     def write_reports(self, items):
         """[(data, editing, saved_at)] in ONE transaction - all or none.
         The same rules as fsr_storage.write_reports_to_excel()."""
+        import fsr_deletions
+        items = list(items)
+        for data, _, _ in items:
+            fsr_deletions.check_write(self.excel_path, data)
         def work(conn):
             return [self._apply_report(conn, data, editing, saved_at)
                     for data, editing, saved_at in items]
@@ -537,6 +543,14 @@ class SqliteStore:
                 conn.execute("DELETE FROM lines WHERE book=? AND key=?",
                              (MAIN, key))
             return len(keys & present)
+        return self._write(work)
+
+    def remove_archived_report(self, control_no):
+        """Internal: deletion service has durably archived this report first."""
+        def work(conn):
+            key = key_of(control_no)
+            conn.execute("DELETE FROM lines WHERE key=?", (key,))
+            conn.execute("DELETE FROM reports WHERE key=?", (key,))
         return self._write(work)
 
     def last_saved_times(self):

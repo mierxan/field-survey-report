@@ -464,6 +464,11 @@ class Guard:
                     "MySQL right now. It will be tried again.")
             with self._lock:
                 ledger = self.ledger()
+            # A sender round may have read this report before it was deleted.
+            # Check after acquiring the same MySQL lock as deletion.
+            import fsr_deletions
+            if fsr_deletions.is_deleted(self.excel_path, control):
+                raise ValueError('This report is in Deleted History. Restore it before sending it to MySQL.')
             verdict, theirs = self._decide(conn, data, ledger,
                                            lock_rows=True)
             if verdict == "identical":

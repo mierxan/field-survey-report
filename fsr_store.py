@@ -118,6 +118,8 @@ class ExcelStore:
         return fsr_storage.search_index_excel(self.excel_path)
 
     def write_report(self, data, editing, saved_at=None, expected_stamp=fsr_drafts._UNSET, expected_file=fsr_drafts._UNSET):
+        import fsr_deletions
+        fsr_deletions.check_write(self.excel_path, data)
         if expected_stamp is not fsr_drafts._UNSET:
             return fsr_storage.write_reports_to_excel(self.excel_path, [(data, editing, saved_at)], expected=(data["control_no"], expected_stamp), expected_file=expected_file)[0]
         return fsr_storage.write_report_to_excel(self.excel_path, data,
@@ -125,6 +127,10 @@ class ExcelStore:
 
     def write_reports(self, items):
         """[(data, editing, saved_at)] in ONE write - all or none."""
+        import fsr_deletions
+        items = list(items)
+        for data, _, _ in items:
+            fsr_deletions.check_write(self.excel_path, data)
         return fsr_storage.write_reports_to_excel(self.excel_path, items)
 
     def delete_reports(self, control_numbers):
@@ -134,6 +140,10 @@ class ExcelStore:
         check_demo_delete(self.excel_path, control_numbers)
         return fsr_storage.delete_reports_from_excel(self.excel_path,
                                                      control_numbers)
+
+    def remove_archived_report(self, control_no):
+        """Internal: deletion service has durably archived this report first."""
+        return fsr_storage.delete_reports_from_excel(self.excel_path, [control_no])
 
     def last_saved_times(self):
         """{Control # in lower case: its Last Saved cell as text}."""
