@@ -289,7 +289,7 @@ class ItemListSection:
             try:
                 box.configure(bootstyle="danger" if number in lines
                               else "default")
-            except Exception:       # a box without styles: the text warns
+            except Exception:       # noqa: S110 - a box without styles: the text warns
                 pass
         if not lines:
             self.description_warning.configure(text="")

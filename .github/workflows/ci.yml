@@ -1,0 +1,45 @@
+name: CI
+
+# Runs on every push and pull request. Two independent jobs:
+#   lint  - ruff (fast, platform independent)
+#   test  - the non-GUI pytest suite on the target platform (Windows)
+#
+# The GUI tests are deliberately NOT run here: they open the real program
+# window and need an interactive Windows desktop. A CI runner has no such
+# desktop, so they would skip (and --fail-on-gui-skip would fail the run).
+# Run them locally with RUN_TESTS.bat before a release.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint:
+    name: Ruff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Install ruff
+        run: python -m pip install ruff==0.17.5
+      - name: Ruff check
+        run: ruff check .
+
+  test:
+    name: Tests (non-GUI, Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+      - name: Run tests (non-GUI)
+        timeout-minutes: 45
+        run: python -m pytest -m "not gui" -q

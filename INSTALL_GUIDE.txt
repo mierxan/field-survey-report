@@ -2,7 +2,7 @@ INSTALL THE FIELD SURVEY REPORT ON ANOTHER PC / LAPTOP  (Windows)
 ================================================================
 
 A. ON THE NEW PC (once)
- 1. Install Python 3.12 or newer from python.org.
+ 1. Install Python 3.14 or newer from python.org.
     Tick "Add python.exe to PATH" on the first screen.
  2. Copy this whole folder to the new PC (for example to C:\FieldSurveyReport).
     Do NOT copy the .venv folder, users.json, settings.json,

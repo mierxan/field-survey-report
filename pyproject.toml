@@ -16,7 +16,7 @@ skip_empty = true
 
 [tool.ruff]
 line-length = 79
-extend-exclude = [".venv", "build", "dist", "Installer"]
+extend-exclude = [".venv", "build", "dist", "Installer", "test_run_temp"]
 
 [tool.ruff.lint]
 # F  pyflakes (real mistakes), E/W pycodestyle, B bugbear (likely bugs),

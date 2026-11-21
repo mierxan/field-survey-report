@@ -57,3 +57,10 @@ Installer/
 *.draft.json
 *.draft.*
 Drafts/
+
+# Local test scratch (pytest temp data, run logs)
+test_run_temp/
+
+# Local recovery artifacts and one-off DB maintenance scripts (never commit)
+data/Clear MYSQL database/
+mysql-recovery-20261121/

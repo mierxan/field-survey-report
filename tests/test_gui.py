@@ -184,7 +184,7 @@ def test_transaction_pages_show_transactions_packages_and_items(app):
 def test_incident_reports_page_lists_the_reports_by_month(app):
     g, answers = app
     shell = g["app_shell"]
-    snap = wait_for_data(g)
+    wait_for_data(g)
     shell.show("bad_order")
     settle(g, 1.0)
     page = shell.pages["bad_order"]

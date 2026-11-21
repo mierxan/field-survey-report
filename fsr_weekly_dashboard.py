@@ -221,7 +221,7 @@ def add_dashboard(wb, title, rows, controls, first_day, last_day,
                    "Quantity (other days)"], day_lines)
 
     week_lines = []
-    for (week, numbers), name in zip(weeks.items(), week_names):
+    for (week, _numbers), name in zip(weeks.items(), week_names):
         count = f"SUMIFS({TX},{WEEK},{week},{no_week})"
         week_lines.append((name, f"=IF({in_week(week)},{count},0)",
                            f"=IF({in_week(week)},0,{count})"))

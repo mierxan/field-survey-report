@@ -13,7 +13,7 @@ estimated.
 
 ## 1. Install
 
-Requirements: Windows 10/11 and Python 3.12 or newer (developed and tested
+Requirements: Windows 10/11 and Python 3.14 or newer (developed and tested
 with Python 3.14.4).
 
 ```bat
