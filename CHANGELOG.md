@@ -1,5 +1,38 @@
 # Field Survey Report changelog
 
+## Phase 21 - Incident Report S.O. No. and Port; dashboard and PDF tidy-ups (unreleased, 23 November 2026)
+
+- **Incident Report: S.O. No. and Port are the report's own.** Every site
+  has its own SO number, and the place of the incident is the report's
+  Location, so neither can be changed on the Incident Report any more: the
+  two boxes are read-only and always show the report's SO Number and
+  Location, on screen, when saving and on the printed form.
+- Fixed: choosing Bad Order first (the Incident Report tab opens) and then
+  typing or changing the SO Number, Location or Activity on the first page
+  saved and printed an Incident Report with the previous report's SO (New
+  Report keeps the last SO) and an empty Port and Operation, unless the
+  Incident Report tab was opened again. Save and Print / PDF now bring the
+  Incident Report header up to date first; a Vessel, Voyage, Client, Date or
+  Operation the inspector typed on the Incident Report stays as typed.
+- Printing takes the S.O. No. and Port from the report as well, so a report
+  saved earlier, or imported from a phone or a site PC, with other values on
+  its Incident Report prints the right ones (the saved file is corrected the
+  next time the report is saved).
+- Dashboard (and the other monitoring pages): on a PC that started with no
+  reports, the "No saved inspection reports yet" notice left a blank band at
+  the top of the page after the first reports arrived, until the program
+  was restarted. The notice area now closes completely.
+- Warehouse PDF reports: a narrow table column no longer splits a code in
+  the middle ("TEST-INV-001" / "8", "Non-Containeriz" / "ed"). Every column
+  is at least as wide as its longest word (at most a fifth of the page),
+  and the wider text columns give up the space.
+- Checked with a start-to-finish run of the real program on two sandbox PCs
+  (save, Export Master Data, Import twice, report forms and PDFs, Weekly
+  Summary dashboard recalculated by Excel, every Dashboard and monitoring
+  page, every warehouse Excel and PDF report). New tests:
+  `tests/test_incident_header.py`, `tests/test_dashboard_empty_gui.py`, and
+  new tests in `tests/test_gui.py` and `tests/test_exports.py`.
+
 ## Phase 20 - Delete and restore reports; the Owner's own first account (release 2026.11.22.213228, 22 November 2026)
 
 - Setup files (one build, both editions; its own test run: 1,504 passed,
