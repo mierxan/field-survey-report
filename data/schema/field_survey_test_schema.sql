@@ -115,6 +115,8 @@ CREATE TABLE IF NOT EXISTS item_lines (
     uom             VARCHAR(30)  NULL,      -- unit of measure of quantity
     currency        VARCHAR(3)   NULL,      -- of unit_price / total_price
     unit_no         VARCHAR(100) NULL,      -- Container No. / Truck Plate No.
+    packing_list_no VARCHAR(120) NULL,      -- Packing List No. (shipment import)
+    origin_line     VARCHAR(120) NULL,      -- Origin Line (shipment import)
     PRIMARY KEY (id),
     UNIQUE KEY uq_item_line (control_no, item_list, line_no),
     KEY idx_item_cargo (cargo_id),

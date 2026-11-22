@@ -14,7 +14,7 @@ import db_mysql
 import real_mysql
 from factories import report
 
-NAME_PREFIX = "ZZT-TEST-"            # master list names written here
+NAME_PREFIX = real_mysql.PREFIX      # master list names written here
 
 
 @pytest.fixture(scope="module")

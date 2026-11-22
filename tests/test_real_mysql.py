@@ -110,9 +110,10 @@ def someone_else_changes(db, control, so="CHANGED BY SOMEONE ELSE"):
 # ---------- the connection itself ----------
 
 def test_it_is_the_test_database_and_nothing_else(database):
-    assert real_mysql.TEST_DATABASE == "field_survey_test"
-    assert database.run("SELECT DATABASE()") == [("field_survey_test",)]
-    assert database._config["database"] == "field_survey_test"
+    assert real_mysql.TEST_DATABASE == real_mysql.ISOLATED_DATABASE
+    assert database.run("SELECT DATABASE()") == [
+        (real_mysql.ISOLATED_DATABASE,)]
+    assert database._config["database"] == real_mysql.ISOLATED_DATABASE
 
 
 def test_the_test_login_cannot_read_the_real_database(database):
