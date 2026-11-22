@@ -1,6 +1,10 @@
 # Field Survey Report changelog
 
-## Phase 20 - Delete and restore reports; the Owner's own first account (22 November 2026)
+## Phase 20 - Delete and restore reports; the Owner's own first account (release 2026.11.22.213228, 22 November 2026)
+
+- Setup files: `FieldSurveyReport_Owner_Setup_` and
+  `FieldSurveyReport_User_Setup_2026.11.22.213228-094b707eeaa84fee9779f093ca446239.exe`
+  (both editions share the build; its own test run: 1,504 passed, 0 skipped).
 
 - **Delete and restore saved reports.** Open Saved Report > **Delete
   Selected** (confirm the Control #) removes a whole report and its lines
