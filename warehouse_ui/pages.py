@@ -66,11 +66,16 @@ class Page(ScrollPage):
     def _loaded(self, snapshot, error):
         for child in self.state_holder.winfo_children():
             child.destroy()
+        # Tk keeps an emptied frame at its last size, so the space of a
+        # removed notice would stay as a blank band above the page: the
+        # holder is shown only while it holds a notice.
+        self.state_holder.grid_remove()
         self.snapshot = snapshot
         if error is not None:
             EmptyState(self.state_holder, "Records unavailable",
                        explain_load_error(error), "Try again",
                        self.reload).grid(row=0, column=0, sticky="we")
+            self.state_holder.grid()
             self.main.grid_remove()
             return
         self.source_label.configure(text=(
@@ -85,6 +90,7 @@ class Page(ScrollPage):
                 "with fictional TEST data.", "Go to Inspection Reports",
                 lambda: self.ctx.show_module("inspection")).grid(
                 row=0, column=0, sticky="we")
+            self.state_holder.grid()
             if not self.show_when_empty:
                 self.main.grid_remove()
                 return
