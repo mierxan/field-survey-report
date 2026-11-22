@@ -137,6 +137,7 @@ def make_tu_admin(path):
 
 def test_fresh_user_install_shows_the_one_time_setup(root, tmp_path,
                                                      monkeypatch):
+    monkeypatch.setattr(app_auth.fsr_edition, "IS_OWNER_EDITION", False)
     open_store, path = new_pc(tmp_path)
     store = open_store()
     shown = {}
@@ -198,8 +199,40 @@ def _play_setup(root, store, monkeypatch, create, note_code, sign_in):
     return run(root, store, monkeypatch, [step, step, step])
 
 
+def test_fresh_owner_install_shows_the_owner_setup(root, tmp_path, monkeypatch):
+    monkeypatch.setattr(app_auth.fsr_edition, "IS_OWNER_EDITION", True)
+    open_store, path = new_pc(tmp_path)
+    store = open_store()
+    shown = {}
+
+    def create(window):
+        shown["setup"] = texts(window)
+        fill(window, "Owner", "", "Name", "ON", "owner@example.invalid",
+             ADMIN_PASS, ADMIN_PASS)
+        click(window, "Create Owner Account")
+
+    def note_code(window):
+        shown["code"] = texts(window)
+        click(window, "I have written it down")
+
+    def sign_in(window):
+        shown["sign_in"] = texts(window)
+        fill(window, "ON", ADMIN_PASS)
+        click(window, "Sign In")
+
+    user, _ = _play_setup(root, store, monkeypatch, create, note_code,
+                          sign_in)
+
+    assert "Set Up This PC" in shown["setup"]
+    assert "OWNER of this PC" in shown["setup"]
+    assert "Create Owner Account" in shown["setup"]
+    assert "Create an account" not in shown["setup"]
+    assert user["role"] == "owner" and user["initials"] == "ON"
+    assert store.code_shown
+
+
 def test_administrator_sees_the_code_once_after_an_update(root, tmp_path,
-                                                         monkeypatch):
+                                                          monkeypatch):
     """An earlier users.json: signed at start, code shown at the first
     Administrator sign in, not again."""
     salt, digest = app_auth.hash_password("owner-password-1")
@@ -313,6 +346,7 @@ def test_moved_pc_asks_for_the_recovery_code(root, tmp_path, monkeypatch):
 
 def test_missing_file_without_a_copy_starts_again_with_the_code(
         root, tmp_path, monkeypatch):
+    monkeypatch.setattr(app_auth.fsr_edition, "IS_OWNER_EDITION", False)
     open_store, path, code = set_up_pc(tmp_path)
     path.unlink()
     path.with_name("users.lastgood.json").unlink()

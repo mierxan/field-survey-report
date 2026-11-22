@@ -41,6 +41,37 @@ def test_fresh_user_install_asks_for_the_administrator_once(tmp_path):
             "another-password", "another-password")
 
 
+OWNER = ("Owner", "", "Name", "ON", "owner@example.invalid",
+         "owner-password-1", "owner-password-1")
+
+
+def test_owner_edition_first_run_creates_the_owner(tmp_path):
+    store = new_store(tmp_path, use_seed=False)
+    assert store.needs_setup
+    assert store.list_users() == []
+
+    store.create_owner(*OWNER)
+
+    assert not store.needs_setup
+    user = store.sign_in("ON", "owner-password-1")
+    assert user["role"] == "owner" and user["status"] == "approved"
+    assert app_auth.is_admin(user)
+    assert app_auth.role_text(user) == "Owner"
+    with pytest.raises(app_auth.AuthError, match="already has an account"):
+        store.create_owner(
+            "Other", "", "Person", "OP", "other@example.invalid",
+            "another-password", "another-password")
+
+
+def test_create_owner_checks_the_account_like_a_sign_up(tmp_path):
+    store = new_store(tmp_path, use_seed=False)
+    with pytest.raises(app_auth.AuthError, match="at least 12"):
+        store.create_owner(
+            "Owner", "", "Name", "ON", "owner@example.invalid",
+            "short", "short")
+    assert store.needs_setup and store.list_users() == []
+
+
 def test_user_edition_ignores_a_seed(tmp_path, monkeypatch):
     salt, digest = app_auth.hash_password("owner-password")
     monkeypatch.setattr(app_auth, "OWNER", {
@@ -204,13 +235,15 @@ def test_build_check_exit_codes(tmp_path, capsys):
     assert "clean" in capsys.readouterr().out
 
 
-def test_installer_script_keeps_the_seed_out_of_the_user_edition():
+def test_installer_script_never_ships_the_seed():
     script = (ROOT / "build_installer.bat").read_text(encoding="utf-8")
-    seed_lines = [line for line in script.splitlines()
-                  if "auth_seed.json" in line and not
-                  line.lstrip().lower().startswith("rem")]
-    assert len(seed_lines) == 1
-    assert seed_lines[0].lstrip().startswith('if /i "%ED%"=="Owner"')
+    # no --add-data line may package auth_seed.json into either edition
+    for line in script.splitlines():
+        if "auth_seed.json" in line and "--add-data" in line:
+            pytest.fail(f"auth_seed.json is still packaged: {line}")
+    # the Owner build must refuse if the seed slipped in
+    assert ('if exist "dist\\Owner\\FieldSurveyReport\\_internal\\data\\json'
+            '\\private\\auth_seed.json"') in script
     assert 'fsr_build_check.py "dist\\User\\FieldSurveyReport"' in script
 
 

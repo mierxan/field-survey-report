@@ -8,9 +8,10 @@ Sign in / sign up for the Field Survey Report.
 * Every account stores its own PBKDF2 iteration count. Accounts saved
   before that (no "iterations") are checked with the old count and are
   re-hashed with the current one at their next successful sign in.
-* The Owner account is created automatically the first time the program
-  starts. A new user signs up, then waits until the Owner approves the
-  account (Account menu > Manage Users).
+* On the Owner edition the first start asks the Owner to create the Owner
+  account (name and a password of their own); on a site PC (User edition)
+  the first account created is the Administrator. A new user signs up, then
+  waits until the Owner approves the account (Account menu > Manage Users).
 * Roles: "owner", "admin" and "user".   Status: pending / approved /
   rejected / disabled.  Only "approved" accounts can sign in.
 * Wrong passwords slow the sign in down (a short wait after the 2nd, 3rd
@@ -54,6 +55,7 @@ from tkinter import messagebox, ttk
 
 import ttkbootstrap as tb
 
+import fsr_edition
 import fsr_secrets
 
 ITERATIONS = 600_000               # new and changed passwords
@@ -69,10 +71,10 @@ MAX_UNKNOWN = 500                  # remembered wrong initials (memory only)
 MIN_PASSWORD = 12
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
-# The owner account created on first start comes from
-# data/json/private/auth_seed.json (not in source control; only the password
-# HASH is kept there; only the Owner installer contains it). Without the
-# file no account is created here.
+# Optional development seed: data/json/private/auth_seed.json can pre-create
+# the owner account for development. It is NOT shipped by the installer; a
+# production Owner install creates the owner account on first launch through
+# create_owner() instead (no seed, no embedded hash).
 def _load_seed():
     path = (Path(__file__).resolve().parent / "data" / "json" / "private"
             / "auth_seed.json")
@@ -831,6 +833,18 @@ class UserStore:
                           confirm, role="admin", status="approved")
         self._mark_set_up()
 
+    def create_owner(self, first, middle, last, initials, email, password,
+                     confirm):
+        """The one-time set-up of the Owner edition: the first account is the
+        Owner, created with a password of the Owner's own."""
+        if not self.needs_setup:
+            raise AuthError(
+                "This PC already has an account. Create a normal account and "
+                "ask the Owner to approve it.")
+        self._add_account(first, middle, last, initials, email, password,
+                          confirm, role="owner", status="approved")
+        self._mark_set_up()
+
     def _add_account(self, first, middle, last, initials, email, password,
                      confirm, role, status):
         first, middle, last = first.strip(), middle.strip(), last.strip()
@@ -1348,33 +1362,38 @@ def run_login(parent, store, icon=None, last_initials="", on_icon=None):
 
     # ---- first set-up of a PC that has no Administrator ----
     def setup_page():
+        is_owner = fsr_edition.IS_OWNER_EDITION
+        role_name = "Owner" if is_owner else "Administrator"
         clear()
         fit(860)
         heading("Set Up This PC",
-                "This PC has no Administrator account yet.\n"
-                "The account you create now becomes the ADMINISTRATOR of "
-                "this PC: it approves the other accounts and can reset "
+                f"This PC has no {role_name} account yet.\n"
+                f"The account you create now becomes the {role_name.upper()} "
+                "of this PC: it approves the other accounts and can reset "
                 "their passwords.\nThis screen is shown only once.")
         boxes = account_form()
 
         def submit(event=None):
             if not messagebox.askyesno(
                     "Set Up This PC",
-                    "Create the Administrator account of this PC now?\n\n"
+                    f"Create the {role_name} account of this PC now?\n\n"
                     "Keep its password safe: it is the only account that "
                     "can approve the others.", parent=dialog):
                 return
             try:
-                store.create_administrator(*form_values(boxes))
+                if is_owner:
+                    store.create_owner(*form_values(boxes))
+                else:
+                    store.create_administrator(*form_values(boxes))
             except AuthError as error:
                 show_message(str(error))
                 return
             show_recovery_code(dialog, store)
             sign_in_page(
-                "The Administrator account was created. Sign in with its "
+                f"The {role_name} account was created. Sign in with its "
                 "Initials.")
 
-        tb.Button(content, text="Create Administrator Account",
+        tb.Button(content, text=f"Create {role_name} Account",
                   bootstyle="info", command=submit).pack(
             fill="x", pady=(14, 6))
         message_label()
