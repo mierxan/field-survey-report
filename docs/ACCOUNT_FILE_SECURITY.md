@@ -23,8 +23,11 @@ other's accounts.
 
 ## Accounts and roles
 
-* **Owner** – created from `auth_seed.json`, which only the Owner installer
-  contains.
+* **Owner** – created by the Owner on the first start of a new Owner
+  install ("Set Up This PC"), with a password of their own. No installer
+  contains an account or a password hash (since 22 November 2026; earlier
+  Owner installers carried `auth_seed.json`). A copy run from the project
+  folder can still use a development `auth_seed.json`.
 * **Administrator** – the first account created on a PC that has none (the
   one-time "Set Up This PC" screen of the User edition). Approves and
   manages the other accounts of that PC.

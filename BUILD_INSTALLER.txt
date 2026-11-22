@@ -21,7 +21,10 @@ that you copy to the other PCs and double-click. The other PCs do NOT need Pytho
 ON EACH NEW PC
  * Run the right Setup file (Next > Next > Install). It adds a Start menu
    item and an optional Desktop icon.
- * Owner Setup: sign in with the Owner initials.
+ * Owner Setup: the installer contains NO account and no password either.
+   On a new Owner PC the first start shows "Set Up This PC" once: the Owner
+   creates the Owner account with a password of their own. An update over
+   an existing install keeps its accounts (sign in as before).
  * User Setup: the installer contains NO account and no password. The first
    time the program starts on a site PC it shows "Set Up This PC" once: the
    person there creates the Administrator account of that PC, which then

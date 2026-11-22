@@ -1,5 +1,45 @@
 # Field Survey Report changelog
 
+## Phase 20 - Delete and restore reports; the Owner's own first account (22 November 2026)
+
+- **Delete and restore saved reports.** Open Saved Report > **Delete
+  Selected** (confirm the Control #) removes a whole report and its lines
+  from MySQL (when on), this PC's reports and the Excel file, whichever
+  source the list shows. MySQL must be reachable. PO-linked Withdrawal
+  reports cannot be deleted this way.
+- A recovery copy is written first to `<workbook>_deleted.sqlite3` beside the
+  workbook's JSON data; it is never purged by the program. **Deleted
+  History** lists every deletion (Control #, time, user, state) and
+  **Restore Selected** puts a report back; both the local and the MySQL
+  version are kept when they differed, and an existing report with the same
+  Control # is never overwritten. A deletion that stopped half-way (Excel
+  had the file open, MySQL was away) is finished with **Retry Incomplete
+  Deletion**. An old open form or a queued save cannot bring a deleted
+  report back. How-to: `docs/DELETED_REPORTS.md` (installed with both
+  editions).
+- A deleted report, and a half-finished deletion, is left out of the
+  Dashboard, Receiving, Withdrawal, Warehouse Monitoring and Analytics until
+  it is restored. Delete and Restore refresh those pages at once, and a page
+  that was still reading when a report was saved, deleted or restored reads
+  again instead of showing the old figures.
+- **Owner edition: the Owner creates the account.** The Owner installer no
+  longer contains an account or a password hash (`auth_seed.json`). The
+  first start of a new Owner install shows "Set Up This PC", where the Owner
+  creates the Owner account with a password of their own. An update over an
+  existing install keeps its accounts, so nothing changes there. The build
+  stops if an account seed ever ends up in the Owner edition.
+- **Security:** pypdf 6.21.2 -> 6.21.4, which fixes seven published faults
+  where a specially made PDF could hang the program or use a lot of memory.
+  The program only joins PDF pages it has just made, so the risk was low.
+- MySQL set-up scripts: `item_lines` gets the shipment columns
+  `packing_list_no` and `origin_line` (new databases only). The production
+  database `field_survey` is NOT changed by this release.
+- Tests: the real-MySQL tests run only on the separate database
+  `fsr_phase5_isolated_test` and refuse `field_survey` and
+  `field_survey_test`. Ruff checks the code, and GitHub runs ruff plus the
+  tests that do not open the window on every push. Full run before this
+  release: 1,504 passed, 0 skipped, 87% coverage.
+
 ## Phase 19 - Long Descriptions print on two lines (unreleased, 19 November 2026)
 
 - A Description too long for one line of the form's font now prints on two
