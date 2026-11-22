@@ -128,7 +128,7 @@ from fsr_storage import (          # plain data layer
     Workbook,
     CHOICE_VALUES, CONDITION_BAD, CONDITION_GOOD,
     DATE_FORMAT, DOCUMENT_FIELDS, empty_goods_types,
-    GOODS_TYPES, INCIDENT_HEADER_FIELDS,
+    GOODS_TYPES, INCIDENT_FIELDS_FROM_REPORT, INCIDENT_HEADER_FIELDS,
     INCIDENT_MAX_LINES, incident_title, ITEM_LINE_HEADERS,
     ITEM_FORM_CONTAINERIZED, ITEM_FORM_DEFAULT, ITEM_FORM_LOADING,
     item_form_name, ITEM_FORMS, ITEM_LINK_HEADERS, UNIT_NO_HEADER,
@@ -1743,6 +1743,10 @@ class IncidentSection:
                 scroll_instead_of_change(widget)
                 widget.bind("<<ComboboxSelected>>",
                             lambda e, k=key: self._touch(k), add="+")
+            elif key in INCIDENT_FIELDS_FROM_REPORT:
+                # S.O. No. and Port: always the report's own, not typed here
+                widget = tb.Entry(head, state="readonly", takefocus=False)
+                typing = widget
             else:
                 widget = tb.Entry(head)
                 typing = widget
@@ -1794,12 +1798,20 @@ class IncidentSection:
     def set(self, key, text):
         widget = self.fields[key]
         entry = widget.entry if key == "date" else widget
+        if entry.get() == text:
+            return                      # unchanged: no write, no edit event
+        if key in INCIDENT_FIELDS_FROM_REPORT:
+            entry.configure(state="normal")
+            set_entry(entry, text)
+            entry.configure(state="readonly")
+            return
         set_entry(entry, text)
 
     def autofill(self, values):
-        """Fill header fields the user has not edited."""
+        """Fill header fields the user has not edited. The S.O. No. and the
+        Port always follow the report."""
         for key, text in values.items():
-            if key not in self.touched:
+            if key in INCIDENT_FIELDS_FROM_REPORT or key not in self.touched:
                 self.set(key, text)
 
     # ---- lines ----
@@ -2071,6 +2083,20 @@ def collect_report_data():
     ]
 
     condition = condition_var.get()
+    if condition == CONDITION_BAD:
+        # Save and Print / PDF: the Incident Report header follows the
+        # report as it is now, also when the report was changed after the
+        # Incident Report tab was last open (S.O. No. and Port always).
+        # The program's own update, not an edit: the draft watcher is muted,
+        # or a saved report would count as changed again at once.
+        muted = draft_controller.muted if draft_controller else None
+        if draft_controller:
+            draft_controller.muted = True
+        try:
+            autofill_incidents()
+        finally:
+            if draft_controller:
+                draft_controller.muted = muted
 
     return withdrawal_panel.fill_report({
         "control_no": control_entry.get().strip(),

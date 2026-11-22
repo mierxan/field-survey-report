@@ -255,6 +255,25 @@ INCIDENT_HEADER_FIELDS = [        # (label, key) in display order
 ]
 
 
+# The S.O. No. and the Port (where the incident happened) of an Incident
+# Report are always the report's own SO Number and Location: every site has
+# its own SO number, and neither can be changed on the Incident Report.
+# Incident key -> general_information key of the report.
+INCIDENT_FIELDS_FROM_REPORT = {"so_number": "so_number", "port": "location"}
+
+
+def incident_reports_of(data):
+    """The report's incident cards (tidied), with the S.O. No. and Port taken
+    from the report itself - also for a report saved or imported with other
+    values there."""
+    info = data.get("general_information") or {}
+    reports = clean_incident_reports(data.get("incident_reports"))
+    for report in reports:
+        for key, source in INCIDENT_FIELDS_FROM_REPORT.items():
+            report[key] = str(info.get(source) or "").strip()
+    return reports
+
+
 def incident_title(number):
     """Card / sheet name: 1 -> 'Incident Report', 2 -> 'Additional Incident Report 1'."""
     return "Incident Report" if number <= 1 else (

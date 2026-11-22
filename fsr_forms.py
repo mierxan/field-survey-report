@@ -24,7 +24,7 @@ from pathlib import Path
 import fsr_print_fit
 from fsr_storage import (
     printed_findings,
-    clean_incident_reports, DATE_FORMAT, INCIDENT_MAX_LINES, incident_title,
+    DATE_FORMAT, INCIDENT_MAX_LINES, incident_reports_of, incident_title,
     ITEM_FORM_CONTAINERIZED, ITEM_FORM_DEFAULT, ITEM_FORM_LOADING,
     item_form_name, ITEM_FORMS, LEGACY_DATE_FORMAT, safe_filename,
     split_quantity_unit, UNIT_NO_HEADER,
@@ -1490,8 +1490,9 @@ def build_incident_workbook(template_path, output_path, data):
     """
     reports = [
         (number, report)
-        for number, report in enumerate(
-            clean_incident_reports(data.get("incident_reports")), start=1)
+        # S.O. No. and Port from the report itself (fsr_storage), also for
+        # a report saved or imported with other values on its incident card
+        for number, report in enumerate(incident_reports_of(data), start=1)
         if report["lines"]
     ]
     if not reports:

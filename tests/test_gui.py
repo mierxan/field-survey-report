@@ -273,6 +273,52 @@ def test_bad_order_incident_report(app):
     assert any("Incident" in name for name in load_workbook(form).sheetnames)
 
 
+def test_incident_report_header_follows_the_report(app):
+    """Bad Order chosen first (the Incident Report tab opens), the SO Number,
+    Location and Activity typed afterwards on the first page, saved without
+    opening the Incident Report tab again: the saved Incident Report has the
+    report's S.O. No. and Port, not the remembered SO of the last report and
+    an empty Port. S.O. No. and Port cannot be typed on the Incident Report
+    (owner, 23 November 2026); a Vessel the inspector typed there stays."""
+    g, answers = app
+    g["new_report"](confirm=False)
+    g["set_entry"](g["SO_number_entry"], "SO-GUI-OLD")   # the remembered SO
+    g["condition_var"].set(g["CONDITION_BAD"])
+    g["on_condition_clicked"]()
+    g["window"].update()
+    card = g["incident_cards"][0]
+    for key in ("so_number", "port"):
+        assert str(card.fields[key].cget("state")) == "readonly"
+    assert card.get("so_number") == "SO-GUI-OLD"
+    card.set("vessel", "MV Typed")
+    card.touched.add("vessel")
+    card.rows[0].insert(0, "Crate broken on arrival")
+
+    g["notebook"].select(0)                     # back to the first page
+    g["window"].update()
+    g["set_entry"](g["SO_number_entry"], "SO-GUI-NEW")
+    g["location_combobox"].set("GUI Yard 7")
+    g["schedule_entries"]["activity"].set("Receiving")
+    g["supplier_combobox"].set("Test Supplier Alpha Industrial")
+    widgets = g["item_frames"][0].rows[0]
+    cols = g["ITEM_FORM_HEADERS"]
+    g["set_entry"](widgets[cols.index("Description of Goods")], "Crate")
+    g["set_entry"](widgets[cols.index("Quantity")], "1")
+    control = g["control_entry"].get()
+    assert g["save_report"]() is True
+    # the header update on saving is not an edit: saved means saved
+    assert not g["report_state"]["dirty"]
+
+    path = Path(g["excel_state"]["path"])
+    saved = fsr_storage.read_report(path, control)["incident_reports"][0]
+    assert (saved["so_number"], saved["port"], saved["operation"]) == \
+        ("SO-GUI-NEW", "GUI Yard 7", "Receiving")
+    assert saved["vessel"] == "MV Typed"
+    assert saved["lines"] == ["Crate broken on arrival"]
+    assert card.get("so_number") == "SO-GUI-NEW"      # shown as saved
+    assert not errors_shown(answers)
+
+
 def test_withdrawal_without_link_goes_to_reconciliation(app):
     g, answers = app
     wait_for_data(g)
