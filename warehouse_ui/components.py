@@ -971,8 +971,10 @@ class DataService:
         self.loading = False
         self.waiting = []
         self.listeners = []
+        self.revision = 0
 
     def invalidate(self):
+        self.revision += 1
         self.snapshot = None
         for listener in list(self.listeners):
             try:
@@ -989,6 +991,7 @@ class DataService:
         if self.loading:
             return
         self.loading = True
+        revision = self.revision
         result = {}
         path, source = self.ctx.excel_path(), self.ctx.data_source()
 
@@ -1008,6 +1011,13 @@ class DataService:
                 self.ctx.window.after(120, poll)
                 return
             self.loading = False
+            if revision != self.revision:
+                # A save/delete/restore happened while this read was running.
+                # Keep all waiting pages, but read again before notifying them.
+                waiting, self.waiting = self.waiting, []
+                for cb in waiting:
+                    self.request(cb)
+                return
             self.snapshot = result.get("value")
             self.error = result.get("error")
             waiting, self.waiting = self.waiting, []

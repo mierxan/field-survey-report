@@ -184,11 +184,19 @@ def load_reports(excel_path, source="excel"):
     """All saved inspection reports of the chosen source."""
     if source == "mysql":
         import db_mysql
-        return db_mysql.load_all_reports()     # holds both workbooks' reports
+        return active_reports(excel_path, db_mysql.load_all_reports())
     import fsr_store
     store = fsr_store.open_store(excel_path)
-    return merge_withdrawal_reports(store.read_all_reports(),
-                                    store.read_all_withdrawal_reports())
+    return active_reports(excel_path, merge_withdrawal_reports(
+        store.read_all_reports(), store.read_all_withdrawal_reports()))
+
+
+def active_reports(excel_path, reports):
+    """A stale source must never make a deleted report visible again."""
+    import fsr_deletions
+    deleted = fsr_deletions.active_deleted_controls(excel_path)
+    return [report for report in reports
+            if control_key(report['control_no']) not in deleted]
 
 
 def merge_withdrawal_reports(reports, withdrawal_reports):
@@ -226,6 +234,7 @@ def load_snapshot(excel_path, source="excel", as_of=None, reports=None):
     side = SideStore(excel_path)
     if reports is None:
         reports = load_reports(excel_path, source)
+    reports = active_reports(excel_path, reports)
     transactions = build_transactions(reports)
     inventory = build_inventory(transactions, side.decisions(),
                                 as_of or date.today(), side.aging_thresholds())

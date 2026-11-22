@@ -11,6 +11,11 @@ and restoration time. Select a deleted entry and click **Restore Selected**.
 Recovery preserves both the local and MySQL versions when they differed.
 An existing report with the same Control # is never overwritten.
 
+Deleted reports and their lines are excluded from Dashboard, Receiving,
+Withdrawal, Warehouse Monitoring and Analytics until restoration finishes.
+Delete and Restore refresh those views automatically. Incomplete deletions
+also stay hidden while you finish them through Deleted History.
+
 If a deletion stops (for example, Excel has the file open), close Excel,
 reconnect MySQL if necessary, and use **Retry Incomplete Deletion** in
 Deleted History. A failed restore can be resumed with **Restore Selected**.

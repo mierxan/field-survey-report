@@ -97,6 +97,41 @@ def test_old_open_form_cannot_recreate_deleted_report(store):
     assert not store.list_reports()
 
 
+@pytest.mark.parametrize('activity', ['Receiving', 'Withdrawal'])
+def test_deleted_reports_are_hidden_from_monitoring_until_restored(store, monkeypatch, activity):
+    from warehouse import store as warehouse
+    import db_mysql
+    data = report('FSR-REAL-1', activity, date(2026, 11, 22), condition='Bad Order')
+    store.write_report(data, True)
+    before = store.read_all_reports()
+    ident = deleted.delete(store, 'FSR-REAL-1')
+    # Even a stale MySQL response or a caller-supplied pre-delete list is hidden.
+    monkeypatch.setattr(db_mysql, 'load_all_reports', lambda: before)
+    assert warehouse.load_reports(store.excel_path, 'mysql') == []
+    for source in ('excel', 'mysql'):
+        snap = warehouse.load_snapshot(store.excel_path, source)
+        assert snap.reports == []
+        assert snap.transactions == []
+        assert snap.inventory.items == []
+    assert warehouse.load_snapshot(store.excel_path, reports=before).transactions == []
+    deleted.restore(store, ident)
+    restored = warehouse.load_snapshot(store.excel_path).transactions
+    assert len(restored) == 1
+    assert restored[0].activity == activity
+    assert restored[0].condition == 'Bad Order'
+
+
+def test_incomplete_delete_stays_hidden_from_monitoring(store, monkeypatch):
+    from warehouse import store as warehouse
+    def fail(control):
+        raise PermissionError('file open')
+    monkeypatch.setattr(store, 'remove_archived_report', fail)
+    with pytest.raises(PermissionError):
+        deleted.delete(store, 'FSR-REAL-1')
+    assert store.read_all_reports()  # Physical deletion has not happened yet.
+    assert warehouse.load_snapshot(store.excel_path).transactions == []
+
+
 def test_mysql_delete_rolls_back_children_on_error():
     import db_mysql
     from test_db_mysql import FakeConnection, BASE

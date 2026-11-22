@@ -52,6 +52,15 @@ def is_deleted(path, control):
                        "SELECT control_no FROM deleted WHERE state != 'restored'"))
 
 
+def active_deleted_controls(path):
+    """Controls hidden from live views until recovery fully succeeds."""
+    if not history_path(path).exists():
+        return set()
+    with _connect(path) as conn:
+        return {fsr_storage.control_key(row['control_no']) for row in conn.execute(
+            "SELECT control_no FROM deleted WHERE state != 'restored'")}
+
+
 def check_write(path, data):
     """An old open form or queued save must not recreate a deleted report."""
     if not is_deleted(path, data['control_no']):

@@ -229,6 +229,11 @@ def open_saved_report_dialog(initial_search=""):
         dialog.destroy()
         host.load_report_into_form(control_no, chosen_source)
 
+    def refresh_live_views():
+        shell = getattr(host, 'app_shell', None)
+        if shell is not None:
+            shell.service.invalidate()
+
     def delete_selected():
         selection = tree.selection()
         if not selection:
@@ -252,6 +257,7 @@ def open_saved_report_dialog(initial_search=""):
         except Exception as error:
             host.log.exception('Deleting report failed')
             messagebox.showerror('Delete Report', f'{error}\n\nIf a history entry was created, use Deleted History to finish the deletion.', parent=dialog)
+        refresh_live_views()
         switch_source()
 
     def deleted_history():
@@ -289,6 +295,7 @@ def open_saved_report_dialog(initial_search=""):
             except Exception as error:
                 host.log.exception('Deleted history action failed')
                 messagebox.showerror('Deleted History', str(error), parent=history_dialog)
+            refresh_live_views()
             populate()
             switch_source()
 

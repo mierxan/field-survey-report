@@ -1,5 +1,6 @@
 """Exercise the delete/history/restore buttons in the real window."""
 from datetime import date
+import time
 
 import pytest
 
@@ -7,7 +8,8 @@ from factories import report
 
 
 @pytest.mark.gui
-def test_delete_and_restore_in_saved_reports_window(tmp_path):
+@pytest.mark.parametrize('activity', ['Receiving', 'Withdrawal'])
+def test_delete_and_restore_in_saved_reports_window(tmp_path, activity):
     import gui_harness as h
     import fsr_deletions
     from tkinter import ttk
@@ -17,7 +19,25 @@ def test_delete_and_restore_in_saved_reports_window(tmp_path):
         pytest.skip(f'GUI cannot start here: {error}')
     try:
         store = g['data_store']()
-        store.write_report(report('FSR-DELETE-1', 'Receiving', date(2026, 11, 22)), False)
+        store.write_report(report('FSR-DELETE-1', activity, date(2026, 11, 22), condition='Bad Order'), False)
+        shell = g['app_shell']
+        shell.service.invalidate()
+        def wait_for_snapshot(count):
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline:
+                g['window'].update()
+                snap = shell.service.snapshot
+                if snap is not None and len(snap.transactions) == count:
+                    return snap
+                time.sleep(0.02)
+            pytest.fail(f'Live views did not refresh to {count} transactions')
+        wait_for_snapshot(1)
+        for page in ('receiving', 'withdrawal', 'bad_order', 'dashboard'):
+            shell.show(page)
+            g['window'].update()
+            assert len(shell.pages[page].snapshot.transactions) == 1
+        incident = shell.pages['bad_order']
+        assert len(incident.reports(incident.filters)[0]) == 1
         g['open_saved_report_dialog']()
         window = g['window']
         window.update()
@@ -32,6 +52,12 @@ def test_delete_and_restore_in_saved_reports_window(tmp_path):
         tree.selection_set('FSR-DELETE-1')
         next(w for w in widgets if w.winfo_class() == 'TButton' and w.cget('text') == 'Delete Selected').invoke()
         assert not store.list_reports()
+        wait_for_snapshot(0)
+        assert shell.pages['dashboard'].snapshot.transactions == []
+        for page in ('receiving', 'withdrawal', 'bad_order'):
+            shell.show(page)
+            g['window'].update()
+            assert shell.pages[page].snapshot.transactions == []
         errors = []
         def recover():
             try:
@@ -52,6 +78,12 @@ def test_delete_and_restore_in_saved_reports_window(tmp_path):
         assert not errors
         assert store.list_reports()
         assert fsr_deletions.history(store.excel_path)[0]['state'] == 'restored'
+        wait_for_snapshot(1)
+        for page in ('receiving', 'withdrawal', 'bad_order', 'dashboard'):
+            shell.show(page)
+            g['window'].update()
+            assert len(shell.pages[page].snapshot.transactions) == 1
+        assert len(incident.reports(incident.filters)[0]) == 1
         assert not [call for call in answers.calls if call[0] == 'showerror']
         dialog.destroy()
     finally:
