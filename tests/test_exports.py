@@ -39,6 +39,37 @@ def test_every_report_type_exports(sample, outdir, key, title):
     assert title in reader.pages[0].extract_text()
 
 
+def test_column_widths_keep_every_word_whole():
+    # proportional when every column is wide enough
+    assert ex.fit_column_widths([1, 1, 2], [10, 10, 10], 400) == \
+        [100, 100, 200]
+    # a narrow column gets its word's width, the others give it up
+    widths = ex.fit_column_widths([1, 3], [150, 10], 400)
+    assert widths == [150, 250] and sum(widths) == 400
+    # minimums that cannot fit: the plain proportional widths
+    assert ex.fit_column_widths([1, 1], [300, 300], 400) == [200, 200]
+
+
+def test_pdf_tables_do_not_split_codes_in_the_middle(sample, outdir):
+    """An invoice number such as TEST-INV-0018 printed as 'TEST-INV-001'
+    and '8' on the next line in a narrow column (22 November 2026)."""
+    snap = sample["snapshot"]
+    doc = ex.build_report("monthly_receiving_report", snap,
+                          an.Filters(period=month_period(ANCHOR)), ANCHOR)
+    pdf = ex.export(doc, outdir / "whole_words.pdf")
+    words = set()
+    for page in PdfReader(str(pdf)).pages:
+        words.update((page.extract_text() or "").split())
+    wanted = set()
+    for section in doc.sections:
+        for index, (heading, kind, _) in enumerate(section.columns):
+            if heading in ("Invoice", "Container Type"):
+                for row in section.rows:
+                    wanted.update(tb.cell_text(row[index], kind).split())
+    assert wanted, "the report has no Invoice / Container Type values"
+    assert wanted <= words, sorted(wanted - words)[:5]
+
+
 def sheet_rows(ws, header):
     rows, start = [], None
     for r in ws.iter_rows(values_only=True):

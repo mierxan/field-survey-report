@@ -744,6 +744,38 @@ def _own_label_formats(path):
     plain.replace(path)
 
 
+def fit_column_widths(weights, min_widths, total):
+    """Share `total` between the columns in proportion to `weights`, but
+    give every column at least its `min_widths` entry (the width of its
+    longest single word), so a word such as an invoice number is not split
+    in the middle; the other columns get narrower instead. When the
+    minimums alone do not fit, the plain proportional widths."""
+    weight_sum = sum(weights)
+    if not weights or weight_sum <= 0:
+        return [total / max(len(weights), 1)] * len(weights)
+    if sum(min_widths) > total:
+        return [total * weight / weight_sum for weight in weights]
+    fixed = {}
+    while True:
+        free = [i for i in range(len(weights)) if i not in fixed]
+        room = total - sum(fixed.values())
+        share = sum(weights[i] for i in free)
+        widths = {i: room * weights[i] / share for i in free} if share else {}
+        short = [i for i in free if widths[i] < min_widths[i]]
+        if not short:
+            return [fixed[i] if i in fixed else widths[i]
+                    for i in range(len(weights))]
+        for i in short:
+            fixed[i] = min_widths[i]
+
+
+def longest_word_width(texts, font, size):
+    """The printed width of the longest single word in `texts`."""
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+    return max((stringWidth(word, font, size) for text in texts
+                for word in str(text or "").split()), default=0)
+
+
 def write_pdf(doc, path):
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4, landscape
@@ -856,8 +888,23 @@ def write_pdf(doc, path):
         for group_number, indices in enumerate(groups, start=1):
             columns = [section.columns[index] for index in indices]
             weights = [max(column[2], 6) for column in columns]
-            total_w = sum(weights)
-            widths = [frame_width * weight / total_w for weight in weights]
+            # Each column at least as wide as its longest word (cell
+            # padding 3 + 3, a point to spare), at most a fifth of the page
+            # so one very long word cannot squeeze every other column.
+            minimums = []
+            for index in indices:
+                column = section.columns[index]
+                cells = [tb.cell_text(row[index], column[1])
+                         for row in section.rows]
+                bold = [column[0]] + (
+                    [tb.cell_text(section.totals[index], column[1])]
+                    if section.totals else [])
+                word = max(longest_word_width(cells, small.fontName,
+                                              small.fontSize),
+                           longest_word_width(bold, small_bold.fontName,
+                                              small.fontSize))
+                minimums.append(min(word + 7, frame_width / 5))
+            widths = fit_column_widths(weights, minimums, frame_width)
             data = [[Paragraph(esc(column[0]), small_bold)
                      for column in columns]]
 
