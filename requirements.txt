@@ -3,7 +3,7 @@
 # these bring along: requirements-lock.txt.
 ttkbootstrap==2.2.6
 openpyxl==3.1.5
-pypdf==6.21.2
+pypdf==6.21.4
 mysql-connector-python==26.10.0
 pywin32==312; sys_platform == "win32"
 # warehouse monitoring: charts and PDF reports
