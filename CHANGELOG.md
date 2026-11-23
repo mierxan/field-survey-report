@@ -1,6 +1,6 @@
 # Field Survey Report changelog
 
-## Phase 21 - Incident Report S.O. No. and Port; dashboard and PDF tidy-ups (unreleased, 23 November 2026)
+## Phase 21 - Incident Report S.O. No. and Port; dashboard and PDF tidy-ups (release 2026.11.23.071930, 23 November 2026)
 
 - **Incident Report: S.O. No. and Port are the report's own.** Every site
   has its own SO number, and the place of the incident is the report's
