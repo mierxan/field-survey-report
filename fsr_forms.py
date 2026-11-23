@@ -2119,9 +2119,12 @@ def excel_printer_name(printer):
     return printer
 
 
-def print_forms_with_excel(forms, printer):
+def print_forms_with_excel(forms, printer, black_only=False):
     """Windows: Microsoft Excel prints every report workbook, in order,
     straight to the printer - the same pages as the PDF, no viewer.
+    black_only: Excel's own "Black and white" page setting (text and lines
+    black, pictures grey, no colour ink for them); the workbook files and
+    the printer's own settings are not changed.
     Safe to call from a background thread."""
     import pythoncom                # pip install pywin32
     import win32com.client
@@ -2139,6 +2142,9 @@ def print_forms_with_excel(forms, printer):
                 try:
                     # Excel refuses a printer while no workbook is open.
                     excel.ActivePrinter = excel_printer_name(printer)
+                    if black_only:
+                        for sheet in workbook.Worksheets:
+                            sheet.PageSetup.BlackAndWhite = True
                     workbook.PrintOut()
                 finally:
                     workbook.Close(False)
@@ -2148,15 +2154,17 @@ def print_forms_with_excel(forms, printer):
         pythoncom.CoUninitialize()
 
 
-def send_to_printer(forms, printer, pdf_path=None):
-    """Print the whole report on the chosen printer (no PDF viewer).
-    Other systems print the report PDF with lp."""
+def send_to_printer(forms, printer, pdf_path=None, black_only=False):
+    """Print the whole report on the chosen printer (no PDF viewer), in
+    colour or in black only. Other systems print the report PDF with lp."""
     if sys.platform == "win32":
-        print_forms_with_excel(forms, printer)
+        print_forms_with_excel(forms, printer, black_only)
         return "printed"
 
     if pdf_path is None:
         pdf_path = Path(tempfile.gettempdir()) / "fsr_print.pdf"
     make_report_pdf(forms, pdf_path)
-    subprocess.run(["lp", "-d", printer, str(pdf_path)], check=True)
+    colour = ["-o", "print-color-mode=monochrome"] if black_only else []
+    subprocess.run(["lp", "-d", printer, *colour, str(pdf_path)],
+                   check=True)
     return "printed"

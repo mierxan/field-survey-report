@@ -1,5 +1,21 @@
 # Field Survey Report changelog
 
+## Phase 23 - Print in color or black only (release 2026.11.23.152944, 23 November 2026)
+
+- Setup files (one build, both editions; its own test run: 1,524 passed,
+  0 skipped):
+  `FieldSurveyReport_Owner_Setup_2026.11.23.152944-133b9d6b774947adb1c48df2638bdaeb.exe`,
+  `FieldSurveyReport_User_Setup_2026.11.23.152944-133b9d6b774947adb1c48df2638bdaeb.exe`.
+- The Print / PDF window has **Print in: Color / Black only**. The choice is
+  kept in this PC's settings (Color at first) and the message after
+  printing says which one was used.
+- Black only uses Excel's own "Black and white" page setting: text and lines
+  print black and the logo grey, so no colour ink is needed for the report.
+  The report files and the printer's own settings are not changed.
+- Checked by printing real test reports in Black only through Excel to
+  "Microsoft Print to PDF" as files: every page has no colour at all and the
+  same pages as Save as PDF. New tests in `tests/test_printing.py`.
+
 ## Phase 22 - Print Report prints on the printer (release 2026.11.23.114822, 23 November 2026)
 
 - Setup files (one build, both editions; its own test run: 1,521 passed,

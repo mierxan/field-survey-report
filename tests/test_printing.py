@@ -64,7 +64,8 @@ def test_windows_prints_the_workbooks_not_a_pdf(monkeypatch, tmp_path):
     printed = []
     monkeypatch.setattr(fsr_forms.sys, "platform", "win32")
     monkeypatch.setattr(fsr_forms, "print_forms_with_excel",
-                        lambda forms, printer: printed.append((forms, printer)))
+                        lambda forms, printer, black=False:
+                        printed.append((forms, printer, black)))
     monkeypatch.setattr(fsr_forms, "make_report_pdf",
                         lambda *a: pytest.fail("no PDF is made to print"))
     monkeypatch.setattr(fsr_forms.os, "startfile",
@@ -73,7 +74,57 @@ def test_windows_prints_the_workbooks_not_a_pdf(monkeypatch, tmp_path):
 
     forms = [tmp_path / "A_Report.xlsx"]
     assert fsr_forms.send_to_printer(forms, "EPSON L120") == "printed"
-    assert printed == [(forms, "EPSON L120")]
+    assert fsr_forms.send_to_printer(forms, "EPSON L120",
+                                     black_only=True) == "printed"
+    assert printed == [(forms, "EPSON L120", False),
+                       (forms, "EPSON L120", True)]
+
+
+class FakeSheet:
+    def __init__(self):
+        self.PageSetup = types.SimpleNamespace(BlackAndWhite=False)
+
+
+class FakeWorkbook:
+    def __init__(self, log):
+        self.log = log
+        self.Worksheets = [FakeSheet(), FakeSheet()]
+
+    def PrintOut(self):
+        self.log.append(("print", [s.PageSetup.BlackAndWhite
+                                   for s in self.Worksheets]))
+
+    def Close(self, save):
+        self.log.append(("close", save))
+
+
+def fake_excel(monkeypatch, log):
+    class Books:
+        def Open(self, path, ReadOnly):
+            log.append(("open", ReadOnly))
+            return FakeWorkbook(log)
+
+    excel = types.SimpleNamespace(Workbooks=Books(),
+                                  Quit=lambda: log.append(("quit",)))
+    client = types.SimpleNamespace(DispatchEx=lambda name: excel)
+    win32com = types.SimpleNamespace(client=client)
+    monkeypatch.setitem(sys.modules, "win32com", win32com)
+    monkeypatch.setitem(sys.modules, "win32com.client", client)
+    monkeypatch.setitem(sys.modules, "pythoncom", types.SimpleNamespace(
+        CoInitialize=lambda: None, CoUninitialize=lambda: None))
+    monkeypatch.setattr(fsr_forms, "excel_printer_name", lambda p: p)
+    return excel
+
+
+@pytest.mark.parametrize("black_only", [False, True])
+def test_black_only_uses_excels_black_and_white_setting(monkeypatch,
+                                                        black_only):
+    log = []
+    excel = fake_excel(monkeypatch, log)
+    fsr_forms.print_forms_with_excel(["a.xlsx"], "EPSON L120", black_only)
+    assert excel.ActivePrinter == "EPSON L120"
+    assert log == [("open", True), ("print", [black_only, black_only]),
+                   ("close", False), ("quit",)]         # file not saved
 
 
 # ---------------------------------------------------------------------------
@@ -108,15 +159,18 @@ def printing(app, monkeypatch):
                         lambda: (list(ready["printers"]), ready["default"]))
     monkeypatch.setitem(g, "ask_printer", ask)
     monkeypatch.setitem(g, "send_to_printer",
-                        lambda forms, printer, pdf=None:
-                        sent.append(printer) or "printed")
+                        lambda forms, printer, pdf=None, black_only=False:
+                        sent.append(printer) or colours.append(black_only)
+                        or "printed")
+    colours = []
+    g["colours"] = colours
     monkeypatch.setitem(g, "run_with_progress",
                         lambda parent, msg, work, done, **k: done(work(), None))
-    for key in ("printer", "fallback_printer"):
+    for key in ("printer", "fallback_printer", "print_in"):
         g["settings"].pop(key, None)
     answers.calls.clear()
     yield g, answers, ready, asked, asked_answer, sent
-    for key in ("printer", "fallback_printer"):
+    for key in ("printer", "fallback_printer", "print_in"):
         g["settings"].pop(key, None)
 
 
@@ -215,3 +269,45 @@ def test_change_printer_is_used_instead_of_the_default(printing):
     g["choose_printer"](g["window"], change=True)
     assert "printer" not in g["settings"]
     assert g["printer_in_use"]() == "Printer: the Windows default printer"
+
+
+def print_window(g):
+    g["show_output_dialog"]("Print / PDF", "Report C-1 is ready",
+                            "x.xlsx", ["x_Report.xlsx"], {"control_no": "C-1"})
+    g["window"].update()
+    return [c for c in g["window"].winfo_children()
+            if c.winfo_class() == "Toplevel"
+            and c.wm_title() == "Print / PDF"][-1]
+
+
+@pytest.mark.gui
+def test_color_or_black_only_is_chosen_and_kept(printing):
+    g, answers, ready, asked, asked_answer, sent = printing
+    colours = g["colours"]
+
+    dialog = print_window(g)
+    try:
+        choice = dialog.print_color_var
+        assert choice.get() == "color"                  # color at first
+        press_print(g)
+        assert colours == [False]
+        assert answers.calls[-1][2].endswith('"Office HP" in color.')
+
+        choice.set("black")                             # Black only
+        dialog.children_radio = [w for row in dialog.winfo_children()
+                                 for w in row.winfo_children()
+                                 if w.winfo_class() == "TRadiobutton"]
+        [w for w in dialog.children_radio
+         if w.cget("text") == "Black only"][0].invoke()
+        assert g["load_settings"]()["print_in"] == "black"
+        press_print(g)
+        assert colours == [False, True]
+        assert answers.calls[-1][2].endswith("in black only.")
+    finally:
+        dialog.destroy()
+
+    dialog = print_window(g)                            # kept next time
+    try:
+        assert dialog.print_color_var.get() == "black"
+    finally:
+        dialog.destroy()

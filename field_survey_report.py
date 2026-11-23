@@ -2548,12 +2548,26 @@ def printer_in_use():
     return "Printer: the Windows default printer"
 
 
+PRINT_COLOR = "color"
+PRINT_BLACK = "black"
+PRINT_COLOR_CHOICES = ((PRINT_COLOR, "Color"), (PRINT_BLACK, "Black only"))
+
+
+def print_color():
+    """Color or black-only printing, as chosen last on this PC."""
+    return (PRINT_BLACK if settings.get("print_in") == PRINT_BLACK
+            else PRINT_COLOR)
+
+
 def print_report_forms(forms, data, parent, on_printer=None):
     """Print the whole report (the same pages as the PDF) straight to the
-    chosen printer - nothing opens in a PDF viewer."""
+    chosen printer - nothing opens in a PDF viewer - in color or black
+    only (the choice in the Print / PDF window)."""
     printer = choose_printer(parent)
     if not printer:
         return
+    black_only = print_color() == PRINT_BLACK
+    how = "in black only" if black_only else "in color"
     if on_printer:
         on_printer(printer)
 
@@ -2562,7 +2576,7 @@ def print_report_forms(forms, data, parent, on_printer=None):
     )
 
     def work():
-        return send_to_printer(forms, printer, pdf_path)
+        return send_to_printer(forms, printer, pdf_path, black_only)
 
     def done(result, error):
         if error is not None:
@@ -2577,11 +2591,11 @@ def print_report_forms(forms, data, parent, on_printer=None):
         else:
             messagebox.showinfo(
                 "Print Report",
-                f'The report was sent to the printer "{printer}".',
+                f'The report was sent to the printer "{printer}" {how}.',
                 parent=parent
             )
 
-    run_with_progress(parent, f"Printing the report on {printer}...",
+    run_with_progress(parent, f"Printing the report on {printer} {how}...",
                       work, done)
 
 
@@ -2743,6 +2757,21 @@ def show_output_dialog(title, message, excel_path, forms, data,
         buttons, text="Done", width=10, command=dialog.destroy,
         bootstyle="secondary"
     ).pack(side="right")
+
+    color_row = tb.Frame(dialog)
+    if forms:
+        color_row.pack(fill="x", padx=20, pady=(0, 6))
+    tb.Label(color_row, text="Print in:", anchor="w").pack(side="left")
+    color_var = tkinter.StringVar(dialog, value=print_color())
+
+    def keep_color():
+        settings["print_in"] = color_var.get()
+        save_settings()
+
+    for value, text in PRINT_COLOR_CHOICES:
+        tb.Radiobutton(color_row, text=text, value=value, variable=color_var,
+                       command=keep_color).pack(side="left", padx=(12, 0))
+    dialog.print_color_var = color_var          # tests choose with it
 
     printer_row = tb.Frame(dialog)
     if forms:
