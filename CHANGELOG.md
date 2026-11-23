@@ -1,5 +1,29 @@
 # Field Survey Report changelog
 
+## Phase 22 - Print Report prints on the printer (release 2026.11.23.114822, 23 November 2026)
+
+- Setup files (one build, both editions; its own test run: 1,521 passed,
+  0 skipped):
+  `FieldSurveyReport_Owner_Setup_2026.11.23.114822-753266049f054d9db18552f4c7034322.exe`,
+  `FieldSurveyReport_User_Setup_2026.11.23.114822-753266049f054d9db18552f4c7034322.exe`.
+- Fixed: Print Report opened the report in the PDF viewer instead of
+  printing it (Windows hands a PDF to whatever viewer is installed, and many
+  only open it). Microsoft Excel now prints the report forms straight to the
+  printer: the same pages as Save as PDF, and nothing opens.
+- Which printer:
+  - the Windows default printer, without asking, when it is ready;
+  - when it is not ready (switched off, unplugged, or set to "Use Printer
+    Offline"), the user is asked once, from the printers that are ready;
+    that printer is used without asking until the default is ready again;
+  - when no printer is ready, a message says so (turn the printer on, or
+    use Save as PDF) and nothing is printed.
+- The Print / PDF window shows the printer, with **Change Printer...** to
+  always use another printer (choosing the default printer there goes back
+  to the default). The choice is kept in this PC's settings.
+- Checked by printing real test reports through Excel to "Microsoft Print
+  to PDF" as files (same pages as Save as PDF; the Windows default printer
+  is left unchanged). New tests: `tests/test_printing.py`.
+
 ## Phase 21 - Incident Report S.O. No. and Port; dashboard and PDF tidy-ups (release 2026.11.23.071930, 23 November 2026)
 
 - **Incident Report: S.O. No. and Port are the report's own.** Every site

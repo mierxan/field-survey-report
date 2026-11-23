@@ -2065,17 +2065,98 @@ def make_report_pdf(forms, pdf_path):
         shutil.copyfile(combined, pdf_path)      # replaces an existing PDF
 
 
-def send_to_printer(pdf_path):
-    """Print the PDF. Returns 'printed' or 'opened' (see the caller)."""
-    pdf_path = Path(pdf_path).resolve()
+# A printer Windows marks "Offline" (switched off, unplugged, or set to
+# "Use Printer Offline") is not offered: a print sent there just waits.
+PRINTER_STATUS_OFFLINE = 0x80
+PRINTER_ATTRIBUTE_WORK_OFFLINE = 0x400
 
-    if sys.platform == "win32":
+
+def printer_is_ready(status, attributes):
+    return not (status & PRINTER_STATUS_OFFLINE
+                or attributes & PRINTER_ATTRIBUTE_WORK_OFFLINE)
+
+
+def available_printers():
+    """(the printers ready to print, the Windows default printer or "").
+    Only names that are installed and not offline are listed."""
+    if sys.platform != "win32":
         try:
-            os.startfile(str(pdf_path), "print")     # default printer
-            return "printed"
-        except OSError:
-            os.startfile(str(pdf_path))              # just open it
-            return "opened"
+            out = subprocess.run(["lpstat", "-a"], capture_output=True,
+                                 text=True, timeout=20).stdout
+        except (OSError, subprocess.SubprocessError):
+            return [], ""
+        return [line.split()[0] for line in out.splitlines()
+                if line.strip()], ""
 
-    subprocess.run(["lp", str(pdf_path)], check=True)
+    import win32print               # pip install pywin32
+
+    flags = win32print.PRINTER_ENUM_LOCAL | win32print.PRINTER_ENUM_CONNECTIONS
+    ready = [p["pPrinterName"]
+             for p in win32print.EnumPrinters(flags, None, 2)
+             if printer_is_ready(p.get("Status", 0), p.get("Attributes", 0))]
+    try:
+        default = win32print.GetDefaultPrinter()
+    except Exception:
+        default = ""
+    return ready, default
+
+
+def excel_printer_name(printer):
+    """Excel wants "<name> on <port>:", e.g. "EPSON L120 Series on Ne02:".
+    The port comes from the same list Windows gives every program."""
+    try:
+        import winreg
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows NT\CurrentVersion\Devices")
+        with key:
+            value, _ = winreg.QueryValueEx(key, printer)
+        port = str(value).split(",")[-1].strip()
+        if port:
+            return f"{printer} on {port}"
+    except OSError:
+        pass
+    return printer
+
+
+def print_forms_with_excel(forms, printer):
+    """Windows: Microsoft Excel prints every report workbook, in order,
+    straight to the printer - the same pages as the PDF, no viewer.
+    Safe to call from a background thread."""
+    import pythoncom                # pip install pywin32
+    import win32com.client
+
+    pythoncom.CoInitialize()
+    try:
+        excel = win32com.client.DispatchEx("Excel.Application")
+        excel.Visible = False
+        excel.DisplayAlerts = False
+        try:
+            for form in forms:
+                workbook = excel.Workbooks.Open(
+                    str(Path(form).resolve()), ReadOnly=True
+                )
+                try:
+                    # Excel refuses a printer while no workbook is open.
+                    excel.ActivePrinter = excel_printer_name(printer)
+                    workbook.PrintOut()
+                finally:
+                    workbook.Close(False)
+        finally:
+            excel.Quit()
+    finally:
+        pythoncom.CoUninitialize()
+
+
+def send_to_printer(forms, printer, pdf_path=None):
+    """Print the whole report on the chosen printer (no PDF viewer).
+    Other systems print the report PDF with lp."""
+    if sys.platform == "win32":
+        print_forms_with_excel(forms, printer)
+        return "printed"
+
+    if pdf_path is None:
+        pdf_path = Path(tempfile.gettempdir()) / "fsr_print.pdf"
+    make_report_pdf(forms, pdf_path)
+    subprocess.run(["lp", "-d", printer, str(pdf_path)], check=True)
     return "printed"

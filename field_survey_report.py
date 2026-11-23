@@ -121,6 +121,7 @@ from fsr_forms import (  # the official report forms (moved)
     merge_workbooks,
     report_workbook_path,
     make_report_pdf,
+    available_printers,
     send_to_printer,
 )
 from fsr_withdrawal_ui import WithdrawalPanel
@@ -2432,38 +2433,155 @@ def save_forms_as_pdf(forms, data, parent):
     )
 
 
-def print_report_forms(forms, data, parent):
-    """Print the whole report (the same pages as the PDF)."""
+def ask_printer(parent, printers, preselect, message, note=""):
+    """Let the user pick one of the ready printers. Returns its name, or
+    None when cancelled."""
+    dialog = tb.Toplevel(parent)
+    dialog.title("Choose a Printer")
+    dialog.transient(parent)
+    dialog.resizable(False, False)
+    answer = {"printer": None}
+
+    tb.Label(dialog, text=message, justify="left", anchor="w",
+             wraplength=420).pack(fill="x", padx=20, pady=(20, 10))
+
+    choice = TypeaheadCombobox(dialog, values=printers, state="readonly",
+                               width=48)
+    choice.set(preselect if preselect in printers else printers[0])
+    choice.pack(fill="x", padx=20)
+
+    if note:
+        tb.Label(dialog, text=note, anchor="w", justify="left",
+                 wraplength=420, bootstyle="secondary").pack(
+            fill="x", padx=20, pady=(8, 0))
+
+    def use():
+        answer["printer"] = choice.get()
+        dialog.destroy()
+
+    buttons = tb.Frame(dialog)
+    buttons.pack(fill="x", padx=20, pady=20)
+    tb.Button(buttons, text="Cancel", width=10, bootstyle="secondary",
+              command=dialog.destroy).pack(side="right")
+    tb.Button(buttons, text="Use This Printer", width=16, bootstyle="primary",
+              command=use).pack(side="right", padx=(0, 8))
+
+    center_over_window(dialog)
+    dialog.bind("<Return>", lambda e: use())
+    dialog.bind("<Escape>", lambda e: dialog.destroy())
+    dialog.wait_visibility()
+    dialog.grab_set()
+    choice.focus_set()
+    parent.wait_window(dialog)
+    return answer["printer"]
+
+
+def choose_printer(parent, change=False):
+    """The printer to print on, without asking when it can:
+
+    1. the printer picked with Change Printer..., when it is ready;
+    2. otherwise the Windows default printer, when it is ready;
+    3. otherwise the printer picked the last time the default was not
+       ready, when it is ready;
+    4. otherwise the user is asked once, from the printers that are ready,
+       and that answer is kept for step 3 (so they are not asked again
+       while the default printer stays unavailable).
+    Returns None when no printer is ready or they cancel."""
+    try:
+        printers, default = busy(available_printers)
+    except Exception as error:
+        log.exception("Could not list the printers")
+        messagebox.showerror(
+            "Print Error", f"The printers could not be listed:\n{error}",
+            parent=parent)
+        return None
+
+    chosen = settings.get("printer", "")
+    fallback = settings.get("fallback_printer", "")
+    if not printers:
+        messagebox.showerror(
+            "No Printer Available",
+            "No printer is ready to print.\n\n"
+            "Turn the printer on and check its cable or Wi-Fi, then press "
+            "Print Report again.\n"
+            "You can also use Save as PDF and print the PDF later.",
+            parent=parent)
+        return None
+
+    if change:
+        printer = ask_printer(
+            parent, printers, chosen or default,
+            "Choose the printer to print the reports on:\n"
+            "(the Windows default printer is used when you do not choose)",
+            "This printer will be used every time you print.")
+        if printer:
+            if printer == default:
+                settings.pop("printer", None)   # just follow the default
+            else:
+                settings["printer"] = printer
+            save_settings()
+        return printer
+
+    for printer in (chosen, default, fallback):
+        if printer and printer in printers:
+            return printer
+
+    missing = chosen or default
+    message = ((f'The printer "{missing}" is not available now.\n\n'
+                if missing else "")
+               + "Which of the printers that are ready do you want to use?")
+    printer = ask_printer(
+        parent, printers, fallback, message,
+        "It is used without asking again until the default printer is "
+        "ready.")
+    if printer:
+        settings["fallback_printer"] = printer
+        save_settings()
+    return printer
+
+
+def printer_in_use():
+    """What the Print / PDF window shows as the printer."""
+    chosen = settings.get("printer")
+    if chosen:
+        return f"Printer: {chosen}"
+    return "Printer: the Windows default printer"
+
+
+def print_report_forms(forms, data, parent, on_printer=None):
+    """Print the whole report (the same pages as the PDF) straight to the
+    chosen printer - nothing opens in a PDF viewer."""
+    printer = choose_printer(parent)
+    if not printer:
+        return
+    if on_printer:
+        on_printer(printer)
+
     pdf_path = Path(forms[0]).parent / (
         f"{safe_filename(data['control_no'])}_Report.pdf"
     )
 
     def work():
-        make_report_pdf(forms, pdf_path)
-        return send_to_printer(pdf_path)
+        return send_to_printer(forms, printer, pdf_path)
 
     def done(result, error):
         if error is not None:
+            log.error("Printing on %s failed: %s", printer, error)
             messagebox.showerror(
                 "Print Error",
-                f"Unable to print the report:\n{error}",
-                parent=parent
-            )
-        elif result == "opened":
-            messagebox.showinfo(
-                "Print Report",
-                "The report was opened in your PDF viewer.\n"
-                "Press Ctrl+P there to choose a printer and print it.",
+                f'Unable to print the report on "{printer}":\n{error}\n\n'
+                "Check that the printer is on, or press Change to pick "
+                "another printer.",
                 parent=parent
             )
         else:
             messagebox.showinfo(
                 "Print Report",
-                "The report was sent to the default printer.",
+                f'The report was sent to the printer "{printer}".',
                 parent=parent
             )
 
-    run_with_progress(parent, "Preparing the report for printing...",
+    run_with_progress(parent, f"Printing the report on {printer}...",
                       work, done)
 
 
@@ -2596,9 +2714,19 @@ def show_output_dialog(title, message, excel_path, forms, data,
         button.pack(side="left", padx=(0, 8))
         return button
 
+    def printer_text(printer=None):
+        return f"Printer: {printer}" if printer else printer_in_use()
+
+    def show_printer(printer=None):
+        printer_label.configure(text=printer_text(printer))
+
+    def change_printer():
+        if choose_printer(dialog, change=True):
+            show_printer()
+
     action_button(
         "Print Report",
-        lambda: print_report_forms(forms, data, dialog),
+        lambda: print_report_forms(forms, data, dialog, show_printer),
         "primary", enabled=bool(forms)
     )
     action_button(
@@ -2615,6 +2743,15 @@ def show_output_dialog(title, message, excel_path, forms, data,
         buttons, text="Done", width=10, command=dialog.destroy,
         bootstyle="secondary"
     ).pack(side="right")
+
+    printer_row = tb.Frame(dialog)
+    if forms:
+        printer_row.pack(fill="x", padx=20, pady=(0, 16))
+    printer_label = tb.Label(printer_row, text=printer_text(), anchor="w",
+                             bootstyle="secondary")
+    printer_label.pack(side="left")
+    tb.Button(printer_row, text="Change Printer...", command=change_printer,
+              bootstyle="link").pack(side="left", padx=(8, 0))
 
     center_over_window(dialog)
 
