@@ -1,5 +1,25 @@
 # Field Survey Report changelog
 
+## Phase 25 - Phone Incident Report S.O. No. and Port (Android 1.14.2, 24 November 2026)
+
+- Android only; the Windows program is unchanged (no new Windows build).
+  Android: `FieldSurveyReport-1.14.2-release.apk` (versionCode 23, signed
+  with the release key).
+- The phone now follows the Phase 21 rule: the S.O. No. and Port of every
+  Incident Report are always the report's own SO Number and Location. On
+  the phone's Incident Report tab the two boxes are read-only and show
+  them.
+- Fixed: on the phone, a S.O. No. or Port typed on an Incident Report card
+  (or one left from an earlier SO) was saved, printed and exported instead
+  of the report's. The PDF and Excel Incident Report pages, the report
+  details screen, Export Master Data and a Bad Order save now take them
+  from the report, also for reports saved earlier or received from another
+  phone. Vessel, Voyage, Client, Date and Operation typed on a card stay as
+  typed.
+- Checked: Android unit tests 119 passed, device tests 38 passed; on the
+  emulator (read-only) the boxes cannot be typed in and follow a changed
+  SO Number, and the report PDF prints the report's SO and Location.
+
 ## Phase 24 - The owner's updated report forms (release 2026.11.23.203419, Android 1.14.1, 23 November 2026)
 
 - Setup files (one build, both editions; its own test run: 1,528 passed,
