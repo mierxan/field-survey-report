@@ -748,6 +748,7 @@ CARGO_TEMPLATE = BASE_DIR / "data" / "excel" / "Cargo_Details.xlsx"
 UNIT_FORM_TEMPLATE = (BASE_DIR / "data" / "excel"
                       / "Containerized_Loading_Form.xlsx")
 
+CARGO_PRINT_AREA = "$A$1:$K$53"        # only when the template sets none
 BLANK_FIRST_LINE_ROW = 12
 BLANK_LINES_PER_PAGE = CARGO_LAST_ROW - BLANK_FIRST_LINE_ROW + 1   # 31
 
@@ -1129,7 +1130,28 @@ def locate_template_sheet(source, sheet_name):
     )
 
 
-XML_HEAD = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
+def template_print_area(source, sheet_name, fallback):
+    """The print area the form template sets for this sheet (e.g.
+    "$A$1:$I$51"), so a template changed in Excel prints whole; `fallback`
+    when it sets none."""
+    workbook = source.read("xl/workbook.xml").decode("utf-8")
+    sheets = [html.unescape(name) for name in
+              re.findall(r'<sheet\b[^>]*\bname="([^"]+)"', workbook)]
+    for attrs, text in re.findall(
+        r"<definedName\b([^>]*)>(.*?)</definedName>", workbook, re.S
+    ):
+        index = re.search(r'localSheetId="(\d+)"', attrs)
+        if ('name="_xlnm.Print_Area"' not in attrs or not index
+                or int(index.group(1)) >= len(sheets)
+                or sheets[int(index.group(1))] != sheet_name):
+            continue
+        area = text.split("!", 1)[-1].strip()
+        if re.fullmatch(r"\$?[A-Z]+\$?\d+:\$?[A-Z]+\$?\d+", area):
+            return area
+    return fallback
+
+
+XML_HEAD ='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
 
 
 def write_pages_package(source, output_path, new_parts, names, styles,
@@ -1404,7 +1426,8 @@ def build_cargo_workbook(template_path, output_path, data,
                 drawing_rels)
 
         write_pages_package(source, output_path, new_parts, names, styles,
-                            "$A$1:$K$53")
+                            template_print_area(source, cargo_sheet,
+                                                CARGO_PRINT_AREA))
 
     return {"cargo": cargo_total, "blank": blank_total, "too_long": too_long}
 
@@ -1431,7 +1454,7 @@ def create_cargo_form(excel_path, data, folder=None,
 
 INCIDENT_TEMPLATE = BASE_DIR / "data" / "excel" / "Incident_Report.xlsx"
 INCIDENT_SHEET_NAME = "IncidentReport"
-INCIDENT_PRINT_AREA = "$A$1:$I$46"
+INCIDENT_PRINT_AREA = "$A$1:$I$51"     # only when the template sets none
 INCIDENT_FIRST_LINE_ROW = 18
 
 INCIDENT_HEADER_CELLS = {
@@ -1530,7 +1553,8 @@ def build_incident_workbook(template_path, output_path, data):
                 drawing_rels)
 
         write_pages_package(source, output_path, new_parts, names, styles,
-                            INCIDENT_PRINT_AREA)
+                            template_print_area(source, INCIDENT_SHEET_NAME,
+                                                INCIDENT_PRINT_AREA))
 
     return len(reports)
 

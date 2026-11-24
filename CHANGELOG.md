@@ -1,5 +1,39 @@
 # Field Survey Report changelog
 
+## Phase 24 - The owner's updated report forms (release 2026.11.23.203419, Android 1.14.1, 23 November 2026)
+
+- Setup files (one build, both editions; its own test run: 1,528 passed,
+  0 skipped):
+  `FieldSurveyReport_Owner_Setup_2026.11.23.203419-8e7ad318e7ff466c9ea2284f615c8249.exe`,
+  `FieldSurveyReport_User_Setup_2026.11.23.203419-8e7ad318e7ff466c9ea2284f615c8249.exe`.
+  Android: `FieldSurveyReport-1.14.1-release.apk` (versionCode 22, signed
+  with the release key).
+- The owner's changes to the official form templates in `data/excel`:
+  - First Page: taller rows (27 pt instead of 25) in the header,
+    Documents, Transport, Declared Goods, Inspection Schedule and Other
+    Important Remarks blocks; the check boxes and pictures move with them.
+  - Incident Report: a bigger signature and document-control block at the
+    bottom; the page now ends at row 51 instead of 46.
+  - Cargo Details, Blank Form, Containerized and Loading: "Inspection Date"
+    12.5 pt and "Consignee name and address" 11.5 pt; the inspector's name
+    (A45) and J45 aligned left.
+- Fixed: the program printed the Incident Report up to row 46 whatever the
+  template said, which would have cut off the bigger bottom block. The
+  Incident Report and Cargo Details pages now take their print area from
+  the template (`template_print_area`), so a template changed in Excel
+  prints whole.
+- Android 1.14.1: `forms.json` regenerated from these templates, so the
+  phone's PDF and Excel pages match the Windows ones (this also brings the
+  earlier bigger Incident Report print to the phone).
+  `tools/extract_forms.py` reads each sheet's last printed row from the
+  template in the same way. Android 1.14.0 (recoverable deletion), released
+  on 22 November, is now committed too.
+- Checked: a full Bad Order report (First Page, Cargo Details,
+  Containerized, Incident Report) printed through Excel on Windows, and the
+  phone's report PDF made on the emulator (read-only; Android unit tests:
+  116 passed; PDF device tests: 3 passed). New tests:
+  `tests/test_form_templates.py`.
+
 ## Phase 23 - Print in color or black only (release 2026.11.23.152944, 23 November 2026)
 
 - Setup files (one build, both editions; its own test run: 1,524 passed,
