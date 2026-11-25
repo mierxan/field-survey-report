@@ -20,7 +20,6 @@ import logging
 import calendar
 import copy
 import os
-import socket
 import shutil
 import subprocess
 import sys
@@ -84,7 +83,7 @@ import fsr_price_checks            # a price without a currency
 import fsr_backup                  # the daily backups (shown in Account)
 import fsr_edition                 # Owner app (Excel + MySQL) or User app
 import fsr_import                  # Master Data files from the sites/phones
-import fsr_master_export           # one Master Data file for the owner
+import fsr_master_export_ui        # one Master Data file for the owner
 import fsr_handover                # a report or draft for the next inspector
 import fsr_handover_ui
 import fsr_shipment_ui             # a Withdrawal's item list to its destinations
@@ -4070,38 +4069,20 @@ def show_saved_links(data):
 
 
 def export_master_data():
-    """Write one Master Data JSON file with everything, to send to the owner."""
+    """Storage > Export Master Data...: one Master Data JSON file for the
+    owner, with all data or only the saved reports chosen
+    (fsr_master_export_ui)."""
     if Workbook is None:
         excel_missing_message()
-        return
-
-    device = socket.gethostname()
-    chosen = filedialog.asksaveasfilename(
-        parent=window,
-        title="Save the Master Data file for the owner",
-        defaultextension=".json",
-        initialfile=(f"FSR_Master_Data_{safe_filename(device)}_"
-                     f"{date.today():%Y-%m-%d}.json"),
-        filetypes=[("Master data file", "*.json")]
-    )
-    if not chosen:
-        return
-
-    try:
-        count = busy(fsr_master_export.write_export, excel_state["path"],
-                     chosen, device, USER_FULL_NAME, master_data)
-    except Exception as error:
-        log.exception("Export Master Data failed")
-        messagebox.showerror("Export Master Data",
-                             f"The file was not written:\n{error}", parent=window)
-        return
-    messagebox.showinfo(
-        "Export Master Data",
-        f"{count} report(s) saved to:\n{chosen}\n\nSend this one file to the "
-        "owner. Sending it again later is fine: reports the owner already "
-        "has are not duplicated.",
-        parent=window
-    )
+        return None
+    if reports_are_moving("Export Master Data"):
+        return None
+    open_dialog = master_export_state.get("dialog")
+    if open_dialog is not None and open_dialog.winfo_exists():
+        open_dialog.lift()
+        open_dialog.focus_set()
+        return open_dialog
+    return fsr_master_export_ui.open_export(globals())
 
 
 def reports_are_moving(title):
@@ -5215,6 +5196,7 @@ def build_window():
     global goods_type_vars, goods_types_frame, hauler_combobox
     global import_master_button, import_review_button, import_state
     global hand_over_button, receive_handover_button, hand_over_state
+    global master_export_state
     global share_shipment_button, receive_shipment_button, shipment_state
     global findings_row, all_good_button, with_issues_button
     global packing_lists_button, add_received_button, received_row
@@ -6555,6 +6537,7 @@ def build_window():
 
     import_state = {"running": False}
     hand_over_state = {"dialog": None}
+    master_export_state = {"dialog": None}
     shipment_state = {"dialog": None}
 
 

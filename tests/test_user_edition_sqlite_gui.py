@@ -29,6 +29,17 @@ def pump(g, until, limit=60):
     return False
 
 
+def export_now(window):
+    """Press Export... in the Export Master Data window."""
+    def buttons(widget):
+        for child in widget.winfo_children():
+            if child.winfo_class() == "TButton":
+                yield child
+            yield from buttons(child)
+    (button,) = [b for b in buttons(window) if b.cget("text") == "Export..."]
+    button.invoke()
+
+
 @pytest.fixture(scope="module")
 def app(tmp_path_factory):
     import gui_harness as h
@@ -108,6 +119,8 @@ def test_a_site_save_and_the_file_for_the_owner(app, tmp_path):
     dialog.asksaveasfilename = lambda **_: str(target)
     try:
         g["export_master_button"].invoke()
+        # the window asks All data / only the chosen reports; All is preset
+        export_now(g["master_export_state"]["dialog"])
         assert pump(g, target.exists)
     finally:
         dialog.asksaveasfilename = original

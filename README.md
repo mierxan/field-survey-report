@@ -205,13 +205,14 @@ owner collects everything with Master Data files (JSON):
 | Edition | Where | Storage | Master Data |
 |---|---|---|---|
 | **Owner** (`FieldSurveyReport_Owner_Setup_*.exe`) | the owner's PC | Excel + MySQL (Workbench) | **Import Master Data...** brings in the files of every site PC and phone |
-| **User** (`FieldSurveyReport_User_Setup_*.exe`) | each site PC | Excel and JSON files on that PC only; MySQL is never used | **Export Master Data...** writes `FSR_Master_Data_<PC>_<date>.json` to send to the owner |
+| **User** (`FieldSurveyReport_User_Setup_*.exe`) | each site PC | Excel and JSON files on that PC only; MySQL is never used | **Export Master Data...** asks: **All data**, or **only the reports you choose** (normal and PO-linked Withdrawal reports); it writes `FSR_Master_Data_<PC>_<date>.json` (with the Control # for one chosen report) to send to the owner |
 | **Android app** | each inspector's phone | the phone's own database | **Export Master Data** (Save File / Share), sent to the owner |
 
 The owner's import adds each report to the owner's Excel file and MySQL
 database, offers the new consignee/supplier/... names for the master lists,
 and remembers what it brought in (by PC or phone and Control #), so sending
-the same file again never duplicates a report. A Control # that is already
+the same file again never duplicates a report. A file with only some reports
+adds or updates those; the owner's other reports are never removed. A Control # that is already
 taken on the owner's PC gets the next free number with the same initials.
 
 Run from source, the program is the Owner edition; `set FSR_EDITION=user`

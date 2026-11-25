@@ -8,6 +8,17 @@ import pytest
 pytestmark = pytest.mark.gui
 
 
+def export_now(window):
+    """Press Export... in the Export Master Data window."""
+    def buttons(widget):
+        for child in widget.winfo_children():
+            if child.winfo_class() == "TButton":
+                yield child
+            yield from buttons(child)
+    (button,) = [b for b in buttons(window) if b.cget("text") == "Export..."]
+    button.invoke()
+
+
 @pytest.fixture(scope="module")
 def app(tmp_path_factory):
     import gui_harness as h
@@ -58,6 +69,10 @@ def test_user_edition_exports_master_data(app, tmp_path):
     dialog.asksaveasfilename = lambda **_: str(target)
     try:
         g["export_master_button"].invoke()
+        # the window asks All data / only the chosen reports; All is preset
+        window = g["master_export_state"]["dialog"]
+        export_now(window)
+        assert not window.winfo_exists()
     finally:
         dialog.asksaveasfilename = original
     data = json.loads(target.read_text(encoding="utf-8"))

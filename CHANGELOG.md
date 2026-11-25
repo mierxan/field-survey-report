@@ -1,5 +1,41 @@
 # Field Survey Report changelog
 
+## Phase 26 - Export Master Data: all data or the chosen reports (release 2026.11.25.090353, Android 1.15.0, 25 November 2026)
+
+- Setup files (one build, both editions; its own test run: 1,541 passed,
+  0 skipped):
+  `FieldSurveyReport_Owner_Setup_2026.11.25.090353-17d9f66729e94079b14768203163866e.exe`,
+  `FieldSurveyReport_User_Setup_2026.11.25.090353-17d9f66729e94079b14768203163866e.exe`.
+  Android: `FieldSurveyReport-1.15.0-release.apk` (versionCode 24, signed
+  with the release key).
+- Export Master Data now asks what goes into the file: **All data** (every
+  saved report, the master lists and the Bad Order case statuses, as
+  before) or **Only the reports I choose**. The window
+  (`fsr_master_export_ui.py`) lists the saved reports of both workbooks,
+  the PO-linked Withdrawal reports included, with a search, Select All
+  Shown and Clear Selection; choosing a report switches to "only these".
+  So one new report, for example a PO-linked Withdrawal (which Hand Over
+  does not list), can be sent to the owner alone.
+- `fsr_master_export.build_export` / `write_export` take `controls` (and
+  the command line `--report`): only those reports and their case
+  statuses go into the file; a chosen report that is gone stops the
+  export; a damaged incident file of a report NOT chosen no longer stops
+  it. `saved_reports()` lists what can be exported. The file name has the
+  Control # for one report (`FSR_Master_Data_<PC>_<Control #>_<date>.json`)
+  or `<n>_reports` for several. The owner's import is unchanged: it adds
+  or updates the reports in the file and never removes the others.
+- Android 1.15.0: the same choice in Master Data > "Send your reports to
+  the owner" (radio buttons, a searchable checklist of completed reports;
+  Save File and Share once one is chosen), and the same file names.
+- Hand Over was tested (49 tests passed). docs/HANDOVER.md now says why
+  PO-linked Withdrawal reports are not in the Hand Over list and what to
+  use instead.
+- Checked: the window in the program (invented reports); on the emulator
+  (read-only) one chosen report was shared and the file held only it.
+  Android unit tests 124 passed, device tests 38 passed. New tests:
+  `tests/test_master_export_gui.py`, more in `tests/test_master_export.py`,
+  `MasterDataChoiceTest` (Android).
+
 ## Phase 25 - Phone Incident Report S.O. No. and Port (Android 1.14.2, 24 November 2026)
 
 - Android only; the Windows program is unchanged (no new Windows build).

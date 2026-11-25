@@ -125,7 +125,11 @@ before.
 ## Not handed over (yet)
 
 - **Withdrawal reports linked to a PO** (Windows): their stock belongs to
-  the location's PO lists. Hand-over refuses them with a message.
+  the location's PO lists, so the Hand Over window does not list them
+  (they are kept in `Withdrawal_Reports.xlsx`, not the main workbook). To
+  send one to the **owner**, use **Export Master Data...** and choose
+  *Only the reports I choose* (since 25 November 2026); to send its item
+  list to the **destination**, use **Share with Destination...**.
 - **Windows drafts to a phone.** A Windows draft is the raw form of the
   PC program; the app says it is continued on a PC. Save it as a report on
   the PC and hand the completed report over instead. (Phone drafts go to a
